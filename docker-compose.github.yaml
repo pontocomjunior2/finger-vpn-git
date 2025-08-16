@@ -10,20 +10,13 @@ services:
     volumes:
       - gluetun_data:/gluetun
     environment:
-      # --- Configuração da VPN (Plano Pago - Dinâmico via Variáveis) ---
-      # Estas serão lidas das Variáveis de Ambiente do EasyPanel
       - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
       - VPN_TYPE=${VPN_TYPE:-wireguard}
-      # --- Seleção de Servidor (Definida nas Variáveis do EasyPanel) ---
       - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Brazil}
-      # --- Chave Privada e Credenciais (Definidas nas Variáveis do EasyPanel) ---
-      # As variáveis WIREGUARD_PEER_* NÃO devem ser definidas para seleção dinâmica
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
       - OPENVPN_USER=${VPN_USER}
       - OPENVPN_PASSWORD=${VPN_PASSWORD}
-      # --- Outras Opções ---
       - TZ=${TZ:-America/Sao_Paulo}
-    # --- Healthcheck com Parâmetros Relaxados ---
     healthcheck:
       test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
       interval: 20s
@@ -36,7 +29,7 @@ services:
     # BUILD LOCAL: EasyPanel irá construir a imagem a partir do Dockerfile na raiz
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfilegit
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
