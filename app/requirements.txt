@@ -1,0 +1,8 @@
+psycopg2-binary
+shazamio
+aiohttp
+python-dotenv
+schedule
+pysftp
+psutil
+pytz

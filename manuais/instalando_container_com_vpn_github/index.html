@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual de Implantação via GitHub: Instâncias Adicionais finger_vpn</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.7;
+            margin: 30px auto;
+            max-width: 950px;
+            padding: 30px;
+            background-color: #f7fafc;
+            color: #2d3748;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h1, h2, h3, h4 {
+            color: #1a202c;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 10px;
+            margin-bottom: 25px;
+            margin-top: 40px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2.4em;
+            color: #2c5282;
+            border-bottom: 2px solid #2c5282;
+            padding-bottom: 20px;
+            margin-top: 20px;
+            margin-bottom: 50px;
+        }
+        h2 {
+            margin-top: 60px;
+            font-size: 1.9em;
+            border-bottom: 1px solid #cbd5e0;
+            color: #2c5282;
+        }
+        h3 {
+            margin-top: 40px;
+            font-size: 1.5em;
+            border-bottom: none;
+            color: #4a5568;
+        }
+        h4 {
+            margin-top: 30px;
+            font-size: 1.2em;
+            border-bottom: none;
+            color: #4a5568;
+            font-weight: 600;
+        }
+        code {
+            background-color: #e2e8f0;
+            padding: 3px 7px;
+            border-radius: 4px;
+            font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            color: #2d3748;
+            font-size: 0.9em;
+            vertical-align: middle;
+        }
+        pre {
+            background-color: #1a202c;
+            color: #e2e8f0;
+            border: 1px solid #2d3748;
+            padding: 20px;
+            border-radius: 6px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            margin: 25px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.95em;
+            line-height: 1.6;
+            vertical-align: initial;
+        }
+        .placeholder-image {
+            border: 1px dashed #cbd5e0;
+            padding: 25px;
+            text-align: center;
+            margin: 30px 0;
+            background-color: #edf2f7;
+            border-radius: 6px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .placeholder-image img {
+            max-width: 90%;
+            height: auto;
+            display: block;
+            margin: 15px auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background-color: #fff;
+            padding: 5px;
+        }
+        .placeholder-image p small {
+            color: #718096;
+            font-style: italic;
+        }
+        .importante {
+            color: #c53030;
+            font-weight: 600;
+            background-color: #fed7d7;
+            padding: 5px 10px;
+            border-radius: 4px;
+            border-left: 5px solid #c53030;
+            display: inline-block;
+            margin: 5px 0;
+        }
+        .nota {
+            background-color: #ebf8ff;
+            border-left: 5px solid #3182ce;
+            padding: 15px 20px;
+            margin: 25px 0;
+            border-radius: 4px;
+            color: #2c5282;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        ul, ol {
+            margin-left: 25px;
+            padding-left: 20px;
+        }
+        li { margin-bottom: 15px; padding-left: 5px; }
+        hr { border: 0; border-top: 1px solid #e2e8f0; margin: 60px 0; }
+        a { color: #3182ce; text-decoration: none; font-weight: 500; }
+        a:hover { color: #2c5282; text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<h1>Manual de Implantação via GitHub: Instâncias Adicionais <code>finger_vpn</code></h1>
+
+<h2>Objetivo</h2>
+<p>Implantar novas instâncias do serviço <code>finger_vpn</code> (Aplicação + VPN) no EasyPanel
+utilizando o código-fonte hospedado no <strong>GitHub</strong>, em vez de imagens pré-construídas no
+Docker Hub. O EasyPanel clonará o repositório e construirá a imagem da aplicação localmente.</p>
+
+<h2>Pré-requisitos Essenciais</h2>
+<ol>
+    <li><strong>Repositório GitHub com este projeto</strong> (público ou privado).
+        <ul>
+            <li>Se privado: você precisará configurar uma <em>Deploy Key</em> (SSH) ou um
+                <em>Personal Access Token</em> no EasyPanel para permitir o clone.</li>
+        </ul>
+    </li>
+    <li><strong>EasyPanel</strong> instalado e acessível na VPS de destino.</li>
+    <li><strong>Conta Proton VPN Paga</strong> e <strong>credenciais de serviço</strong> (OpenVPN/IKEv2) + chave privada WireGuard.</li>
+    <li><strong>Credenciais do Banco PostgreSQL</strong> e acesso de rede apropriado.</li>
+</ol>
+
+<hr>
+
+<h2>Estrutura de Arquivos no Repositório</h2>
+<p>Para o fluxo via GitHub + Compose (recomendado), utilizamos um arquivo de build dedicado na raiz chamado <code>Dockerfilegit</code>, além do compose específico para GitHub:</p>
+<pre><code>/&lt;repo-raiz&gt;/
+├── Dockerfilegit
+├── docker-compose.github.yaml
+└── app/
+    ├── Dockerfile
+    ├── docker-compose.yaml
+    ├── fingerv7.py
+    └── requirements.txt
+</code></pre>
+
+<div class="nota">
+    <p><strong>Importante:</strong> O <code>docker-compose.yaml</code> deve usar <code>build</code> para o serviço
+    <code>finger_app</code> ao invés de <code>image:</code>, assim o EasyPanel compila a imagem a partir
+    do <code>Dockerfile</code> presente no repositório.</p>
+</div>
+
+<hr>
+
+<h2>Exemplo de docker-compose (build local via GitHub)</h2>
+<p>Use este conteúdo na aba do Compose do EasyPanel (ou ajuste seu arquivo em
+<code>app/docker-compose.yaml</code>) para construir a imagem localmente a partir do repositório:</p>
+<pre><code># docker-compose.yaml (EasyPanel via GitHub - Build local)
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - gluetun_data:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Brazil}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - OPENVPN_USER=${VPN_USER}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      - TZ=${TZ:-America/Sao_Paulo}
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  finger_app:
+    # Em vez de "image:", use build para compilar a partir do Dockerfile no repo
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    volumes:
+      - app_segments:/app/segments
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - DB_TABLE_NAME=${DB_TABLE_NAME:-music_log}
+      - SERVER_ID=${SERVER_ID}
+      - TOTAL_SERVERS=${TOTAL_SERVERS}
+      - DISTRIBUTE_LOAD=${DISTRIBUTE_LOAD:-True}
+      - ENABLE_ROTATION=${ENABLE_ROTATION:-False}
+      - ROTATION_HOURS=${ROTATION_HOURS:-24}
+      - IDENTIFICATION_DURATION=${IDENTIFICATION_DURATION:-15}
+      - DUPLICATE_PREVENTION_WINDOW_SECONDS=${DUPLICATE_PREVENTION_WINDOW_SECONDS:-900}
+      - SEGMENTS_DIR=/app/segments
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/Sao_Paulo}
+    restart: unless-stopped
+
+volumes:
+  gluetun_data:
+  app_segments:
+</code></pre>
+
+<hr>
+
+<h2>Cenário 1: Adicionar Nova Instância na MESMA VPS (EasyPanel + GitHub)</h2>
+<ol>
+    <li>
+        <h3>Acesse o EasyPanel</h3>
+        <div class="placeholder-image">
+            <img src="images/placeholder_easypanel_home.png" alt="Tela inicial do EasyPanel">
+            <p><small>Salvar como: images/placeholder_easypanel_home.png</small></p>
+        </div>
+    </li>
+    <li>
+        <h3>Crie um Novo Serviço Compose</h3>
+        <ul>
+            <li>Clique em “+ Serviço”.</li>
+            <li>Escolha <strong>“Compose (BETA)”</strong>.</li>
+            <div class="placeholder-image">
+                <img src="images/placeholder_select_compose.png" alt="Seleção de Compose BETA">
+                <p><small>Salvar como: images/placeholder_select_compose.png</small></p>
+            </div>
+            <li>Dê um nome único (ex: <code>finger_5_vpn</code>).</li>
+            <li>Clique em “Criar”.</li>
+        </ul>
+    </li>
+    <li>
+        <h3>Conecte o Repositório GitHub</h3>
+        <ul>
+            <li>Na tela do EasyPanel, selecione a aba <strong>"GitHub"</strong>.</li>
+            <li>Preencha os campos:
+                <ul>
+                    <li><strong>Proprietário *</strong>: usuário ou organização do GitHub (ex: <code>seunome</code>)</li>
+                    <li><strong>Repositório *</strong>: nome do repositório (ex: <code>finger_vpn</code>)</li>
+                    <li><strong>Branch *</strong>: branch para deploy (ex: <code>main</code>)</li>
+                    <li><strong>Caminho de Build *</strong>: 
+                        <ul>
+                            <li>Se o seu Dockerfile estiver na raiz do repositório: use <code>/</code> (ou <code>.</code> em algumas UIs)</li>
+                            <li>Se o seu Dockerfile estiver em <code>app/</code>: use <code>/app</code></li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>Se o repositório for privado, adicione a <strong>Deploy Key</strong> fornecida pelo EasyPanel no GitHub (Settings → Deploy Keys → Add), somente leitura.</li>
+            <div class="placeholder-image">
+                <img src="images/placeholder_git_connect.png" alt="Formulário GitHub no EasyPanel">
+                <p><small>Salvar como: images/placeholder_git_connect.png</small></p>
+            </div>
+        </ul>
+    </li>
+    <li>
+        <h3>Configurar o Build do Dockerfile</h3>
+        <ul>
+            <li>Com "Dockerfile" selecionado na seção <strong>Build</strong>, o EasyPanel usará o arquivo indicado pelo Compose quando você estiver no fluxo <strong>Compose (BETA)</strong>.</li>
+            <li>Como o arquivo foi renomeado para <code>Dockerfilegit</code>, o compose já aponta explicitamente para ele via <code>dockerfile: Dockerfilegit</code>.</li>
+            <li>Se optar pelo modo <strong>App Dockerfile</strong> (apenas um container), verifique se a interface permite informar o nome do arquivo Dockerfile. Caso não permita, renomeie temporariamente <code>Dockerfilegit</code> para <code>Dockerfile</code> ou prefira o fluxo <strong>Compose (BETA)</strong>, onde o compose controla o nome do arquivo.</li>
+        </ul>
+    </li>
+    <li>
+        <h3>Apontar o Compose do Repositório</h3>
+        <ul>
+            <li>Para o fluxo <strong>Compose (BETA)</strong>, defina o caminho do Compose: <code>docker-compose.github.yaml</code>.</li>
+            <li>O serviço <code>finger_app</code> no compose usa <code>build: { context: ., dockerfile: Dockerfilegit }</code>, garantindo que o <code>Dockerfilegit</code> seja utilizado no build.</li>
+        </ul>
+    </li>
+    <li>
+        <h3>Defina as Variáveis de Ambiente</h3>
+        <div class="placeholder-image">
+            <img src="images/placeholder_env_vars.png" alt="Variáveis de Ambiente">
+            <p><small>Salvar como: images/placeholder_env_vars.png</small></p>
+        </div>
+        <ul>
+            <li><code>VPN_USER</code>, <code>VPN_PASSWORD</code>, <code>WIREGUARD_PRIVATE_KEY</code></li>
+            <li><code>POSTGRES_HOST</code>, <code>POSTGRES_USER</code>, <code>POSTGRES_PASSWORD</code>, <code>POSTGRES_DB</code>, <code>POSTGRES_PORT</code></li>
+            <li><code>SERVER_COUNTRIES</code> (ex: <code>Brazil</code>)</li>
+            <li><strong class="importante"><code>SERVER_ID</code></strong> (ID único desta instância)</li>
+            <li><strong class="importante"><code>TOTAL_SERVERS</code></strong> (novo total após adicionar esta instância)</li>
+            <li>Demais variáveis do <code>fingerv7.py</code></li>
+        </ul>
+    </li>
+    <li>
+        <h3>Salvar e Implantar</h3>
+        <div class="placeholder-image">
+            <img src="images/placeholder_deploy_button.png" alt="Botão Implantar">
+            <p><small>Salvar como: images/placeholder_deploy_button.png</small></p>
+        </div>
+        <ul>
+            <li>Clique em “Implantar”. O EasyPanel irá clonar o repo e <strong>construir a imagem</strong> localmente (build do <code>finger_app</code>), depois iniciar os serviços.</li>
+        </ul>
+    </li>
+    <li>
+        <h3 class="importante">ATUALIZE <code>TOTAL_SERVERS</code> NAS OUTRAS INSTÂNCIAS!</h3>
+        <ul>
+            <li>Abra cada instância existente e atualize <code>TOTAL_SERVERS</code> para o novo total.</li>
+            <li>Reimplante cada instância para aplicar a mudança.</li>
+        </ul>
+    </li>
+    <li>
+        <h3>Verifique os Logs</h3>
+        <div class="placeholder-image">
+            <img src="images/placeholder_logs.png" alt="Tela de Logs do EasyPanel">
+            <p><small>Salvar como: images/placeholder_logs.png</small></p>
+        </div>
+        <p>Monitore <code>gluetun</code> e <code>finger_app</code>. O <code>finger_app</code> só inicia após
+        o <code>gluetun</code> ficar <em>healthy</em>.</p>
+    </li>
+</ol>
+
+<hr>
+
+<h2>Cenário 2: Nova VPS com EasyPanel (via GitHub)</h2>
+<ol>
+    <li>Instale/acesse o EasyPanel na nova VPS.</li>
+    <li>Repita o processo do <strong>Cenário 1</strong> para criar o serviço Compose conectado ao Git.</li>
+    <li>Defina <strong><code>SERVER_ID</code> único e <code>TOTAL_SERVERS</code> atualizado</strong>.</li>
+    <li>Implante e verifique os logs.</li>
+    <li class="importante">Ajuste <code>TOTAL_SERVERS</code> em todas as instâncias existentes.</li>
+</ol>
+
+<hr>
+
+<h2>Boas Práticas e Observações</h2>
+<ul>
+    <li><strong>Private Repo:</strong> Prefira Deploy Key (SSH) com permissão somente leitura. Alternativamente,
+        use HTTPS com token (PAT) com escopo mínimo.</li>
+    <li><strong>Builds mais rápidos:</strong> Considere adicionar um <code>.dockerignore</code> em <code>app/</code> para evitar copiar arquivos desnecessários no build.</li>
+    <li><strong>Limite ProtonVPN:</strong> Monitore conexões simultâneas do plano.</li>
+    <li><strong>Banco de Dados:</strong> Garanta firewall liberando IPs de saída do túnel VPN.</li>
+    <li><strong>Sincronização:</strong> <code>TOTAL_SERVERS</code> deve ser igual em TODAS as instâncias em operação.</li>
+</ul>
+
+<hr>
+
+<h2>Apêndice: Comparativo (Docker Hub x GitHub)</h2>
+<ul>
+    <li><strong>Modelo Docker Hub (antigo):</strong> Você faz build/push de uma imagem e o EasyPanel
+        apenas baixa e roda essa imagem.</li>
+    <li><strong>Modelo GitHub (novo):</strong> O EasyPanel clona o repositório e executa
+        <em>build local</em> com base no <code>Dockerfile</code> especificado pelo seu Compose,
+        garantindo que cada deploy reflita exatamente o estado do código no Git.</li>
+</ul>
+
+</body>
+</html>

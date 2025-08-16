@@ -1,0 +1,50 @@
+# Ignorar arquivos desnecessários para otimizar o build
+.git
+.gitignore
+README.md
+*.md
+
+# Logs e arquivos temporários
+*.log
+*.tmp
+*.temp
+log.txt
+last_songs.json
+local_log.json
+streams.json
+
+# Diretórios de cache e temporários
+__pycache__/
+*.py[cod]
+*$py.class
+.cache/
+.pytest_cache/
+
+# Arquivos do editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Manuais (não necessários no container)
+manuais/
+
+# Backups
+*-bkp.*
+*.bak
+*.backup
+
+# Certificados e chaves (devem vir via variáveis de ambiente)
+*.pem
+*.key
+*.crt
+*.p12
+
+# Segmentos de áudio (são criados em runtime)
+segments/
+app/segments/

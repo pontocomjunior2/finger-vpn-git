@@ -1,0 +1,69 @@
+# docker-compose.yaml específico para deploy GitHub no EasyPanel
+# Este arquivo usa build local ao invés de imagem pré-construída
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - gluetun_data:/gluetun
+    environment:
+      # --- Configuração da VPN (Plano Pago - Dinâmico via Variáveis) ---
+      # Estas serão lidas das Variáveis de Ambiente do EasyPanel
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      # --- Seleção de Servidor (Definida nas Variáveis do EasyPanel) ---
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Brazil}
+      # --- Chave Privada e Credenciais (Definidas nas Variáveis do EasyPanel) ---
+      # As variáveis WIREGUARD_PEER_* NÃO devem ser definidas para seleção dinâmica
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - OPENVPN_USER=${VPN_USER}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      # --- Outras Opções ---
+      - TZ=${TZ:-America/Sao_Paulo}
+    # --- Healthcheck com Parâmetros Relaxados ---
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  finger_app:
+    # BUILD LOCAL: EasyPanel irá construir a imagem a partir do Dockerfile na raiz
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    volumes:
+      - app_segments:/app/segments
+    environment:
+      # --- Variáveis da Aplicação (Definidas no EasyPanel) ---
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - DB_TABLE_NAME=${DB_TABLE_NAME:-music_log}
+      - SERVER_ID=${SERVER_ID:-1}
+      - TOTAL_SERVERS=${TOTAL_SERVERS:-1}
+      - DISTRIBUTE_LOAD=${DISTRIBUTE_LOAD:-False}
+      - ENABLE_ROTATION=${ENABLE_ROTATION:-False}
+      - ROTATION_HOURS=${ROTATION_HOURS:-24}
+      - IDENTIFICATION_DURATION=${IDENTIFICATION_DURATION:-15}
+      - DUPLICATE_PREVENTION_WINDOW_SECONDS=${DUPLICATE_PREVENTION_WINDOW_SECONDS:-900}
+      - SEGMENTS_DIR=/app/segments
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/Sao_Paulo}
+      # Adicione outras variáveis que seu fingerv7.py precise ler
+    restart: unless-stopped
+
+volumes:
+  gluetun_data:
+  app_segments:

@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual de Implantação: Instâncias Adicionais finger_vpn</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Fonte mais moderna */
+            line-height: 1.7; /* Maior espaçamento entre linhas */
+            margin: 30px auto; /* Mais margem vertical */
+            max-width: 950px; /* Um pouco mais largo */
+            padding: 30px; /* Mais padding interno */
+            background-color: #f7fafc; /* Fundo cinza-azulado claro */
+            color: #2d3748; /* Cor de texto principal mais escura */
+            border-radius: 8px; /* Cantos arredondados */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08); /* Sombra mais pronunciada */
+        }
+        h1, h2, h3, h4 {
+            color: #1a202c; /* Cor de título escura */
+            border-bottom: 1px solid #e2e8f0; /* Borda inferior clara */
+            padding-bottom: 10px; /* Mais padding inferior */
+            margin-bottom: 25px; /* Mais espaço abaixo */
+            margin-top: 40px; /* Espaço acima padronizado */
+        }
+        h1 {
+            text-align: center;
+            font-size: 2.4em; /* Maior */
+            color: #2c5282; /* Azul corporativo */
+            border-bottom: 2px solid #2c5282; /* Borda mais forte */
+            padding-bottom: 20px;
+            margin-top: 20px; /* Menos espaço no topo para H1 */
+            margin-bottom: 50px; /* Mais espaço abaixo de H1 */
+        }
+        h2 {
+            margin-top: 60px; /* Mais espaço acima de H2 */
+            font-size: 1.9em;
+            border-bottom: 1px solid #cbd5e0;
+            color: #2c5282; /* Azul também para H2 */
+        }
+        h3 {
+            margin-top: 40px; /* Espaçamento ajustado */
+            font-size: 1.5em;
+            border-bottom: none; /* Sem borda inferior */
+            color: #4a5568; /* Cinza mais escuro */
+        }
+        h4 {
+            margin-top: 30px;
+            font-size: 1.2em;
+            border-bottom: none;
+            color: #4a5568;
+            font-weight: 600; /* Negrito */
+        }
+        /* Código Inline */
+        code {
+            background-color: #e2e8f0; /* Fundo cinza claro */
+            padding: 3px 7px; /* Padding ajustado */
+            border-radius: 4px;
+            font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            color: #2d3748; /* Cor escura */
+            font-size: 0.9em;
+            vertical-align: middle;
+        }
+        /* Bloco de Código */
+        pre {
+            background-color: #1a202c; /* Fundo bem escuro */
+            color: #e2e8f0; /* Texto claro */
+            border: 1px solid #2d3748; /* Borda sutil */
+            padding: 20px;
+            border-radius: 6px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            margin: 25px 0; /* Margem vertical */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        /* Código dentro do Bloco */
+        pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.95em;
+            line-height: 1.6;
+            vertical-align: initial; /* Reset align */
+        }
+        .placeholder-image {
+            border: 1px dashed #cbd5e0; /* Borda tracejada */
+            padding: 25px;
+            text-align: center;
+            margin: 30px 0;
+            background-color: #edf2f7; /* Fundo cinza muito claro */
+            border-radius: 6px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .placeholder-image img {
+            max-width: 90%; /* Limitar um pouco a largura da imagem */
+            height: auto;
+            display: block;
+            margin: 15px auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background-color: #fff; /* Fundo branco para a imagem */
+            padding: 5px; /* Pequeno padding interno */
+        }
+        .placeholder-image p small {
+            color: #718096; /* Texto da nota mais suave */
+            font-style: italic;
+        }
+        .importante {
+            color: #c53030; /* Vermelho */
+            font-weight: 600; /* Semi-negrito */
+            background-color: #fed7d7; /* Fundo vermelho claro */
+            padding: 5px 10px; /* Mais padding */
+            border-radius: 4px;
+            border-left: 5px solid #c53030; /* Borda esquerda mais forte */
+            display: inline-block; /* Para padding/border funcionar bem */
+            margin: 5px 0; /* Pequena margem */
+        }
+        .nota {
+            background-color: #ebf8ff; /* Fundo azul claro */
+            border-left: 5px solid #3182ce; /* Borda azul */
+            padding: 15px 20px;
+            margin: 25px 0;
+            border-radius: 4px;
+            color: #2c5282; /* Texto azul escuro */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        ul, ol {
+            margin-left: 25px;
+            padding-left: 20px; /* Padding para marcadores */
+        }
+        li {
+            margin-bottom: 15px; /* Mais espaço entre itens */
+            padding-left: 5px; /* Pequeno padding à esquerda do texto */
+        }
+        hr {
+            border: 0;
+            border-top: 1px solid #e2e8f0; /* Linha divisória clara */
+            margin: 60px 0; /* Mais espaço vertical */
+        }
+        a {
+            color: #3182ce; /* Azul para links */
+            text-decoration: none;
+            font-weight: 500;
+        }
+        a:hover {
+            color: #2c5282; /* Azul mais escuro no hover */
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Manual de Implantação: Instâncias Adicionais <code>finger_vpn</code></h1>
+
+    <h2>Objetivo</h2>
+    <p>Replicar a configuração funcional do serviço <code>finger_vpn</code> (Aplicação + VPN) para adicionar mais instâncias de monitoramento. Este manual cobre a implantação na mesma VPS ou em VPSs diferentes, garantindo IDs únicos e consistência no número total de servidores.</p>
+    <p>A configuração base recomendada assume o uso de:</p>
+    <ul>
+        <li>Plano Pago do Proton VPN.</li>
+        <li>Imagem <code>gluetun</code> com seleção dinâmica de servidor (sem arquivo <code>.conf</code> específico).</li>
+        <li>Imagem Docker <code>finger_app</code> pré-construída e enviada para um registro Docker (ex: Docker Hub).</li>
+    </ul>
+
+    <h2>Pré-requisitos Essenciais</h2>
+    <ol>
+        <li><strong>Conta Proton VPN Paga:</strong> Assinatura ativa com conexões simultâneas suficientes (geralmente 10).</li>
+        <li><strong>Credenciais de Serviço Proton VPN:</strong> Nome de usuário e senha específicos para "OpenVPN / IKEv2" da sua conta Proton VPN. <span class="importante">NÃO use suas credenciais de login normais.</span> Encontre-as na seção "Conta" do site do Proton VPN.</li>
+        <li><strong>Imagem Docker <code>finger_app</code> Pré-Construída:</strong>
+            <ul>
+                <li>Esta imagem contém seu script <code>fingerv7.py</code>, dependências (<code>requirements.txt</code>) e o <code>ffmpeg</code>.</li>
+                <li>Ela precisa estar disponível em um registro Docker acessível pela(s) sua(s) VPS(s).
+                    <ul>
+                        <li><strong>Docker Hub (Recomendado):</strong> Crie uma conta gratuita em <a href="https://hub.docker.com/" target="_blank">hub.docker.com</a>. Você precisará do seu nome de usuário do Docker Hub para nomear e enviar a imagem (ex: <code>seu_usuario_dockerhub/finger_app:paidvpn-v1</code>).</li>
+                        <li><strong>Outros Registros:</strong> Se usar um registro privado (GitLab Registry, AWS ECR, etc.), certifique-se de que sua VPS tenha as credenciais necessárias para acessá-lo.</li>
+                    </ul>
+                </li>
+                <li>Consulte o <strong>Apêndice A: Construindo e Enviando a Imagem <code>finger_app</code></strong> no final deste manual para instruções detalhadas.</li>
+            </ul>
+        </li>
+        <li><strong>Acesso à(s) VPS(s):</strong> Acesso SSH é necessário para o build inicial da imagem e pode ser necessário para configurações manuais.</li>
+        <li><strong>EasyPanel (Opcional, mas Foco do Cenário 1 e 2):</strong> Acesso à interface web, se for usar para gerenciamento.</li>
+        <li><strong>Acesso ao Banco de Dados:</strong> Credenciais PostgreSQL e firewall configurado para aceitar conexões dos IPs da VPN, se necessário.</li>
+        <li><strong><code>docker-compose.yml</code> Base:</strong> O YAML funcional (fornecido nos cenários abaixo), configurado para usar sua imagem pré-construída e a seleção dinâmica do <code>gluetun</code>.</li>
+        <li><strong>Arquivos Fonte (Para Build Inicial):</strong> Uma cópia local (ou na VPS de build) dos arquivos necessários para construir a imagem: <code>fingerv7.py</code>, <code>requirements.txt</code>, <code>Dockerfile</code>.</li>
+    </ol>
+
+    <hr>
+
+    <h2>Estrutura de Arquivos Esperada (Para Build Manual Inicial)</h2>
+    <p>Antes de construir a imagem Docker pela primeira vez (veja Apêndice A), você precisará ter os seguintes arquivos organizados em um diretório na máquina onde fará o build (pode ser sua máquina local ou a VPS, acessada via SSH):</p>
+    <pre><code>/caminho/para/seu/projeto/  <-- Diretório Raiz do Projeto (Ex: /opt/finger_build)
+└── app/                  <-- Diretório com os arquivos da aplicação
+    ├── Dockerfile        # Arquivo para construir a imagem
+    ├── fingerv7.py       # Seu script principal
+    └── requirements.txt  # Lista de dependências Python
+</code></pre>
+    <div class="nota">
+        <p><strong>Nota sobre FTP/SFTP:</strong> Você pode usar FTP ou SFTP para transferir os arquivos <code>fingerv7.py</code>, <code>requirements.txt</code> e <code>Dockerfile</code> para este diretório na sua VPS antes de executar os comandos de build via SSH. No entanto, o FTP/SFTP <strong>não constrói</strong> a imagem Docker; ele apenas transfere os arquivos fonte.</p>
+    </div>
+
+    <hr>
+
+    <h2>Cenário 1: Adicionar Nova Instância na MESMA VPS (Via EasyPanel)</h2>
+    <p>Adiciona um novo serviço Compose no EasyPanel, rodando um novo par <code>gluetun</code>+<code>finger_app</code> com sua própria conexão VPN.</p>
+
+    <ol>
+        <li>
+            <h3>Acesse o EasyPanel</h3>
+            <p>Faça login na interface web da VPS.</p>
+            <div class="placeholder-image">
+                <img src="images/placeholder_easypanel_home.png" alt="Tela inicial do EasyPanel (Painel com Projetos)">
+            </div>
+        </li>
+        <li>
+            <h3>Crie um Novo Serviço Compose</h3>
+            <ul>
+                <li>Clique em "+ Serviço".</li>
+                <li>Escolha o tipo <strong>"Compose BETA"</strong>.</li>
+                 <div class="placeholder-image">
+                    [Placeholder: Imagem da seleção de serviço 'Compose BETA']
+                    <img src="images/placeholder_select_compose.png" alt="Seleção do serviço Compose BETA">
+                    <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_select_compose.png)</small></p>
+                </div>
+                <li>Dê um nome único (ex: <code>finger_3_vpn</code>).</li>
+                <li>Clique em "Criar".</li>
+            </ul>
+        </li>
+        <li>
+            <h3>Configure o Serviço</h3>
+            <ul>
+                <li><strong>Conteúdo (docker-compose.yml):</strong> Na aba "docker-compose.yml" (ou similar), cole o conteúdo YAML base. <strong class="importante">Certifique-se de substituir <code>seu_usuario_dockerhub/finger_app:paidvpn-v1</code> pelo nome e tag corretos da sua imagem pré-construída.</strong>
+                    <pre><code># docker-compose.yml (Base para EasyPanel - Plano Pago, Imagem Pré-construída)
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes: [gluetun_data:/gluetun]
+    environment:
+      - VPN_SERVICE_PROVIDER=\${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=\${VPN_TYPE:-wireguard}
+      - SERVER_COUNTRIES=\${SERVER_COUNTRIES:-Brazil} # Definido na UI EasyPanel
+      - WIREGUARD_PRIVATE_KEY=\${WIREGUARD_PRIVATE_KEY} # Definido na UI EasyPanel
+      - OPENVPN_USER=\${VPN_USER} # Definido na UI EasyPanel
+      - OPENVPN_PASSWORD=\${VPN_PASSWORD} # Definido na UI EasyPanel
+      - TZ=\${TZ:-America/Sao_Paulo}
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  finger_app:
+    # !!! SUBSTITUA pela sua imagem e tag reais !!!
+    image: seu_usuario_dockerhub/finger_app:paidvpn-v1
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun: { condition: service_healthy }
+    volumes: [app_segments:/app/segments]
+    environment:
+      - POSTGRES_HOST=\${POSTGRES_HOST}
+      - POSTGRES_USER=\${POSTGRES_USER}
+      - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
+      - POSTGRES_DB=\${POSTGRES_DB}
+      - POSTGRES_PORT=\${POSTGRES_PORT:-5432}
+      - DB_TABLE_NAME=\${DB_TABLE_NAME:-music_log}
+      - SERVER_ID=\${SERVER_ID} # Será definido na UI EasyPanel
+      - TOTAL_SERVERS=\${TOTAL_SERVERS} # Será definido na UI EasyPanel
+      - DISTRIBUTE_LOAD=\${DISTRIBUTE_LOAD:-True}
+      - ENABLE_ROTATION=\${ENABLE_ROTATION:-False}
+      - ROTATION_HOURS=\${ROTATION_HOURS:-24}
+      - IDENTIFICATION_DURATION=\${IDENTIFICATION_DURATION:-15}
+      - DUPLICATE_PREVENTION_WINDOW_SECONDS=\${DUPLICATE_PREVENTION_WINDOW_SECONDS:-900}
+      - SEGMENTS_DIR=/app/segments
+      - PYTHONUNBUFFERED=1
+      - TZ=\${TZ:-America/Sao_Paulo}
+      # Adicione outras variáveis do fingerv7.py aqui se necessário
+      # - ALERT_EMAIL=\${ALERT_EMAIL}
+    restart: unless-stopped
+
+volumes:
+  gluetun_data:
+  app_segments:
+</code></pre>
+                </li>
+                <li><strong>Ambiente (Environment Variables):</strong> Vá para a aba/seção "Ambiente". Adicione todas as variáveis necessárias, incluindo:
+                     <div class="placeholder-image">
+                        [Placeholder: Imagem da tela de Variáveis de Ambiente do EasyPanel]
+                        <img src="images/placeholder_env_vars.png" alt="Tela de Variáveis de Ambiente">
+                        <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_env_vars.png)</small></p>
+                    </div>
+                    <ul>
+                        <li><code>VPN_USER</code>: (Credencial de serviço ProtonVPN)</li>
+                        <li><code>VPN_PASSWORD</code>: (Credencial de serviço ProtonVPN)</li>
+                        <li><code>WIREGUARD_PRIVATE_KEY</code>: (Sua chave privada WireGuard)</li>
+                        <li><code>POSTGRES_HOST</code>, <code>POSTGRES_USER</code>, <code>POSTGRES_PASSWORD</code>, <code>POSTGRES_DB</code></li>
+                        <li><code>SERVER_COUNTRIES</code>: (Ex: <code>Brazil</code> - ou sua preferência de localização para esta instância)</li>
+                        <li><strong class="importante"><code>SERVER_ID</code></strong>: Defina o próximo ID único (ex: <code>4</code>).</li>
+                        <li><strong class="importante"><code>TOTAL_SERVERS</code></strong>: Defina o novo número total (ex: <code>4</code>).</li>
+                        <li><code>DISTRIBUTE_LOAD</code>: <code>True</code>.</li>
+                        <li>Outras variáveis do <code>fingerv7.py</code>.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>
+            <h3>Salve e Implante</h3>
+            <ul>
+                <li>Salve as configurações do ambiente.</li>
+                <li>Salve o conteúdo do `docker-compose.yml`.</li>
+                <li>Clique em "Implantar".</li>
+                 <div class="placeholder-image">
+                    [Placeholder: Imagem do botão Implantar/Deploy]
+                    <img src="images/placeholder_deploy_button.png" alt="Botão Implantar">
+                    <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_deploy_button.png)</small></p>
+                </div>
+            </ul>
+        </li>
+        <li>
+            <h3 class="importante">ATUALIZE <code>TOTAL_SERVERS</code> NAS OUTRAS INSTÂNCIAS!</h3>
+            <ul>
+                <li>Vá para a configuração de **TODAS as outras instâncias `finger`** (na mesma VPS e em outras).</li>
+                <li>Edite suas "Environment Variables".</li>
+                <li>Atualize o valor de <code>TOTAL_SERVERS</code> para o novo total (ex: <code>4</code>).</li>
+                <li>Salve e <strong>reimplante cada uma dessas outras instâncias</strong>.</li>
+            </ul>
+        </li>
+        <li>
+            <h3>Verifique os Logs</h3>
+            <p>Monitore os logs da nova instância e das atualizadas no EasyPanel para garantir a operação correta.</p>
+            <div class="placeholder-image">
+                [Placeholder: Imagem da tela de Logs do EasyPanel mostrando logs de `gluetun` e `finger_app`]
+                <img src="images/placeholder_logs.png" alt="Tela de Logs">
+                <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_logs.png)</small></p>
+            </div>
+        </li>
+    </ol>
+
+    <hr>
+
+    <h2>Cenário 2: Implantar Instância em uma NOVA VPS (Com EasyPanel)</h2>
+    <p>Processo muito similar ao Cenário 1, mas executado em uma nova máquina.</p>
+    <ol>
+        <li><strong>Prepare a Nova VPS:</strong> Instale Docker, Docker Compose e EasyPanel.</li>
+        <li><strong>Acesse o EasyPanel (Nova VPS):</strong> Faça login.</li>
+        <li><strong>Crie um Novo Serviço Compose:</strong> Siga os passos 2a-2c do Cenário 1 (dê um nome único, ex: <code>finger_4_vpn</code>).</li>
+        <li><strong>Configure o Serviço:</strong>
+            <ul>
+                 <li><strong>Conteúdo (docker-compose.yml):</strong> Cole o mesmo YAML base. Verifique o nome da imagem.</li>
+                 <li><strong>Ambiente (Environment Variables):</strong> Configure as variáveis como no passo 3c do Cenário 1, atribuindo o <strong class="importante"><code>SERVER_ID</code></strong> único correto e o <strong class="importante"><code>TOTAL_SERVERS</code></strong> atualizado.</li>
+            </ul>
+        </li>
+         <li><strong>Salve e Implante:</strong> Salve e clique em "Implantar" nesta nova VPS.</li>
+         <li>
+            <h3 class="importante">ATUALIZE <code>TOTAL_SERVERS</code> NAS OUTRAS INSTÂNCIAS!</h3>
+             <p>(Repita o passo 5 do Cenário 1 para todas as outras instâncias em outras VPSs).</p>
+        </li>
+        <li><strong>Verifique os Logs:</strong> Monitore os logs na nova instância.</li>
+    </ol>
+
+    <hr>
+
+    <h2>Cenário 3: Implantar Instância em uma NOVA VPS (Manualmente via SSH)</h2>
+    <p>Use se não tiver EasyPanel na nova VPS.</p>
+    <ol>
+        <li><strong>Prepare a Nova VPS:</strong> Conecte via SSH, instale Docker e Docker Compose, faça login no Docker Hub (`docker login`).</li>
+        <li><strong>Crie o Diretório do Projeto:</strong>
+            <pre><code>sudo mkdir -p /opt/finger_vpn_manual
+cd /opt/finger_vpn_manual</code></pre>
+        </li>
+        <li><strong>Crie o <code>docker-compose.yml</code>:</strong>
+            <pre><code>sudo nano docker-compose.yml</code></pre>
+            Cole o conteúdo YAML base (ver Cenário 1, passo 3a). <strong class="importante">Certifique-se de que a linha <code>image:</code> aponta para sua imagem correta no Docker Hub.</strong>
+        </li>
+        <li><strong>Crie o Arquivo <code>.env</code> para Segredos:</strong>
+             <pre><code>sudo nano .env</code></pre>
+            Adicione as variáveis necessárias (formato `CHAVE=VALOR`), como no exemplo abaixo, definindo o <strong class="importante"><code>SERVER_ID</code></strong> único correto e o <strong class="importante"><code>TOTAL_SERVERS</code></strong> atualizado.
+            <pre><code># Exemplo de .env para instância manual (/opt/finger_vpn_manual/.env)
+VPN_SERVICE_PROVIDER=protonvpn
+VPN_TYPE=wireguard
+SERVER_COUNTRIES=Brazil # Ou sua preferência
+VPN_USER=SEU_USUARIO_SERVICO_PROTON
+VPN_PASSWORD=SUA_SENHA_SERVICO_PROTON
+WIREGUARD_PRIVATE_KEY=SUA_CHAVE_PRIVADA_WIREGUARD
+
+POSTGRES_HOST=SEU_HOST_DB
+POSTGRES_USER=SEU_USUARIO_DB
+POSTGRES_PASSWORD=SUA_SENHA_DB
+POSTGRES_DB=SEU_NOME_DB
+POSTGRES_PORT=5432
+DB_TABLE_NAME=music_log
+
+# IDs e Configuração da Aplicação
+SERVER_ID=4 # <- ID ÚNICO para esta instância
+TOTAL_SERVERS=4 # <- NOVO TOTAL de instâncias
+DISTRIBUTE_LOAD=True
+ENABLE_ROTATION=False # Ou True
+ROTATION_HOURS=24
+IDENTIFICATION_DURATION=15
+DUPLICATE_PREVENTION_WINDOW_SECONDS=900
+PYTHONUNBUFFERED=1
+TZ=America/Sao_Paulo
+# Adicione outras variáveis (ALERT_EMAIL, etc.)
+</code></pre>
+            Salve e Saia.
+        </li>
+        <li><strong>Inicie os Contêineres:</strong>
+            <pre><code># Certifique-se de estar em /opt/finger_vpn_manual
+sudo docker-compose up -d</code></pre>
+        </li>
+         <li>
+            <h3 class="importante">ATUALIZE <code>TOTAL_SERVERS</code> NAS OUTRAS INSTÂNCIAS!</h3>
+             <p>(Repita o passo 5 do Cenário 1 para todas as outras instâncias).</p>
+        </li>
+         <li><strong>Verifique os Logs:</strong>
+             <pre><code>cd /opt/finger_vpn_manual
+sudo docker-compose logs -f</code></pre>
+        </li>
+    </ol>
+
+    <hr>
+
+    <h2>Considerações Importantes</h2>
+    <ul>
+        <li><strong class="importante">Sincronização de <code>TOTAL_SERVERS</code>:</strong> É crucial que <span class="importante">TODAS</span> as instâncias em execução tenham o mesmo valor para <code>TOTAL_SERVERS</code> e sejam reiniciadas/reimplantadas após qualquer alteração nesse total.</li>
+        <li><strong>Unicidade de <code>SERVER_ID</code>:</strong> Cada <code>finger_app</code> deve ter um <code>SERVER_ID</code> único no intervalo de 1 a <code>TOTAL_SERVERS</code>.</li>
+        <li><strong>Limite de Conexões VPN:</strong> Monitore o número de instâncias <code>gluetun</code> ativas para não exceder o limite da sua conta Proton VPN.</li>
+        <li><strong>Recursos da VPS:</strong> Monitore CPU e RAM.</li>
+        <li><strong>Acesso ao Banco de Dados:</strong> O firewall do seu DB pode precisar permitir conexões dos IPs de saída da VPN.</li>
+    </ul>
+
+    <hr>
+
+    <h2>Apêndice A: Construindo e Enviando a Imagem <code>finger_app</code></h2>
+    <p>Este passo só precisa ser feito quando você cria a imagem pela primeira vez ou quando atualiza o código <code>fingerv7.py</code> ou suas dependências.</p>
+    <ol>
+        <li>
+            <h4>Prepare os Arquivos Fonte:</h4>
+            <p>Certifique-se de ter a estrutura de arquivos (<code>app/Dockerfile</code>, <code>app/fingerv7.py</code>, <code>app/requirements.txt</code>) pronta na máquina onde você executará os comandos Docker (pode ser sua máquina local ou uma VPS via SSH). O conteúdo do <code>Dockerfile</code> e <code>requirements.txt</code> pode ser encontrado nos pré-requisitos ou passos anteriores deste manual.</p>
+             <div class="placeholder-image">
+                [Placeholder: Imagem mostrando a estrutura de diretórios `app/` com os arquivos]
+                <img src="images/placeholder_file_structure.png" alt="Estrutura de arquivos para build">
+                <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_file_structure.png)</small></p>
+            </div>
+        </li>
+        <li>
+            <h4>Conecte-se via SSH (se build na VPS):</h4>
+            <p>Se for construir na VPS, conecte-se a ela.</p>
+        </li>
+         <li>
+            <h4>Navegue até o Diretório <code>app</code>:</h4>
+            <pre><code>cd /caminho/para/seu/projeto/app</code></pre>
+            <p>(Substitua <code>/caminho/para/seu/projeto/</code> pelo caminho real onde está a pasta <code>app</code>).</p>
+        </li>
+        <li>
+            <h4>Faça Login no Docker Hub (ou outro registro):</h4>
+            <pre><code>docker login</code></pre>
+            <p>Siga as instruções para inserir seu nome de usuário e senha/token.</p>
+             <div class="placeholder-image">
+                [Placeholder: Imagem mostrando o prompt de login do Docker]
+                <img src="images/placeholder_docker_login.png" alt="Prompt de login do Docker">
+                <p><small>(Você precisará salvar esta imagem manualmente como: images/placeholder_docker_login.png)</small></p>
+            </div>
+        </li>
+        <li>
+            <h4>Construa a Imagem Docker:</h4>
+            <p>Substitua <code>seu_usuario_dockerhub</code> pelo seu usuário e escolha uma tag (ex: <code>paidvpn-v1</code>).</p>
+            <pre><code>docker build -t seu_usuario_dockerhub/finger_app:paidvpn-v1 .</code></pre>
+            <p>(O <code>.</code> no final indica o diretório atual como contexto de build).</p>
+        </li>
+        <li>
+            <h4>Envie a Imagem para o Registro:</h4>
+            <pre><code>docker push seu_usuario_dockerhub/finger_app:paidvpn-v1</code></pre>
+            <p>Após o push ser concluído, a imagem estará pronta para ser usada no seu <code>docker-compose.yml</code>.</p>
+        </li>
+    </ol>
+
+    <hr>
+
+     <h2>Atualização da Imagem <code>finger_app</code> (Quando o Código Muda)</h2>
+    <p>Se você atualizar seu script <code>fingerv7.py</code> ou <code>requirements.txt</code>:</p>
+    <ol>
+        <li>Repita os passos do <strong>Apêndice A</strong>, mas use uma nova tag para a imagem (ex: <code>paidvpn-v2</code>) nos comandos <code>docker build</code> e <code>docker push</code>.</li>
+        <li>Para <strong>cada instância</strong> em execução (via EasyPanel ou manual):
+            <ul>
+                <li>Atualize a linha <code>image:</code> no <code>docker-compose.yml</code> para a nova tag (ex: <code>seu_usuario_dockerhub/finger_app:paidvpn-v2</code>).</li>
+                <li>Salve e <strong>reimplante/reinicie</strong> o serviço (<code>docker-compose up -d</code> para manual, botão "Implantar" no EasyPanel).</li>
+            </ul>
+        </li>
+    </ol>
+
+</body>
+</html> 
