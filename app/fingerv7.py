@@ -558,66 +558,92 @@ def load_streams():
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
     Retorna a lista de streams e um booleano indicando se carregou do DB.
     """
-    streams_from_db = fetch_streams_from_db() # Tenta buscar do DB primeiro
+    streams_from_db = fetch_streams_from_db()  # Tenta buscar do DB primeiro
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
-        save_streams_to_json(streams_from_db) # Atualiza o JSON local como backup
-        return streams_from_db, True # Retorna streams do DB e True
+        save_streams_to_json(streams_from_db)  # Atualiza o JSON local como backup
+        return streams_from_db, True  # Retorna streams do DB e True
 
     # Fallback: Tentar carregar do JSON local se o DB falhar
-    logger.warning(f"Falha ao carregar do DB ou DB não configurado. Tentando carregar do arquivo de fallback: {STREAMS_FILE}")
+    logger.warning(
+        f"Falha ao carregar do DB ou DB não configurado. "
+        f"Tentando carregar do arquivo de fallback: {STREAMS_FILE}"
+    )
     if os.path.exists(STREAMS_FILE):
-            try:
-                with open(STREAMS_FILE, 'r', encoding='utf-8') as f:
+        try:
+            with open(STREAMS_FILE, 'r', encoding='utf-8') as f:
                 streams_from_json = json.load(f)
-                if isinstance(streams_from_json, list): # Verificar se é uma lista
-                     # Validar estrutura básica (opcional, mas recomendado)
-                     valid_streams = []
-                     seen_ids = set()
-                     for stream in streams_from_json:
-                         # Validação mais robusta
-                         stream_id_val = stream.get('id') # Obter ID para validação
-                         if (isinstance(stream, dict) and
-                             stream_id_val is not None and # ID não pode ser None
-                             'name' in stream and
-                             'url' in stream and
-                             str(stream_id_val) not in seen_ids): # Evitar IDs duplicados no JSON (comparar como string)
 
-                             stream_id_str = str(stream_id_val) # Garantir que ID seja string
+            if isinstance(streams_from_json, list):  # Verificar se é uma lista
+                # Validar estrutura básica (opcional, mas recomendado)
+                valid_streams = []
+                seen_ids = set()
+                for stream in streams_from_json:
+                    # Validação mais robusta
+                    stream_id_val = stream.get('id')  # Obter ID para validação
+                    if (
+                        isinstance(stream, dict)
+                        and stream_id_val is not None  # ID não pode ser None
+                        and 'name' in stream
+                        and 'url' in stream
+                        and str(stream_id_val) not in seen_ids  # Evitar IDs duplicados
+                    ):
+                        stream_id_str = str(stream_id_val)  # Normalizar para string
 
-                             # Garantir que 'metadata' exista e seja um dict
-                             if 'metadata' not in stream or not isinstance(stream['metadata'], dict):
-                                 if 'metadata' in stream:
-                                     logger.warning(f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON.")
-                                 stream['metadata'] = {}
+                        # Garantir que 'metadata' exista e seja um dict
+                        if 'metadata' not in stream or not isinstance(stream['metadata'], dict):
+                            if 'metadata' in stream:
+                                logger.warning(
+                                    f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON."
+                                )
+                            stream['metadata'] = {}
 
-                             # Atualizar o ID no dicionário para ser string se necessário
-                             stream['id'] = stream_id_str
-                             valid_streams.append(stream)
-                             seen_ids.add(stream_id_str)
-                         else:
-                             logger.warning(f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) encontrado e ignorado no JSON: {stream}")
-
-                     if not valid_streams:
-                          logger.error(f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}")
-                          return [], False
-
-                     logger.info(f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback.")
-                     return valid_streams, False # Retorna streams do JSON e False
-                            else:
-                    logger.error(f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida.")
-                    return [], False # Retorna lista vazia e False
-        except (IOError, json.JSONDecodeError) as e:
-            logger.error(f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}", exc_info=True)
-            return [], False # Retorna lista vazia e False
-            except Exception as e:
-             logger.error(f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}", exc_info=True)
-             return [], False
+                        # Atualizar o ID no dicionário para ser string se necessário
+                        stream['id'] = stream_id_str
+                        valid_streams.append(stream)
+                        seen_ids.add(stream_id_str)
                     else:
-        logger.critical(f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. Não há fonte de streams disponível.")
+                        logger.warning(
+                            f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) "
+                            f"encontrado e ignorado no JSON: {stream}"
+                        )
+
+                if not valid_streams:
+                    logger.error(
+                        f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
+                    )
+                    return [], False
+
+                logger.info(
+                    f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback."
+                )
+                return valid_streams, False  # Retorna streams do JSON e False
+            else:
+                logger.error(
+                    f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida."
+                )
+                return [], False  # Retorna lista vazia e False
+
+        except (IOError, json.JSONDecodeError) as e:
+            logger.error(
+                f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}",
+                exc_info=True,
+            )
+            return [], False  # Retorna lista vazia e False
+        except Exception as e:
+            logger.error(
+                f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}",
+                exc_info=True,
+            )
+            return [], False
+    else:
+        logger.critical(
+            f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. "
+            f"Não há fonte de streams disponível."
+        )
         # send_email_alert("Erro Crítico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} não existe.")
-        return [], False # Retorna lista vazia e False
+        return [], False  # Retorna lista vazia e False
 
 # Função para carregar o estado das últimas músicas identificadas
 def load_last_songs():
