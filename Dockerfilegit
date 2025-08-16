@@ -16,5 +16,17 @@ WORKDIR /app
 COPY app/requirements.txt .
 
 # Instalar as dependências Python
-# --no-cache-dir reduz o tamanho da imagem
-# --upgrade pip
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar o código da aplicação
+COPY app/ .
+
+# Criar diretório de segmentos (persistente via volume no compose)
+RUN mkdir -p /app/segments && chmod -R 777 /app/segments
+
+# Saída sem buffer para logs em tempo real
+ENV PYTHONUNBUFFERED=1
+
+# Comando de inicialização da aplicação
+CMD ["python", "fingerv7.py"]
