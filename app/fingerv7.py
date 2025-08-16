@@ -1178,25 +1178,39 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
         logger.info(f"update_local_log: Inserção de {song_title} - {artist} falhou ou foi ignorada (duplicata/erro). Log local não atualizado.")
         return False 
 
-# Função para processar um único stream
+# Modificar função process_stream para usar distribuição dinâmica
 async def process_stream(stream, last_songs):
     logger.debug("Iniciando a função process_stream()")
     url = stream['url']
     name = stream['name']
     # Use stream index or name as the key for tracking
-    stream_key = stream.get('index', name) 
-    processed_by_server = stream.get('processed_by_server', True)
+    stream_key = stream.get('index', name)
+    stream_index = stream.get('index', 0)
     previous_segment = None
 
     while True:
         logger.info(f"Processando streaming: {name}")
+        
+        # Verificar dinamicamente se este stream deve ser processado por este servidor
+        try:
+            processed_by_server = await should_process_stream_dynamic(stream_index, SERVER_ID)
+        except Exception as e:
+            logger.error(f"Erro ao verificar distribuição dinâmica para {name}: {e}")
+            # Fallback para lógica estática
+            processed_by_server = stream.get('processed_by_server', True)
+        
         # Verificar se este stream está sendo processado por este servidor
         if not processed_by_server:
-            logger.info(f"Stream {name} ({stream_key}) não é processado por este servidor. Verificando novamente em 60 segundos.")
-            await asyncio.sleep(60)  # Aguardar antes de verificar novamente
+            logger.info(
+                f"Stream {name} ({stream_key}) não é processado por este servidor. "
+                f"Verificando novamente (rebalance-aware) em até 60 segundos."
+            )
+            await wait_for_rebalance_or_timeout(60)
             continue
 
-        current_segment_path = await capture_stream_segment(name, url, duration=None, processed_by_server=processed_by_server)
+        current_segment_path = await capture_stream_segment(
+            name, url, duration=None, processed_by_server=processed_by_server
+        )
 
         if current_segment_path is None:
             # Registrar erro no tracker
@@ -1207,8 +1221,11 @@ async def process_stream(stream, last_songs):
             if failure_count > 3:
                 wait_time = 30 # Increased wait time after 3 failures
                 
-            logger.error(f"Falha ao capturar segmento do streaming {name} ({stream_key}). Falha #{failure_count}. Tentando novamente em {wait_time} segundos...")
-            await asyncio.sleep(wait_time)
+            logger.error(
+                f"Falha ao capturar segmento do streaming {name} ({stream_key}). "
+                f"Falha #{failure_count}. Tentando novamente em até {wait_time} segundos..."
+            )
+            await wait_for_rebalance_or_timeout(wait_time)
             continue
         else:
             # Limpar erros no tracker em caso de sucesso
@@ -1216,10 +1233,13 @@ async def process_stream(stream, last_songs):
 
         # Se a captura foi bem-sucedida, prosseguir com o Shazam
         await shazam_queue.put((current_segment_path, stream, last_songs))
-        await shazam_queue.join() # Esperar o item ser processado antes do próximo ciclo? (Verificar necessidade)
+        await shazam_queue.join()
 
-        logger.info(f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})...")
-        await asyncio.sleep(60)  # Intervalo de captura de segmentos
+        logger.info(
+            f"Aguardando até 60 segundos (rebalance-aware) para o próximo ciclo do stream "
+            f"{name} ({stream_key})..."
+        )
+        await wait_for_rebalance_or_timeout(60)
 
 def send_email_alert(subject, body):
     """
@@ -1295,13 +1315,31 @@ async def sync_json_with_db():
                 }
                 streams.append(stream)
             
-            # Aplicar distribuição de carga se ativada (apenas para visualização no arquivo JSON)
-            if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
-                server_id = int(SERVER_ID)
-                if server_id >= 1 and server_id <= TOTAL_SERVERS:
+            # Aplicar distribuição de carga dinâmica se ativada (apenas para visualização no arquivo JSON)
+            if DISTRIBUTE_LOAD and len(streams) > 0:
+                try:
+                    # Obter servidores online dinamicamente
+                    online_servers = await get_online_server_ids()
+                    active_servers_count = len(online_servers)
+                    
+                    logger.info(f"sync_json_with_db: Aplicando distribuição dinâmica com {active_servers_count} servidores online: {online_servers}")
+                    
                     # Marcar quais streams são processados por este servidor
-                    for i, stream_item in enumerate(streams): # Renomeado para evitar conflito com stream global
-                        stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (server_id - 1))
+                    for i, stream_item in enumerate(streams):
+                        stream_index = int(stream_item.get('index', i))
+                        should_process = await should_process_stream_dynamic(stream_index, SERVER_ID, online_servers)
+                        stream_item['processed_by_server'] = should_process
+                        stream_item['assigned_to_servers'] = online_servers  # Para debug/informação
+                        stream_item['total_active_servers'] = active_servers_count
+                        
+                except Exception as dyn_err:
+                    logger.error(f"Erro ao aplicar distribuição dinâmica em sync_json_with_db: {dyn_err}")
+                    # Fallback para lógica estática
+                    server_id = int(SERVER_ID)
+                    if server_id >= 1 and server_id <= TOTAL_SERVERS:
+                        for i, stream_item in enumerate(streams):
+                            stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (server_id - 1))
+                            stream_item['distribution_mode'] = 'static_fallback'
             
             # Salvar os streams no arquivo JSON local (operação de I/O síncrona)
             try:
@@ -1557,6 +1595,19 @@ async def send_heartbeat():
         cpu_percent = await asyncio.to_thread(psutil.cpu_percent, interval=1) # Interval pode ser bloqueante
         disk_info = await asyncio.to_thread(psutil.disk_usage, '/')
         
+        # Calcular streams processados dinamicamente
+        try:
+            processing_streams_count = 0
+            for stream in STREAMS:
+                stream_index = stream.get('index', 0)
+                if await should_process_stream_dynamic(stream_index, SERVER_ID):
+                    processing_streams_count += 1
+        except Exception as calc_err:
+            logger.error(f"Erro ao calcular streams processados dinamicamente: {calc_err}")
+            # Fallback para lógica estática
+            processing_streams_count = len([s for s in STREAMS if s.get('processed_by_server', 
+                                                                       (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1))])
+        
         # Informações para o banco de dados
         info = {
             "hostname": hostname,
@@ -1566,10 +1617,12 @@ async def send_heartbeat():
             "memory_available_mb": round(mem_info.available / (1024 * 1024), 2),
             "disk_percent": disk_info.percent,
             "disk_free_gb": round(disk_info.free / (1024 * 1024 * 1024), 2),
-            "processing_streams": len([s for s in STREAMS if s.get('processed_by_server', 
-                                                               (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1))]),
+            "processing_streams": processing_streams_count,
             "total_streams": len(STREAMS),
-            "python_version": platform.python_version()
+            "python_version": platform.python_version(),
+            "distribution_mode": "dynamic" if DISTRIBUTE_LOAD else "static",
+            "static_total_servers": TOTAL_SERVERS,
+            "cached_active_servers": _cached_active_servers_count
         }
         info_json = json.dumps(info)
         
@@ -1607,7 +1660,7 @@ async def send_heartbeat():
                     """, (SERVER_ID, ip_address, info_json)) # Usa a variável info_json
                     
                     _conn.commit()
-                    logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID}")
+                    logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID} (processando {processing_streams_count} streams)")
                 return _conn # Retorna a conexão para ser fechada fora
             except Exception as db_err:
                 logger.error(f"Erro DB em send_heartbeat [thread]: {db_err}")
@@ -1756,6 +1809,228 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0
 
+# Variáveis globais para cache de servidores dinâmicos
+_last_dynamic_check = 0
+_cached_online_servers = []
+_cached_active_servers_count = 1
+DYNAMIC_CACHE_TTL = 120  # Cache por 2 minutos
+OFFLINE_THRESHOLD_SECS = 600  # Janela para considerar servidor online (manter em sincronia com check_servers_status)
+
+# Evento global de rebalanceamento
+REBALANCE_EVENT = asyncio.Event()
+
+# Estado conhecido de servidores online (para detecção de mudanças)
+_last_known_online_servers = []
+
+# Função para obter servidores online baseado em heartbeats
+async def get_online_server_ids(force_refresh=False):
+    """
+    Consulta a tabela server_heartbeats para obter lista de servidores online.
+    Retorna lista de server_ids que estão com status 'ONLINE' e heartbeat recente.
+    Se force_refresh=True, ignora o cache.
+    """
+    global _last_dynamic_check, _cached_online_servers
+
+    current_time = time.time()
+    # Usar cache se permitido e ainda válido
+    if not force_refresh and (current_time - _last_dynamic_check < DYNAMIC_CACHE_TTL) and _cached_online_servers:
+        return _cached_online_servers
+
+    conn = None
+    online_servers = []
+
+    try:
+        def db_get_online_servers():
+            _conn = connect_db()
+            if not _conn:
+                logger.warning("get_online_server_ids: Não foi possível conectar ao DB. Usando configuração estática.")
+                return [SERVER_ID]  # Fallback para servidor atual
+            
+            try:
+                with _conn.cursor() as cursor:
+                    # Verificar se tabela existe
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'server_heartbeats'
+                        );
+                    """)
+                    
+                    if not cursor.fetchone()[0]:
+                        logger.debug("get_online_server_ids: Tabela heartbeats não existe. Usando configuração estática.")
+                        return [SERVER_ID]
+                    
+                    # Obter servidores online
+                    cursor.execute("""
+                        SELECT server_id 
+                        FROM server_heartbeats 
+                        WHERE status = 'ONLINE' 
+                        AND last_heartbeat > NOW() - INTERVAL '%s seconds'
+                        ORDER BY server_id;
+                    """, (OFFLINE_THRESHOLD_SECS,))
+                    
+                    rows = cursor.fetchall()
+                    return [row[0] for row in rows] if rows else [SERVER_ID]
+                    
+            except Exception as db_err:
+                logger.error(f"Erro DB em get_online_server_ids: {db_err}")
+                return [SERVER_ID]  # Fallback
+            finally:
+                return _conn
+        
+        result = await asyncio.to_thread(db_get_online_servers)
+        if isinstance(result, list):
+            online_servers = result
+            conn = None
+        else:
+            conn = result
+            online_servers = [SERVER_ID]
+        
+        # Atualizar cache
+        _cached_online_servers = online_servers
+        _last_dynamic_check = current_time
+        
+        logger.debug(f"get_online_server_ids: Servidores online: {online_servers}")
+        return online_servers
+        
+    except Exception as e:
+        logger.error(f"Erro ao obter servidores online: {e}")
+        return [SERVER_ID]  # Fallback para servidor atual
+    finally:
+        if conn:
+            try:
+                await asyncio.to_thread(conn.close)
+            except Exception as close_err:
+                logger.error(f"Erro ao fechar conexão em get_online_server_ids: {close_err}")
+
+# Função para obter número de servidores ativos dinamicamente
+async def get_active_servers_count():
+    """
+    Retorna o número de servidores atualmente online e ativos.
+    Se não conseguir determinar dinamicamente, retorna TOTAL_SERVERS estático.
+    """
+    global _cached_active_servers_count
+
+    try:
+        online_servers = await get_online_server_ids()
+        active_count = len(online_servers)
+
+        # Validação: pelo menos 1 servidor (o atual) deve estar ativo
+        if active_count < 1:
+            logger.warning("get_active_servers_count: Nenhum servidor detectado como online. Usando fallback.")
+            active_count = 1
+
+        _cached_active_servers_count = active_count
+        logger.debug(f"get_active_servers_count: {active_count} servidores ativos detectados")
+        return active_count
+
+    except Exception as e:
+        logger.error(f"Erro ao obter contagem de servidores ativos: {e}")
+        # Fallback para configuração estática
+        return TOTAL_SERVERS
+
+# Função auxiliar: aguardar rebalanceamento ou timeout
+async def wait_for_rebalance_or_timeout(timeout_secs: int):
+    """
+    Aguarda até o REBALANCE_EVENT ser disparado ou até atingir timeout.
+    Não limpa o evento global aqui (limpeza centralizada no watcher).
+    """
+    try:
+        await asyncio.wait_for(REBALANCE_EVENT.wait(), timeout=timeout_secs)
+    except asyncio.TimeoutError:
+        pass
+
+# Watcher de servidores online que dispara o gatilho de rebalanceamento
+async def monitor_online_servers(poll_interval_secs: int = 30):
+    """
+    Observa a lista de servidores online ignorando cache, e dispara rebalanceamento
+    quando detectar mudanças (entrada/saída de servidores).
+    """
+    global _last_known_online_servers, _cached_active_servers_count, _cached_online_servers, _last_dynamic_check
+    # Inicializar estado conhecido
+    try:
+        _last_known_online_servers = await get_online_server_ids(force_refresh=True)
+    except Exception:
+        _last_known_online_servers = [SERVER_ID]
+    
+    logger.info(
+        f"monitor_online_servers: inicial online={_last_known_online_servers} "
+        f"(poll={poll_interval_secs}s)"
+    )
+    
+    while True:
+        try:
+            online_now = await get_online_server_ids(force_refresh=True)
+            if set(online_now) != set(_last_known_online_servers):
+                logger.info(
+                    f"Rebalanceamento: mudança detectada na lista de servidores online. "
+                    f"antes={_last_known_online_servers} agora={online_now}"
+                )
+                # Atualiza caches imediata/explicitamente
+                _cached_active_servers_count = max(1, len(online_now))
+                # Dispara o evento para acordar as corrotinas
+                REBALANCE_EVENT.set()
+                
+                # Atualiza o estado conhecido e o cache
+                _last_known_online_servers = online_now
+                # Manter o cache interno coerente com a mudança
+                _cached_online_servers = online_now
+                _last_dynamic_check = time.time()
+                
+                # Pequena janela para todas as tasks acordarem
+                await asyncio.sleep(1)
+                # Limpar o evento para permitir novos rebalanceamentos futuros
+                REBALANCE_EVENT.clear()
+        except Exception as e:
+            logger.error(f"monitor_online_servers: erro ao monitorar servidores online: {e}")
+        
+        await asyncio.sleep(poll_interval_secs)
+
+# Função para calcular se um stream deve ser processado por este servidor (dinâmico)
+async def should_process_stream_dynamic(stream_index, server_id, online_servers=None):
+    """
+    Determina se um stream deve ser processado por este servidor baseado na distribuição dinâmica.
+    """
+    if not DISTRIBUTE_LOAD:
+        return True
+    
+    try:
+        # Durante um rebalanceamento, forçar refresh da lista de online
+        if online_servers is None:
+            if REBALANCE_EVENT.is_set():
+                online_servers = await get_online_server_ids(force_refresh=True)
+            else:
+                online_servers = await get_online_server_ids()
+        
+        # Se não há servidores online ou apenas este servidor
+        if not online_servers or len(online_servers) == 1:
+            return True
+        
+        # Verificar se o servidor atual está na lista de online
+        if server_id not in online_servers:
+            logger.warning(f"Servidor atual ({server_id}) não está na lista de servidores online: {online_servers}")
+            return True  # Processar por segurança
+        
+        # Distribuição por módulo baseada apenas em servidores online
+        online_servers_sorted = sorted(online_servers)
+        server_position = online_servers_sorted.index(server_id)
+        total_online = len(online_servers_sorted)
+        
+        should_process = (int(stream_index) % total_online) == server_position
+        
+        logger.debug(
+            f"should_process_stream_dynamic: stream_index={stream_index}, "
+            f"server_id={server_id}, position={server_position}, "
+            f"total_online={total_online}, should_process={should_process}"
+        )
+        
+        return should_process
+        
+    except Exception as e:
+        logger.error(f"Erro em should_process_stream_dynamic: {e}")
+        # Fallback para lógica estática
+        return (int(stream_index) % TOTAL_SERVERS) == (server_id - 1)
+
 # Função principal para processar todos os streams
 async def main():
     logger.debug("Iniciando a função main()")
@@ -1790,22 +2065,53 @@ async def main():
     
     # Registrar informações sobre a distribuição de carga
     if DISTRIBUTE_LOAD:
-        logger.info(f"Modo de distribuição de carga ativado: Servidor {SERVER_ID} de {TOTAL_SERVERS}")
+        logger.info(f"Modo de distribuição de carga DINÂMICA ativado: Servidor {SERVER_ID}")
+        logger.info(f"TOTAL_SERVERS estático configurado: {TOTAL_SERVERS}")
+        
+        # Obter informações dinâmicas de servidores
+        try:
+            online_servers = await get_online_server_ids()
+            active_count = len(online_servers)
+            logger.info(f"Servidores online detectados: {online_servers} (total: {active_count})")
+        except Exception as e:
+            logger.error(f"Erro ao obter servidores online: {e}")
+            online_servers = [SERVER_ID]
+            active_count = 1
+        
         if ENABLE_ROTATION:
             logger.info(f"Rotação de rádios ativada: a cada {ROTATION_HOURS} horas")
             rotation_offset = calculate_rotation_offset()
             logger.info(f"Offset de rotação atual: {rotation_offset}")
         
-        # Calcular e exibir quantos streams cada servidor está processando
+        # Calcular e exibir quantos streams cada servidor está processando (dinâmico)
         streams_per_server = {}
         total_streams = len(STREAMS)
-        for i in range(1, TOTAL_SERVERS + 1):
-            streams_for_this_server = len([s for s in STREAMS if s.get('processed_by_server', 
-                                                                      (int(s.get('index', 0)) % TOTAL_SERVERS) == (i - 1))])
-            streams_per_server[i] = streams_for_this_server
+        
+        try:
+            for server_id in online_servers:
+                streams_for_this_server = 0
+                for stream in STREAMS:
+                    stream_index = stream.get('index', 0)
+                    if await should_process_stream_dynamic(stream_index, server_id, online_servers):
+                        streams_for_this_server += 1
+                streams_per_server[server_id] = streams_for_this_server
+        except Exception as calc_err:
+            logger.error(f"Erro ao calcular distribuição dinâmica: {calc_err}")
+            # Fallback para lógica estática
+            for i in range(1, TOTAL_SERVERS + 1):
+                streams_for_this_server = len([s for s in STREAMS if s.get('processed_by_server', 
+                                                                          (int(s.get('index', 0)) % TOTAL_SERVERS) == (i - 1))])
+                streams_per_server[i] = streams_for_this_server
             
-        logger.info(f"Distribuição de streams por servidor: {streams_per_server}")
+        logger.info(f"Distribuição DINÂMICA de streams por servidor: {streams_per_server}")
         logger.info(f"Este servidor ({SERVER_ID}) processará {streams_per_server.get(SERVER_ID, 0)} de {total_streams} streams")
+        
+        # Informar sobre diferenças entre configuração estática e dinâmica
+        static_streams_for_current = len([s for s in STREAMS if (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1)])
+        dynamic_streams_for_current = streams_per_server.get(SERVER_ID, 0)
+        if static_streams_for_current != dynamic_streams_for_current:
+            logger.info(f"DIFERENÇA DETECTADA: Configuração estática processaria {static_streams_for_current} streams, "
+                       f"distribuição dinâmica processará {dynamic_streams_for_current} streams")
     else:
         logger.info("Modo de distribuição de carga desativado. Processando todos os streams.")
 
@@ -1837,6 +2143,14 @@ async def main():
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
     
+    # Iniciar watcher de servidores online se distribuição dinâmica estiver ativada
+    if DISTRIBUTE_LOAD:
+        try:
+            online_servers_watcher_task = register_task(asyncio.create_task(monitor_online_servers(poll_interval_secs=30)))
+            logger.info("Watcher de servidores online iniciado (poll=30s).")
+        except Exception as e:
+            logger.error(f"Falha ao iniciar watcher de servidores online: {e}")
+    
     if 'send_data_to_db' in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
         tasks_to_gather = [monitor_task, shazam_task, send_data_task, shutdown_monitor_task, 
@@ -1844,6 +2158,10 @@ async def main():
     else:
         tasks_to_gather = [monitor_task, shazam_task, shutdown_monitor_task, 
                           heartbeat_task, server_monitor_task]
+    
+    # Adicionar o watcher de servidores online às tarefas se foi iniciado
+    if DISTRIBUTE_LOAD and 'online_servers_watcher_task' in locals():
+        tasks_to_gather.append(online_servers_watcher_task)
     
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     json_sync_task = register_task(asyncio.create_task(schedule_json_sync()))
