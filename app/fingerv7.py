@@ -2008,16 +2008,13 @@ async def get_online_server_ids(force_refresh=False):
     if not force_refresh and (current_time - _last_dynamic_check < DYNAMIC_CACHE_TTL) and _cached_online_servers:
         return _cached_online_servers
 
-    conn = None
-    online_servers = []
-
     try:
         def db_get_online_servers():
             _conn = connect_db()
             if not _conn:
                 logger.warning("get_online_server_ids: Não foi possível conectar ao DB. Usando configuração estática.")
                 return [SERVER_ID]  # Fallback para servidor atual
-            
+
             try:
                 with _conn.cursor() as cursor:
                     # Verificar se tabela existe
@@ -2027,11 +2024,10 @@ async def get_online_server_ids(force_refresh=False):
                             WHERE table_name = 'server_heartbeats'
                         );
                     """)
-                    
                     if not cursor.fetchone()[0]:
                         logger.debug("get_online_server_ids: Tabela heartbeats não existe. Usando configuração estática.")
                         return [SERVER_ID]
-                    
+
                     # Obter servidores online
                     cursor.execute("""
                         SELECT server_id 
@@ -2040,40 +2036,31 @@ async def get_online_server_ids(force_refresh=False):
                         AND last_heartbeat > NOW() - INTERVAL '%s seconds'
                         ORDER BY server_id;
                     """, (OFFLINE_THRESHOLD_SECS,))
-                    
                     rows = cursor.fetchall()
-                    return [row[0] for row in rows] if rows else [SERVER_ID]
-                    
+                    online = [row[0] for row in rows] if rows else []
+                    return online or [SERVER_ID]
             except Exception as db_err:
                 logger.error(f"Erro DB em get_online_server_ids: {db_err}")
                 return [SERVER_ID]  # Fallback
             finally:
-                return _conn
-        
-        result = await asyncio.to_thread(db_get_online_servers)
-        if isinstance(result, list):
-            online_servers = result
-            conn = None
-        else:
-            conn = result
-            online_servers = [SERVER_ID]
-        
+                try:
+                    _conn.close()
+                except Exception as close_err:
+                    logger.error(f"Erro ao fechar conexão em get_online_server_ids (inner): {close_err}")
+
+        # Executa a consulta em thread e obtém diretamente a lista de servidores online
+        online_servers = await asyncio.to_thread(db_get_online_servers)
+
         # Atualizar cache
         _cached_online_servers = online_servers
         _last_dynamic_check = current_time
-        
+
         logger.debug(f"get_online_server_ids: Servidores online: {online_servers}")
         return online_servers
-        
+
     except Exception as e:
         logger.error(f"Erro ao obter servidores online: {e}")
         return [SERVER_ID]  # Fallback para servidor atual
-    finally:
-        if conn:
-            try:
-                await asyncio.to_thread(conn.close)
-            except Exception as close_err:
-                logger.error(f"Erro ao fechar conexão em get_online_server_ids: {close_err}")
 
 # Função para obter número de servidores ativos dinamicamente
 async def get_active_servers_count():
