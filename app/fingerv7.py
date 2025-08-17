@@ -71,19 +71,22 @@ if not HAS_PYTZ:
 if not os.path.exists(SEGMENTS_DIR):
     try:
         os.makedirs(SEGMENTS_DIR, exist_ok=True)
-        print(f"Diretório de segmentos criado: {SEGMENTS_DIR}")
+        logger.info(f"Diretório de segmentos criado: {SEGMENTS_DIR}")
     except Exception as e:
-        print(f"ERRO: Não foi possível criar o diretório de segmentos: {e}")
-        # Usar um diretório alternativo se o principal falhar
-        SEGMENTS_DIR = './segments'
-        os.makedirs(SEGMENTS_DIR, exist_ok=True)
-        print(f"Usando diretório alternativo: {SEGMENTS_DIR}")
+        logger.error(f"ERRO: Não foi possível criar o diretório de segmentos: {e}")
+        try:
+            SEGMENTS_DIR = './segments'
+            os.makedirs(SEGMENTS_DIR, exist_ok=True)
+            logger.info(f"Usando diretório alternativo: {SEGMENTS_DIR}")
+        except Exception as fallback_e:
+            logger.critical(f"Falha crítica: Não foi possível criar diretório de segmentos: {fallback_e}")
+            sys.exit(1)
 
 # Tentar importar psutil, necessário para o heartbeat
 try:
     import psutil
 except ImportError:
-    print("Pacote 'psutil' não encontrado. Execute 'pip install psutil' para habilitar monitoramento completo.")
+    logger.warning("Pacote 'psutil' não encontrado. Execute 'pip install psutil' para habilitar monitoramento completo.")
     
     # Stub de classe para psutil se não estiver instalado
     class PsutilStub:
@@ -221,7 +224,7 @@ DB_PORT = os.getenv('POSTGRES_PORT', '5432')
 DB_TABLE_NAME = os.getenv('DB_TABLE_NAME', 'music_log')
 
 # Registrar a tabela que está sendo usada
-print(f"Configuração da tabela de destino: DB_TABLE_NAME={DB_TABLE_NAME}")
+logger.info(f"Configuração da tabela de destino: DB_TABLE_NAME={DB_TABLE_NAME}")
 
 # Configurações de Failover (S)FTP
 ENABLE_FAILOVER_SEND = os.getenv('ENABLE_FAILOVER_SEND', 'False').lower() == 'true'
@@ -396,11 +399,11 @@ def _ftp_upload_sync(local_file_path, remote_path):
 # --- Fim das Funções de Failover ---
 
 # Verificar se a tabela de logs existe (RESTAURADO)
-def check_log_table():
+async def check_log_table():
     logger.info(f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados...")
     conn = None # Initialize conn to None
     try:
-        conn = connect_db()
+        conn = await connect_db()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
             return False
@@ -540,7 +543,7 @@ CREATE TABLE {} (
             conn.close()
 
 # Fila para enviar ao Shazamio (RESTAURADO)
-shazam_queue = asyncio.Queue()
+shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memória
 
 # Variável para controlar o último heartbeat enviado (RESTAURADO)
 last_heartbeat_time = 0
@@ -600,47 +603,49 @@ class StreamConnectionTracker:
 connection_tracker = StreamConnectionTracker() # Instanciar o tracker (RESTAURADO)
 
 # Função para conectar ao banco de dados PostgreSQL
-def connect_db():
-    try:
-        # Validar se as configurações essenciais existem
-        if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]):
-            missing = []
-            if not DB_HOST: missing.append("POSTGRES_HOST")
-            if not DB_USER: missing.append("POSTGRES_USER") 
-            if not DB_PASSWORD: missing.append("POSTGRES_PASSWORD")
-            if not DB_NAME: missing.append("POSTGRES_DB")
-            
-            error_msg = f"Configurações de banco de dados incompletas. Faltando: {', '.join(missing)}"
-            logger.error(error_msg)
-            # send_email_alert("Erro: Configurações de Banco de Dados Incompletas", error_msg)
-            return None
-            
-        # Mostrar informações de conexão (sem a senha)
-        logger.info(f"Conectando ao banco PostgreSQL: {DB_HOST}:{DB_PORT}/{DB_NAME} (usuário: {DB_USER})")
-        
-        conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            connect_timeout=10  # Timeout de 10 segundos para a conexão
-        )
-        logger.debug("Conexão ao banco de dados estabelecida com sucesso!")
-        return conn
-    except psycopg2.OperationalError as e:
-        # Erro operacional (servidor inacessível, credenciais incorretas, etc.)
-        error_msg = f"Erro operacional ao conectar ao banco: {e}"
-        logger.error(error_msg)
-        # send_email_alert("Alerta: Falha na Conexão com o Banco de Dados", 
-        #                  f"O servidor {SERVER_ID} não conseguiu se conectar ao banco de dados PostgreSQL em {DB_HOST}:{DB_PORT}.\\n\\nErro: {e}")
+async def connect_db():
+    """
+    Conecta ao banco de dados PostgreSQL usando asyncio.to_thread 
+    para evitar bloqueio do event loop.
+    
+    Returns:
+        psycopg2.connection: Conexão com o banco de dados ou None em caso de erro
+    """
+    # Validação das variáveis de ambiente necessárias
+    required_vars = [DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]
+    missing_vars = [var for var in required_vars if not var]
+    
+    if missing_vars:
+        logger.error("Variáveis de ambiente de banco de dados não configuradas.")
+        logger.error("Verifique: POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB")
         return None
+    
+    def _connect_sync():
+        """Função síncrona para conectar ao banco de dados"""
+        try:
+            conn = psycopg2.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                port=DB_PORT
+            )
+            return conn
+        except psycopg2.OperationalError as e:
+            logger.error(f"Erro de conexão com o banco de dados: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erro inesperado ao conectar ao banco de dados: {e}")
+            return None
+    
+    try:
+        # Executar conexão em thread separada para não bloquear event loop
+        conn = await asyncio.to_thread(_connect_sync)
+        if conn:
+            logger.debug("Conexão com banco de dados estabelecida com sucesso")
+        return conn
     except Exception as e:
-        # Outros erros
-        error_msg = f"Erro ao conectar ao banco de dados: {e}"
-        logger.error(error_msg)
-        # send_email_alert("Alerta: Falha na Conexão com o Banco de Dados", 
-        #                  f"O servidor {SERVER_ID} não conseguiu se conectar ao banco de dados PostgreSQL em {DB_HOST}:{DB_PORT}.\\n\\nErro: {e}")
+        logger.error(f"Erro ao executar conexão assíncrona com o banco: {e}")
         return None
 
 # Função para calcular o deslocamento de rotação com base no tempo
@@ -659,14 +664,14 @@ def calculate_rotation_offset():
     return offset
 
 # Função para buscar streams do banco de dados
-def fetch_streams_from_db():
+async def fetch_streams_from_db():
     """
     Busca a configuração dos streams do banco de dados PostgreSQL.
     Retorna a lista de streams ou None em caso de erro.
     """
     conn = None
     try:
-        conn = connect_db()
+        conn = await connect_db()
         if not conn:
             logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
             return None
@@ -726,13 +731,13 @@ def save_streams_to_json(streams):
         logger.error(f"Erro ao salvar streams no arquivo JSON {STREAMS_FILE}: {e}")
 
 # Função para carregar os streamings do banco de dados PostgreSQL
-def load_streams():
+async def load_streams():
     """
     Carrega a configuração dos streams. Prioriza o banco de dados,
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
     Retorna apenas a lista de streams.
     """
-    streams_from_db = fetch_streams_from_db()  # Tenta buscar do DB primeiro
+    streams_from_db = await fetch_streams_from_db()  # Tenta buscar do DB primeiro
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
@@ -909,12 +914,11 @@ async def monitor_streams_file(callback):
             current_time = time.time()
             # Verificar apenas a cada intervalo definido
             if current_time - last_check_time >= check_interval:
-                conn = connect_db()
+                conn = await connect_db()
                 if conn:
                     with conn.cursor() as cursor:
                         cursor.execute("SELECT COUNT(*) FROM streams")
                         current_count = cursor.fetchone()[0]
-                        
                         # Se o número de streams mudou, recarregar
                         if current_count != last_streams_count:
                             logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
@@ -1095,166 +1099,175 @@ async def insert_data_to_db(entry_base, now_tz):
     name = entry_base['name']
     logger.debug(f"insert_data_to_db: Iniciando processo para {song_title} - {artist} em {name}")
 
-    conn = None
-    success = False  # Flag para indicar sucesso da inserção
-    try:
-        # Todas as operações de DB vão ocorrer na MESMA thread e com o MESMO cursor
-        def db_insert_operations():
-            _conn = None
-            _success = False
-            try:
-                _conn = connect_db()
-                if not _conn:
-                    logger.error("insert_data_to_db [thread]: Não foi possível conectar ao DB.")
-                    return _conn, False
+    def db_insert_operations():
+        _conn = None
+        _success = False
+        try:
+            # Esta função será executada em thread separada, então podemos usar connect_db síncrono
+            _conn = psycopg2.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                port=DB_PORT
+            )
+            
+            if not _conn:
+                logger.error("insert_data_to_db [thread]: Não foi possível conectar ao DB.")
+                return False
 
-                with _conn.cursor() as cursor:
-                    # 1) Verificar se a tabela existe
-                    cursor.execute(
-                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s)",
-                        (DB_TABLE_NAME,),
-                    )
-                    if not cursor.fetchone()[0]:
-                        logger.error(
-                            f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' "
-                            "não existe! Inserção falhou."
-                        )
-                        return _conn, False
-
-                    # 2) Verificação de duplicidade (na mesma thread/cursor)
-                    start_window_tz = now_tz - timedelta(
-                        seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
-                    )
-                    start_date = start_window_tz.date()
-                    start_time = start_window_tz.time()
-
-                    dup_query = f"""
-                        SELECT 1 FROM {DB_TABLE_NAME}
-                        WHERE name = %s AND artist = %s AND song_title = %s
-                          AND (date > %s OR (date = %s AND time >= %s))
-                        LIMIT 1
-                    """
-                    dup_params = (
-                        name,
-                        artist,
-                        song_title,
-                        start_date,
-                        start_date,
-                        start_time,
-                    )
-                    logger.debug(
-                        f"  [thread] Verificando duplicidade (DATE/TIME): {dup_query.strip()}"
-                    )
-                    logger.debug(f"  [thread] Parâmetros duplicidade: {dup_params}")
-
-                    cursor.execute(dup_query, dup_params)
-                    if cursor.fetchone():
-                        logger.info(
-                            f"insert_data_to_db [thread]: Inserção ignorada, duplicata "
-                            f"encontrada para {song_title} - {artist} em {name}."
-                        )
-                        return _conn, False
-
-                    # 3) Preparar dados para inserção
-                    date_str = now_tz.strftime('%Y-%m-%d')
-                    time_str = now_tz.strftime('%H:%M:%S')
-                    logger.debug(
-                        f"  [thread] Formatado para INSERT: date='{date_str}', time='{time_str}'"
-                    )
-
-                    entry = entry_base.copy()
-                    entry["date"] = date_str
-                    entry["time"] = time_str
-
-                    logger.debug(
-                        "insert_data_to_db [thread]: identified_by(entry)='%s', "
-                        "SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
-                        entry.get("identified_by"),
-                        str(SERVER_ID),
-                        str(EFFECTIVE_SERVER_ID),
-                    )
-
-                    values = (
-                        entry["date"],
-                        entry["time"],
-                        entry["name"],
-                        entry["artist"],
-                        entry["song_title"],
-                        entry.get("isrc", ""),
-                        entry.get("cidade", ""),
-                        entry.get("estado", ""),
-                        entry.get("regiao", ""),
-                        entry.get("segmento", ""),
-                        entry.get("label", ""),
-                        entry.get("genre", ""),
-                        entry.get("identified_by", str(SERVER_ID)),
-                    )
-                    logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
-
-                    insert_query = f"""
-                        INSERT INTO {DB_TABLE_NAME}
-                            (date, time, name, artist, song_title, isrc,
-                             cidade, estado, regiao, segmento, label, genre, identified_by)
-                        VALUES
-                            (%s, %s, %s, %s, %s, %s,
-                             %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                    """
-
-                    try:
-                        cursor.execute(insert_query, values)
-                        inserted_row = cursor.fetchone()
-                        if inserted_row:
-                            _conn.commit()
-                            logger.info(
-                                "insert_data_to_db [thread]: Dados inseridos com sucesso: "
-                                f"ID={inserted_row[0]}, {song_title} - {artist} ({name})"
-                            )
-                            _success = True
-                        else:
-                            logger.error(
-                                "insert_data_to_db [thread]: Inserção falhou ou não retornou ID "
-                                f"para {song_title} - {artist}."
-                            )
-                            _conn.rollback()
-                            _success = False
-
-                    except psycopg2.errors.UniqueViolation as e_unique:
-                        _conn.rollback()
-                        logger.warning(
-                            "insert_data_to_db [thread]: Inserção falhou devido a "
-                            f"violação UNIQUE: {e_unique}"
-                        )
-                        _success = False
-                    except Exception as e_insert:
-                        _conn.rollback()
-                        logger.error(
-                            "insert_data_to_db [thread]: Erro GERAL ao inserir dados "
-                            f"({song_title} - {artist}): {e_insert}"
-                        )
-                        _success = False
-                        # Re-lançar para ser capturado fora e disparar alerta
-                        raise e_insert
-
-            except Exception as e_db:
-                logger.error(
-                    f"insert_data_to_db [thread]: Erro no DB (cursor/execução): {e_db}"
+            with _conn.cursor() as cursor:
+                # 1) Verificar se a tabela existe
+                cursor.execute(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s)",
+                    (DB_TABLE_NAME,),
                 )
-                if _conn:
-                    try:
+                if not cursor.fetchone()[0]:
+                    logger.error(
+                        f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' "
+                        "não existe! Inserção falhou."
+                    )
+                    return False
+
+                # 2) Verificação de duplicidade (na mesma thread/cursor)
+                start_window_tz = now_tz - timedelta(
+                    seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
+                )
+                start_date = start_window_tz.date()
+                start_time = start_window_tz.time()
+
+                dup_query = f"""
+                    SELECT 1 FROM {DB_TABLE_NAME}
+                    WHERE name = %s AND artist = %s AND song_title = %s
+                      AND (date > %s OR (date = %s AND time >= %s))
+                    LIMIT 1
+                """
+                dup_params = (
+                    name,
+                    artist,
+                    song_title,
+                    start_date,
+                    start_date,
+                    start_time,
+                )
+                logger.debug(
+                    f"  [thread] Verificando duplicidade (DATE/TIME): {dup_query.strip()}"
+                )
+                logger.debug(f"  [thread] Parâmetros duplicidade: {dup_params}")
+
+                cursor.execute(dup_query, dup_params)
+                if cursor.fetchone():
+                    logger.info(
+                        f"insert_data_to_db [thread]: Inserção ignorada, duplicata "
+                        f"encontrada para {song_title} - {artist} em {name}."
+                    )
+                    return False
+
+                # 3) Preparar dados para inserção
+                date_str = now_tz.strftime('%Y-%m-%d')
+                time_str = now_tz.strftime('%H:%M:%S')
+                logger.debug(
+                    f"  [thread] Formatado para INSERT: date='{date_str}', time='{time_str}'"
+                )
+
+                entry = entry_base.copy()
+                entry["date"] = date_str
+                entry["time"] = time_str
+
+                logger.debug(
+                    "insert_data_to_db [thread]: identified_by(entry)='%s', "
+                    "SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
+                    entry.get("identified_by"),
+                    str(SERVER_ID),
+                    str(EFFECTIVE_SERVER_ID),
+                )
+
+                values = (
+                    entry["date"],
+                    entry["time"],
+                    entry["name"],
+                    entry["artist"],
+                    entry["song_title"],
+                    entry.get("isrc", ""),
+                    entry.get("cidade", ""),
+                    entry.get("estado", ""),
+                    entry.get("regiao", ""),
+                    entry.get("segmento", ""),
+                    entry.get("label", ""),
+                    entry.get("genre", ""),
+                    entry.get("identified_by", str(SERVER_ID)),
+                )
+                logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
+
+                insert_query = f"""
+                    INSERT INTO {DB_TABLE_NAME}
+                        (date, time, name, artist, song_title, isrc,
+                         cidade, estado, regiao, segmento, label, genre, identified_by)
+                    VALUES
+                        (%s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """
+
+                try:
+                    cursor.execute(insert_query, values)
+                    inserted_row = cursor.fetchone()
+                    if inserted_row:
+                        _conn.commit()
+                        logger.info(
+                            "insert_data_to_db [thread]: Dados inseridos com sucesso: "
+                            f"ID={inserted_row[0]}, {song_title} - {artist} ({name})"
+                        )
+                        _success = True
+                    else:
+                        logger.error(
+                            "insert_data_to_db [thread]: Inserção falhou ou não retornou ID "
+                            f"para {song_title} - {artist}."
+                        )
                         _conn.rollback()
-                    except Exception:
-                        pass
-                # Propaga para o nível superior da função async
-                raise e_db
+                        _success = False
 
-            # Retorna a conexão (para fechar fora) e o status de sucesso
-            return _conn, _success
+                except psycopg2.errors.UniqueViolation as e_unique:
+                    _conn.rollback()
+                    logger.warning(
+                        "insert_data_to_db [thread]: Inserção falhou devido a "
+                        f"violação UNIQUE: {e_unique}"
+                    )
+                    _success = False
+                except Exception as e_insert:
+                    _conn.rollback()
+                    logger.error(
+                        "insert_data_to_db [thread]: Erro GERAL ao inserir dados "
+                        f"({song_title} - {artist}): {e_insert}"
+                    )
+                    _success = False
+                    # Re-lançar para ser capturado fora e disparar alerta
+                    raise e_insert
+                    
+            return _success
 
-        # Executa tudo na mesma thread (sem pré-conexão/cursor em outra thread)
-        conn, success = await asyncio.to_thread(db_insert_operations)
+        except Exception as e_db:
+            logger.error(
+                f"insert_data_to_db [thread]: Erro no DB (cursor/execução): {e_db}"
+            )
+            if _conn:
+                try:
+                    _conn.rollback()
+                except Exception:
+                    pass
+            return False
+        finally:
+            if _conn:
+                try:
+                    _conn.close()
+                except Exception as cl_err:
+                    logger.error(f"Erro ao fechar conexão DB em thread: {cl_err}")
 
-        if not success and conn:
+    # Executar operações de banco em thread separada
+    try:
+        success = await asyncio.to_thread(db_insert_operations)
+        
+        if not success:
             logger.info("Enviando alerta de e-mail por falha na inserção (não duplicata)")
             subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
             body = (
@@ -1262,22 +1275,15 @@ async def insert_data_to_db(entry_base, now_tz):
                 f"na tabela {DB_TABLE_NAME}. Verifique os logs.\nDados: {entry_base}"
             )
             send_email_alert(subject, body)
-
+            
+        return success
+        
     except Exception as e:
         logger.error(
             f"insert_data_to_db: Erro INESPERADO ({song_title} - {artist}): {e}",
             exc_info=True,
         )
-        success = False
-
-    finally:
-        if conn:
-            try:
-                await asyncio.to_thread(conn.close)
-            except Exception as cl_err:
-                logger.error(f"Erro ao fechar conexão principal: {cl_err}")
-
-    return success
+        return False
 
 # Função para atualizar o log local e chamar a inserção no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
@@ -1408,9 +1414,9 @@ async def process_stream(stream, last_songs):
             # Limpar erros no tracker em caso de sucesso
             connection_tracker.clear_error(stream_key)
 
-        # Se a captura foi bem-sucedida, prosseguir com o Shazam
+        # Se a captura foi bem-sucedida, enfileirar sem aguardar processamento
         await shazam_queue.put((current_segment_path, stream, last_songs))
-        await shazam_queue.join()
+        logger.debug(f"Segmento enfileirado para identificação: {current_segment_path}")
 
         logger.info(
             f"Aguardando até 60 segundos (rebalance-aware) para o próximo ciclo do stream "
@@ -1461,8 +1467,8 @@ async def sync_json_with_db():
     rows = None
     try:
         # Operações de DB em thread separada
-        def db_operations():
-            _conn = connect_db()
+        async def db_operations():
+            _conn = await connect_db()
             if not _conn:
                 return None, None # Retorna None para conn e rows se a conexão falhar
             try:
@@ -1475,7 +1481,7 @@ async def sync_json_with_db():
                 return _conn, None # Retorna a conexão (para fechar) e None para rows
             # O finally não é necessário aqui, pois o close será chamado fora
 
-        conn, rows = await asyncio.to_thread(db_operations)
+        conn, rows = await db_operations()
 
         if conn and rows is not None: # Checar se rows não é None
             streams = []
@@ -1608,173 +1614,175 @@ async def identify_song_shazamio(shazam):
     while True:
         file_path, stream, last_songs = await shazam_queue.get()
         stream_index = stream.get("index")  # Obter índice aqui para uso posterior
+        
+        try:
+            # Verificar se o arquivo existe (pode ter sido pulado na captura)
+            if file_path is None:
+                logger.info(
+                    f"Arquivo de segmento para o stream {stream['name']} não foi capturado. "
+                    "Pulando identificação."
+                )
+                continue
 
-        # Verificar se o arquivo existe (pode ter sido pulado na captura)
-        if file_path is None:
-            logger.info(
-                f"Arquivo de segmento para o stream {stream['name']} não foi capturado. "
-                "Pulando identificação."
-            )
-            shazam_queue.task_done()
-            continue
+            identification_attempted = False
+            out = None  # Inicializar fora do loop de retentativa
 
-        identification_attempted = False
-        out = None  # Inicializar fora do loop de retentativa
+            # --- Verificar se o Shazam está em pausa ---
+            current_time_check = time.time()
+            if current_time_check < shazam_pause_until_timestamp:
+                logger.info(
+                    "Shazam em pausa devido a erro 429 anterior "
+                    f"(até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). "
+                    f"Enviando {os.path.basename(file_path)} diretamente para failover."
+                )
+                if ENABLE_FAILOVER_SEND:
+                    asyncio.create_task(send_file_via_failover(file_path, stream_index))
+            else:
+                # --- Tentar identificação se não estiver em pausa ---
+                identification_attempted = True
+                # ... (loop de retentativas com tratamento de erro 429 e failover) ...
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        # ... (código do try existente: esperar, logar, shazam.recognize) ...
+                        current_time = time.time()
+                        time_since_last_request = current_time - last_request_time
+                        if time_since_last_request < 1:
+                            await asyncio.sleep(1 - time_since_last_request)
 
-        # --- Verificar se o Shazam está em pausa ---
-        current_time_check = time.time()
-        if current_time_check < shazam_pause_until_timestamp:
-            logger.info(
-                "Shazam em pausa devido a erro 429 anterior "
-                f"(até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). "
-                f"Enviando {os.path.basename(file_path)} diretamente para failover."
-            )
-            if ENABLE_FAILOVER_SEND:
-                asyncio.create_task(send_file_via_failover(file_path, stream_index))
-        else:
-            # --- Tentar identificação se não estiver em pausa ---
-            identification_attempted = True
-            # ... (loop de retentativas com tratamento de erro 429 e failover) ...
-            max_retries = 5
-            for attempt in range(max_retries):
-                try:
-                    # ... (código do try existente: esperar, logar, shazam.recognize) ...
-                    current_time = time.time()
-                    time_since_last_request = current_time - last_request_time
-                    if time_since_last_request < 1:
-                        await asyncio.sleep(1 - time_since_last_request)
-
-                    # Verificar se o arquivo ainda existe antes de chamar o Shazam
-                    if not os.path.exists(file_path):
-                        logger.error(
-                            f"Arquivo de segmento não encontrado no momento da "
-                            f"identificação: {file_path}"
-                        )
-                        break
-
-                    logger.info(
-                        f"Identificando música no arquivo {file_path} "
-                        f"(tentativa {attempt + 1}/{max_retries})..."
-                    )
-                    out = await asyncio.wait_for(
-                        shazam.recognize(file_path), timeout=10
-                    )
-                    last_request_time = time.time()
-
-                    if "track" in out:
-                        break
-                    else:
-                        logger.info(
-                            "Nenhuma música identificada (resposta vazia do Shazam)."
-                        )
-                        break
-
-                except ClientResponseError as e_resp:
-                    # ... (tratamento erro 429 com pausa e failover) ...
-                    if e_resp.status == 429:
-                        logger.warning(
-                            "Erro 429 (Too Many Requests) do Shazam detectado. "
-                            "Pausando Shazam por 2 minutos."
-                        )
-                        shazam_pause_until_timestamp = time.time() + 120
-                        if ENABLE_FAILOVER_SEND:
-                            asyncio.create_task(
-                                send_file_via_failover(file_path, stream_index)
+                        # Verificar se o arquivo ainda existe antes de chamar o Shazam
+                        if not os.path.exists(file_path):
+                            logger.error(
+                                f"Arquivo de segmento não encontrado no momento da "
+                                f"identificação: {file_path}"
                             )
-                        break
-                    else:
+                            break
+
+                        logger.info(
+                            f"Identificando música no arquivo {file_path} "
+                            f"(tentativa {attempt + 1}/{max_retries})..."
+                        )
+                        out = await asyncio.wait_for(
+                            shazam.recognize(file_path), timeout=10
+                        )
+                        last_request_time = time.time()
+
+                        if "track" in out:
+                            break
+                        else:
+                            logger.info(
+                                "Nenhuma música identificada (resposta vazia do Shazam)."
+                            )
+                            break
+
+                    except ClientResponseError as e_resp:
+                        # ... (tratamento erro 429 com pausa e failover) ...
+                        if e_resp.status == 429:
+                            logger.warning(
+                                "Erro 429 (Too Many Requests) do Shazam detectado. "
+                                "Pausando Shazam por 2 minutos."
+                            )
+                            shazam_pause_until_timestamp = time.time() + 120
+                            if ENABLE_FAILOVER_SEND:
+                                asyncio.create_task(
+                                    send_file_via_failover(file_path, stream_index)
+                                )
+                            break
+                        else:
+                            wait_time = 2**attempt
+                            logger.error(
+                                f"Erro HTTP {e_resp.status} do Shazam "
+                                f"(tentativa {attempt + 1}/{max_retries}): {e_resp}. "
+                                f"Esperando {wait_time}s..."
+                            )
+                            await asyncio.sleep(wait_time)
+                    except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
+                        # ... (tratamento erro conexão/timeout) ...
                         wait_time = 2**attempt
                         logger.error(
-                            f"Erro HTTP {e_resp.status} do Shazam "
-                            f"(tentativa {attempt + 1}/{max_retries}): {e_resp}. "
+                            "Erro de conexão/timeout com Shazam "
+                            f"(tentativa {attempt + 1}/{max_retries}): {e_conn}. "
                             f"Esperando {wait_time}s..."
                         )
                         await asyncio.sleep(wait_time)
-                except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
-                    # ... (tratamento erro conexão/timeout) ...
-                    wait_time = 2**attempt
-                    logger.error(
-                        "Erro de conexão/timeout com Shazam "
-                        f"(tentativa {attempt + 1}/{max_retries}): {e_conn}. "
-                        f"Esperando {wait_time}s..."
-                    )
-                    await asyncio.sleep(wait_time)
-                except Exception as e_gen:
-                    # ... (tratamento erro genérico) ...
-                    logger.error(
-                        "Erro inesperado ao identificar a música "
-                        f"(tentativa {attempt + 1}/{max_retries}): {e_gen}",
-                        exc_info=True,
-                    )
-                    break
-            else:
-                if identification_attempted:
-                    logger.error(
-                        "Falha na identificação de "
-                        f"{os.path.basename(file_path)} após {max_retries} tentativas "
-                        "(sem erro 429 ou erro genérico)."
-                    )
+                    except Exception as e_gen:
+                        # ... (tratamento erro genérico) ...
+                        logger.error(
+                            "Erro inesperado ao identificar a música "
+                            f"(tentativa {attempt + 1}/{max_retries}): {e_gen}",
+                            exc_info=True,
+                        )
+                        break
+                else:
+                    if identification_attempted:
+                        logger.error(
+                            "Falha na identificação de "
+                            f"{os.path.basename(file_path)} após {max_retries} tentativas "
+                            "(sem erro 429 ou erro genérico)."
+                        )
 
-        # --- Processar resultado (se houve identificação e não estava em pausa) ---
-        if identification_attempted and out and "track" in out:
-            track = out["track"]
-            title = track["title"]
-            artist = track["subtitle"]
-            isrc = track.get("isrc", "ISRC não disponível")
-            label = None
-            genre = None
-            # ... (extração de label/genre) ...
-            if "sections" in track:
-                for section in track["sections"]:
-                    if section["type"] == "SONG":
-                        for metadata in section["metadata"]:
-                            if metadata["title"] == "Label":
-                                label = metadata["text"]
-            if "genres" in track:
-                genre = track["genres"].get("primary", None)
+            # --- Processar resultado (se houve identificação e não estava em pausa) ---
+            if identification_attempted and out and "track" in out:
+                track = out["track"]
+                title = track["title"]
+                artist = track["subtitle"]
+                isrc = track.get("isrc", "ISRC não disponível")
+                label = None
+                genre = None
+                # ... (extração de label/genre) ...
+                if "sections" in track:
+                    for section in track["sections"]:
+                        if section["type"] == "SONG":
+                            for metadata in section["metadata"]:
+                                if metadata["title"] == "Label":
+                                    label = metadata["text"]
+                if "genres" in track:
+                    genre = track["genres"].get("primary", None)
 
-            logger.info(
-                f"Música identificada: {title} por {artist} "
-                f"(ISRC: {isrc}, Gravadora: {label}, Gênero: {genre})"
-            )
-
-            # Obter timestamp atual COM FUSO HORÁRIO
-            now_tz = dt.datetime.now(target_tz)
-
-            # Criar dicionário base SEM date/time
-            entry_base = {
-                "name": stream["name"],
-                "artist": artist,
-                "song_title": title,
-                "isrc": isrc,
-                "cidade": stream.get("cidade", ""),
-                "estado": stream.get("estado", ""),
-                "regiao": stream.get("regiao", ""),
-                "segmento": stream.get("segmento", ""),
-                "label": label,
-                "genre": genre,
-                "identified_by": str(SERVER_ID),
-            }
-
-            # Chamar insert_data_to_db, que fará a verificação e a inserção
-            inserted = await insert_data_to_db(entry_base, now_tz)
-
-            if inserted:  # Salvar last_songs apenas se inserção foi bem-sucedida
-                last_songs[stream["name"]] = (title, artist)
-                save_last_songs(last_songs)
-
-        # --- Limpeza do arquivo local ---
-        # ... (código de limpeza existente) ...
-        if os.path.exists(file_path):
-            try:
-                await asyncio.to_thread(os.remove, file_path)
-                logger.debug(f"Arquivo de segmento local {file_path} removido.")
-            except Exception as e_remove:
-                logger.error(
-                    f"Erro ao remover arquivo de segmento {file_path}: {e_remove}"
+                logger.info(
+                    f"Música identificada: {title} por {artist} "
+                    f"(ISRC: {isrc}, Gravadora: {label}, Gênero: {genre})"
                 )
 
-        shazam_queue.task_done()
+                # Obter timestamp atual COM FUSO HORÁRIO
+                now_tz = dt.datetime.now(target_tz)
+
+                # Criar dicionário base SEM date/time
+                entry_base = {
+                    "name": stream["name"],
+                    "artist": artist,
+                    "song_title": title,
+                    "isrc": isrc,
+                    "cidade": stream.get("cidade", ""),
+                    "estado": stream.get("estado", ""),
+                    "regiao": stream.get("regiao", ""),
+                    "segmento": stream.get("segmento", ""),
+                    "label": label,
+                    "genre": genre,
+                    "identified_by": str(SERVER_ID),
+                }
+
+                # Chamar insert_data_to_db, que fará a verificação e a inserção
+                inserted = await insert_data_to_db(entry_base, now_tz)
+
+                if inserted:  # Salvar last_songs apenas se inserção foi bem-sucedida
+                    last_songs[stream["name"]] = (title, artist)
+                    save_last_songs(last_songs)
+
+            # --- Limpeza do arquivo local ---
+            # ... (código de limpeza existente) ...
+            if os.path.exists(file_path):
+                try:
+                    await asyncio.to_thread(os.remove, file_path)
+                    logger.debug(f"Arquivo de segmento local {file_path} removido.")
+                except Exception as e_remove:
+                    logger.error(
+                        f"Erro ao remover arquivo de segmento {file_path}: {e_remove}"
+                    )
+
+        finally:
+            # GARANTIR que task_done seja sempre chamado
+            shazam_queue.task_done()
 
 # Variáveis globais para controle de finalização
 shutdown_event = asyncio.Event()
@@ -1903,11 +1911,11 @@ async def send_heartbeat():
         except Exception as e:
             logger.debug(f"send_heartbeat: publish_redis_heartbeat falhou: {e}")
         
-        # --- Operações de DB em thread separada --- 
-        def db_heartbeat_operations():
+        # --- Operações de DB --- 
+        async def db_heartbeat_operations():
             _conn = None
             try:
-                _conn = connect_db()
+                _conn = await connect_db()
                 if not _conn:
                     logger.error("send_heartbeat [thread]: Não foi possível conectar ao DB.")
                     return None # Retorna None se conexão falhar
@@ -1943,8 +1951,8 @@ async def send_heartbeat():
                 if _conn: _conn.rollback() # Tentar rollback
                 return _conn # Retorna a conexão (possivelmente None) para tentar fechar
 
-        # Executar operações DB no thread
-        conn = await asyncio.to_thread(db_heartbeat_operations)
+        # Executar operações DB
+        conn = await db_heartbeat_operations()
         
     except Exception as e:
         logger.error(f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}")
@@ -1971,15 +1979,15 @@ async def check_servers_status():
         try:
             await asyncio.sleep(CHECK_INTERVAL_SECS)
             
-            # --- Operações DB em thread separada --- 
-            def db_check_status_operations():
+            # --- Operações DB --- 
+            async def db_check_status_operations():
                 _conn = None
                 _offline_servers_data = []
                 _online_servers_data = []
                 _send_alert = False # Flag para indicar se o alerta deve ser enviado
                 
                 try:
-                    _conn = connect_db()
+                    _conn = await connect_db()
                     if not _conn:
                         logger.error("check_servers_status [thread]: Não foi possível conectar ao DB.")
                         return _conn, [], [], False # conn, offline, online, send_alert
@@ -2033,8 +2041,8 @@ async def check_servers_status():
                     # Retorna a conexão para fechar, mas listas vazias e sem alerta
                     return _conn, [], [], False 
 
-            # Executar operações DB no thread
-            conn, offline_servers, online_servers, send_alert = await asyncio.to_thread(db_check_status_operations)
+            # Executar operações DB
+            conn, offline_servers, online_servers, send_alert = await db_check_status_operations()
 
             # Processar resultados fora do thread
             if offline_servers and send_alert:
@@ -2385,8 +2393,8 @@ async def get_online_server_ids(force_refresh=False):
         return _cached_online_servers
 
     try:
-        def db_get_online_servers():
-            _conn = connect_db()
+        async def db_get_online_servers():
+            _conn = await connect_db()
             if not _conn:
                 logger.warning("get_online_server_ids: Não foi possível conectar ao DB. Usando configuração estática.")
                 return [SERVER_ID]  # Fallback para servidor atual
@@ -2424,8 +2432,8 @@ async def get_online_server_ids(force_refresh=False):
                 except Exception as close_err:
                     logger.error(f"Erro ao fechar conexão em get_online_server_ids (inner): {close_err}")
 
-        # Executa a consulta em thread e obtém diretamente a lista de servidores online
-        online_servers = await asyncio.to_thread(db_get_online_servers)
+        # Executa a consulta e obtém diretamente a lista de servidores online
+        online_servers = await db_get_online_servers()
 
         # Atualizar cache
         _cached_online_servers = online_servers
@@ -2573,20 +2581,20 @@ async def main():
     logger.info(f"Configurações de distribuição carregadas do .env: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}")
     logger.info(f"Distribuição de carga: {DISTRIBUTE_LOAD}, Rotação: {ENABLE_ROTATION}, Horas de rotação: {ROTATION_HOURS}")
     
-    # Verificar se a tabela de logs existe e criar se necessário (executar em thread)
+    # Verificar se a tabela de logs existe e criar se necessário
     try:
-        table_ok = await asyncio.to_thread(check_log_table)
+        table_ok = await check_log_table()
         if not table_ok:
             logger.warning("A verificação/criação da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros.")
     except Exception as e_check_table:
-         logger.error(f"Erro ao executar check_log_table em thread: {e_check_table}")
+         logger.error(f"Erro ao executar check_log_table: {e_check_table}")
          logger.warning("Prosseguindo sem verificação da tabela de logs.")
 
     # Criar instância do Shazam para reconhecimento
     shazam = Shazam()
     
     global STREAMS
-    STREAMS = load_streams()
+    STREAMS = await load_streams()
     
     if not STREAMS:
         logger.error("Não foi possível carregar os streamings. Verifique a configuração do banco de dados ou o arquivo JSON local.")
@@ -2597,7 +2605,7 @@ async def main():
     
     # Inicializar fila para processamento
     global shazam_queue
-    shazam_queue = asyncio.Queue()
+    shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memória
     
     # Registrar informações sobre a distribuição de carga
     if DISTRIBUTE_LOAD:
@@ -2609,10 +2617,23 @@ async def main():
             online_servers = await get_online_server_ids()
             active_count = len(online_servers)
             logger.info(f"Servidores online detectados: {online_servers} (total: {active_count})")
+
+            # VALIDAÇÃO CRÍTICA: Alertar sobre discrepância entre configuração e realidade
+            if active_count != TOTAL_SERVERS:
+                logger.warning("=" * 80)
+                logger.warning("DISCREPÂNCIA CRÍTICA DETECTADA:")
+                logger.warning(f"TOTAL_SERVERS configurado: {TOTAL_SERVERS}")
+                logger.warning(f"Servidores realmente online: {active_count} ({online_servers})")
+                logger.warning("Esta discrepância pode causar distribuição de carga inadequada!")
+                logger.warning("Recomendação: Verifique se todos os servidores estão funcionando ou")
+                logger.warning(f"ajuste TOTAL_SERVERS para {active_count} no arquivo .env")
+                logger.warning("=" * 80)
+
         except Exception as e:
             logger.error(f"Erro ao obter servidores online: {e}")
             online_servers = [SERVER_ID]
             active_count = 1
+            logger.warning(f"Fallback: Assumindo apenas este servidor ({SERVER_ID}) está online")
         
         if ENABLE_ROTATION:
             logger.info(f"Rotação de rádios ativada: a cada {ROTATION_HOURS} horas")
@@ -2652,9 +2673,9 @@ async def main():
     else:
         logger.info("Modo de distribuição de carga desativado. Processando todos os streams.")
 
-    def reload_streams():
+    async def reload_streams():
         global STREAMS
-        STREAMS = load_streams()
+        STREAMS = await load_streams()
         logger.info("Streams recarregados.")
         if 'update_streams_in_db' in globals():
             update_streams_in_db(STREAMS)  # Atualiza o banco de dados com as rádios do arquivo
@@ -2681,7 +2702,10 @@ async def main():
             logger.error(f"Falha no heartbeat inicial: {e}")
     
     # Criar e registrar todas as tarefas necessárias
-    monitor_task = register_task(asyncio.create_task(monitor_streams_file(reload_streams)))
+    async def reload_streams_wrapper():
+        await reload_streams()
+    
+    monitor_task = register_task(asyncio.create_task(monitor_streams_file(reload_streams_wrapper)))
     shazam_task = register_task(asyncio.create_task(identify_song_shazamio(shazam)))
     shutdown_monitor_task = register_task(asyncio.create_task(monitor_shutdown()))
     
