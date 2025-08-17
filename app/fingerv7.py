@@ -1582,35 +1582,53 @@ async def identify_song_shazamio(shazam):
     if HAS_PYTZ:
         try:
             target_tz = pytz.timezone("America/Sao_Paulo")
-            logger.info(f"Fuso horário definido (via pytz) para verificação de duplicatas: America/Sao_Paulo")
+            logger.info(
+                "Fuso horário definido (via pytz) para verificação de duplicatas: "
+                "America/Sao_Paulo"
+            )
         except pytz.exceptions.UnknownTimeZoneError:
-             logger.critical(f"Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: Zona desconhecida. Verifique o nome.")
-             sys.exit(1)
+            logger.critical(
+                "Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: "
+                "Zona desconhecida. Verifique o nome."
+            )
+            sys.exit(1)
         except Exception as tz_err:
-             logger.critical(f"Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: {tz_err}. Saindo.")
-             sys.exit(1)
+            logger.critical(
+                f"Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: {tz_err}. "
+                "Saindo."
+            )
+            sys.exit(1)
     else:
         # Se pytz não foi importado, sair (já logado criticamente na importação)
-        logger.critical("pytz não está disponível. Impossível continuar com tratamento de fuso horário.")
+        logger.critical(
+            "pytz não está disponível. Impossível continuar com tratamento de fuso horário."
+        )
         sys.exit(1)
 
     while True:
         file_path, stream, last_songs = await shazam_queue.get()
-        stream_index = stream.get('index') # Obter índice aqui para uso posterior
+        stream_index = stream.get("index")  # Obter índice aqui para uso posterior
 
         # Verificar se o arquivo existe (pode ter sido pulado na captura)
         if file_path is None:
-            logger.info(f"Arquivo de segmento para o stream {stream['name']} não foi capturado. Pulando identificação.")
+            logger.info(
+                f"Arquivo de segmento para o stream {stream['name']} não foi capturado. "
+                "Pulando identificação."
+            )
             shazam_queue.task_done()
             continue
 
         identification_attempted = False
-        out = None # Inicializar fora do loop de retentativa
+        out = None  # Inicializar fora do loop de retentativa
 
-        # --- Verificar se o Shazam está em pausa --- 
+        # --- Verificar se o Shazam está em pausa ---
         current_time_check = time.time()
         if current_time_check < shazam_pause_until_timestamp:
-            logger.info(f"Shazam em pausa devido a erro 429 anterior (até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). Enviando {os.path.basename(file_path)} diretamente para failover.")
+            logger.info(
+                "Shazam em pausa devido a erro 429 anterior "
+                f"(até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). "
+                f"Enviando {os.path.basename(file_path)} diretamente para failover."
+            )
             if ENABLE_FAILOVER_SEND:
                 asyncio.create_task(send_file_via_failover(file_path, stream_index))
         else:
@@ -1619,100 +1637,143 @@ async def identify_song_shazamio(shazam):
             # ... (loop de retentativas com tratamento de erro 429 e failover) ...
             max_retries = 5
             for attempt in range(max_retries):
-                 try:
-                     # ... (código do try existente: esperar, logar, shazam.recognize) ...
-                     current_time = time.time()
-                     time_since_last_request = current_time - last_request_time
-                     if time_since_last_request < 1:
-                         await asyncio.sleep(1 - time_since_last_request)
-                     
-                     # Verificar se o arquivo ainda existe antes de chamar o Shazam
+                try:
+                    # ... (código do try existente: esperar, logar, shazam.recognize) ...
+                    current_time = time.time()
+                    time_since_last_request = current_time - last_request_time
+                    if time_since_last_request < 1:
+                        await asyncio.sleep(1 - time_since_last_request)
+
+                    # Verificar se o arquivo ainda existe antes de chamar o Shazam
                     if not os.path.exists(file_path):
-                        logger.error(f"Arquivo de segmento não encontrado no momento da identificação: {file_path}")
+                        logger.error(
+                            f"Arquivo de segmento não encontrado no momento da "
+                            f"identificação: {file_path}"
+                        )
                         break
-                    
-                    logger.info(f"Identificando música no arquivo {file_path} (tentativa {attempt + 1}/{max_retries})...")
-                    out = await asyncio.wait_for(shazam.recognize(file_path), timeout=10)
-                     last_request_time = time.time()
 
-                     if 'track' in out:
-                         break 
-                     else:
-                         logger.info("Nenhuma música identificada (resposta vazia do Shazam).")
-                         break 
+                    logger.info(
+                        f"Identificando música no arquivo {file_path} "
+                        f"(tentativa {attempt + 1}/{max_retries})..."
+                    )
+                    out = await asyncio.wait_for(
+                        shazam.recognize(file_path), timeout=10
+                    )
+                    last_request_time = time.time()
 
-                 except ClientResponseError as e_resp:
-                     # ... (tratamento erro 429 com pausa e failover) ...
-                     if e_resp.status == 429:
-                         logger.warning(f"Erro 429 (Too Many Requests) do Shazam detectado. Pausando Shazam por 2 minutos.")
-                         shazam_pause_until_timestamp = time.time() + 120
-                         if ENABLE_FAILOVER_SEND:
-                             asyncio.create_task(send_file_via_failover(file_path, stream_index))
-                         break 
-                     else:
-                         wait_time = 2 ** attempt
-                         logger.error(f"Erro HTTP {e_resp.status} do Shazam (tentativa {attempt + 1}/{max_retries}): {e_resp}. Esperando {wait_time}s...")
-                         await asyncio.sleep(wait_time)
-                 except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
-                      # ... (tratamento erro conexão/timeout) ...
-                     wait_time = 2 ** attempt
-                     logger.error(f"Erro de conexão/timeout com Shazam (tentativa {attempt + 1}/{max_retries}): {e_conn}. Esperando {wait_time}s...")
-                     await asyncio.sleep(wait_time)
-                 except Exception as e_gen:
-                      # ... (tratamento erro genérico) ...
-                     logger.error(f"Erro inesperado ao identificar a música (tentativa {attempt + 1}/{max_retries}): {e_gen}", exc_info=True)
-                     break 
-            else: 
-                 if identification_attempted:
-                    logger.error(f"Falha na identificação de {os.path.basename(file_path)} após {max_retries} tentativas (sem erro 429 ou erro genérico).")
+                    if "track" in out:
+                        break
+                    else:
+                        logger.info(
+                            "Nenhuma música identificada (resposta vazia do Shazam)."
+                        )
+                        break
+
+                except ClientResponseError as e_resp:
+                    # ... (tratamento erro 429 com pausa e failover) ...
+                    if e_resp.status == 429:
+                        logger.warning(
+                            "Erro 429 (Too Many Requests) do Shazam detectado. "
+                            "Pausando Shazam por 2 minutos."
+                        )
+                        shazam_pause_until_timestamp = time.time() + 120
+                        if ENABLE_FAILOVER_SEND:
+                            asyncio.create_task(
+                                send_file_via_failover(file_path, stream_index)
+                            )
+                        break
+                    else:
+                        wait_time = 2**attempt
+                        logger.error(
+                            f"Erro HTTP {e_resp.status} do Shazam "
+                            f"(tentativa {attempt + 1}/{max_retries}): {e_resp}. "
+                            f"Esperando {wait_time}s..."
+                        )
+                        await asyncio.sleep(wait_time)
+                except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
+                    # ... (tratamento erro conexão/timeout) ...
+                    wait_time = 2**attempt
+                    logger.error(
+                        "Erro de conexão/timeout com Shazam "
+                        f"(tentativa {attempt + 1}/{max_retries}): {e_conn}. "
+                        f"Esperando {wait_time}s..."
+                    )
+                    await asyncio.sleep(wait_time)
+                except Exception as e_gen:
+                    # ... (tratamento erro genérico) ...
+                    logger.error(
+                        "Erro inesperado ao identificar a música "
+                        f"(tentativa {attempt + 1}/{max_retries}): {e_gen}",
+                        exc_info=True,
+                    )
+                    break
+            else:
+                if identification_attempted:
+                    logger.error(
+                        "Falha na identificação de "
+                        f"{os.path.basename(file_path)} após {max_retries} tentativas "
+                        "(sem erro 429 ou erro genérico)."
+                    )
 
         # --- Processar resultado (se houve identificação e não estava em pausa) ---
-        if identification_attempted and out and 'track' in out:
-            track = out['track']
-            title = track['title']
-            artist = track['subtitle']
-            isrc = track.get('isrc', 'ISRC não disponível')
+        if identification_attempted and out and "track" in out:
+            track = out["track"]
+            title = track["title"]
+            artist = track["subtitle"]
+            isrc = track.get("isrc", "ISRC não disponível")
             label = None
             genre = None
             # ... (extração de label/genre) ...
-            if 'sections' in track:
-                for section in track['sections']:
-                    if section['type'] == 'SONG':
-                        for metadata in section['metadata']:
-                            if metadata['title'] == 'Label':
-                                label = metadata['text']
-            if 'genres' in track:
-                genre = track['genres'].get('primary', None)
+            if "sections" in track:
+                for section in track["sections"]:
+                    if section["type"] == "SONG":
+                        for metadata in section["metadata"]:
+                            if metadata["title"] == "Label":
+                                label = metadata["text"]
+            if "genres" in track:
+                genre = track["genres"].get("primary", None)
 
-            logger.info(f"Música identificada: {title} por {artist} (ISRC: {isrc}, Gravadora: {label}, Gênero: {genre})")
+            logger.info(
+                f"Música identificada: {title} por {artist} "
+                f"(ISRC: {isrc}, Gravadora: {label}, Gênero: {genre})"
+            )
 
             # Obter timestamp atual COM FUSO HORÁRIO
             now_tz = dt.datetime.now(target_tz)
 
             # Criar dicionário base SEM date/time
             entry_base = {
-                 "name": stream['name'], "artist": artist, "song_title": title,
-                 "isrc": isrc, "cidade": stream.get("cidade", ""), "estado": stream.get("estado", ""),
-                 "regiao": stream.get("regiao", ""), "segmento": stream.get("segmento", ""),
-                 "label": label, "genre": genre, "identified_by": str(SERVER_ID)
-             }
+                "name": stream["name"],
+                "artist": artist,
+                "song_title": title,
+                "isrc": isrc,
+                "cidade": stream.get("cidade", ""),
+                "estado": stream.get("estado", ""),
+                "regiao": stream.get("regiao", ""),
+                "segmento": stream.get("segmento", ""),
+                "label": label,
+                "genre": genre,
+                "identified_by": str(SERVER_ID),
+            }
 
             # Chamar insert_data_to_db, que fará a verificação e a inserção
             inserted = await insert_data_to_db(entry_base, now_tz)
 
-            if inserted: # Salvar last_songs apenas se a inserção foi BEM-SUCEDIDA (não duplicata)
-                last_songs[stream['name']] = (title, artist)
+            if inserted:  # Salvar last_songs apenas se inserção foi bem-sucedida
+                last_songs[stream["name"]] = (title, artist)
                 save_last_songs(last_songs)
 
-        # --- Limpeza do arquivo local --- 
+        # --- Limpeza do arquivo local ---
         # ... (código de limpeza existente) ...
         if os.path.exists(file_path):
             try:
                 await asyncio.to_thread(os.remove, file_path)
                 logger.debug(f"Arquivo de segmento local {file_path} removido.")
             except Exception as e_remove:
-                logger.error(f"Erro ao remover arquivo de segmento {file_path}: {e_remove}")
-                
+                logger.error(
+                    f"Erro ao remover arquivo de segmento {file_path}: {e_remove}"
+                )
+
         shazam_queue.task_done()
 
 # Variáveis globais para controle de finalização
