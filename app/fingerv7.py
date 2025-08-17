@@ -1095,48 +1095,65 @@ async def insert_data_to_db(entry_base, now_tz):
                     # Logar identified_by e IDs antes de inserir
                 logger.debug(
                     "insert_data_to_db [thread]: identified_by(entry)='%s', SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
-                    entry.get("identified_by"), str(SERVER_ID), str(EFFECTIVE_SERVER_ID)
+                    entry.get("identified_by"),
+                    str(SERVER_ID),
+                    str(EFFECTIVE_SERVER_ID),
                 )
 
                 # Preparar valores
                 values = (
-                    entry["date"], entry["time"], entry["name"], entry["artist"], entry["song_title"],
-                    entry.get("isrc", ""), entry.get("cidade", ""), entry.get("estado", ""),
-                    entry.get("regiao", ""), entry.get("segmento", ""), entry.get("label", ""),
+                    entry["date"],
+                    entry["time"],
+                    entry["name"],
+                    entry["artist"],
+                    entry["song_title"],
+                    entry.get("isrc", ""),
+                    entry.get("cidade", ""),
+                    entry.get("estado", ""),
+                    entry.get("regiao", ""),
+                    entry.get("segmento", ""),
+                    entry.get("label", ""),
                     entry.get("genre", ""),
-                    entry.get("identified_by", str(SERVER_ID))
+                    entry.get("identified_by", str(SERVER_ID)),
                 )
                 logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
 
-                    query = f'''
-                        INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                    '''
-                    try:
-                        cursor.execute(query, values)
-                        inserted_id = cursor.fetchone()
+                query = f'''
+                    INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                '''
+                try:
+                    cursor.execute(query, values)
+                    inserted_id = cursor.fetchone()
 
-                        if inserted_id:
-                            _conn.commit()
-                            logger.info(f"insert_data_to_db [thread]: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})")
-                            _success = True
-                        else:
-                            logger.error(f"insert_data_to_db [thread]: Inserção falhou ou não retornou ID para {song_title} - {artist}.")
-                            _conn.rollback()
-                            _success = False
+                    if inserted_id:
+                        _conn.commit()
+                        logger.info(
+                            f"insert_data_to_db [thread]: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})"
+                        )
+                        _success = True
+                    else:
+                        logger.error(
+                            f"insert_data_to_db [thread]: Inserção falhou ou não retornou ID para {song_title} - {artist}."
+                        )
+                        _conn.rollback()
+                        _success = False
 
-                    except psycopg2.errors.UniqueViolation as e_unique:
-                        _conn.rollback()
-                        logger.warning(f"insert_data_to_db [thread]: Inserção falhou devido a violação UNIQUE: {e_unique}")
-                        _success = False
-                    except Exception as e_insert:
-                        _conn.rollback()
-                        logger.error(f"insert_data_to_db [thread]: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}")
-                        # O alerta de e-mail foi movido para fora do thread
-                        _success = False
-                        # Re-lançar para capturar fora e enviar e-mail
-                        raise e_insert 
+                except psycopg2.errors.UniqueViolation as e_unique:
+                    _conn.rollback()
+                    logger.warning(
+                        f"insert_data_to_db [thread]: Inserção falhou devido a violação UNIQUE: {e_unique}"
+                    )
+                    _success = False
+                except Exception as e_insert:
+                    _conn.rollback()
+                    logger.error(
+                        f"insert_data_to_db [thread]: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}"
+                    )
+                    _success = False
+                    # Re-lançar para capturar fora e enviar e-mail
+                    raise e_insert 
 
             except Exception as e_cursor:
                  logger.error(f"insert_data_to_db [thread]: Erro dentro do bloco with cursor: {e_cursor}")
@@ -1434,8 +1451,8 @@ async def sync_json_with_db():
                     server_id = int(SERVER_ID)
                     if server_id >= 1 and server_id <= TOTAL_SERVERS:
                         for i, stream_item in enumerate(streams):
-                        stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (EFFECTIVE_SERVER_ID - 1))
-                        stream_item['distribution_mode'] = 'static_fallback'
+                            stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (EFFECTIVE_SERVER_ID - 1))
+                            stream_item['distribution_mode'] = 'static_fallback'
             
             # Salvar os streams no arquivo JSON local (operação de I/O síncrona)
             try:
@@ -2587,7 +2604,7 @@ if __name__ == '__main__':
         # Enviar e-mail de alerta para erro crítico
         try:
             subject = "Erro Crítico no Servidor de Identificação"
-            body = f"O servidor {SERVER_ID} encontrou um erro crítico e precisou ser encerrado.\\n\\nErro: {e}\\n\\nPor favor, verifique os logs para mais detalhes."
+            body = f"O servidor {SERVER_ID} encontrou um erro crítico e precisou ser encerrado.\n\nErro: {e}\n\nPor favor, verifique os logs para mais detalhes."
             send_email_alert(subject, body)
         except Exception as email_err:
             logger.error(f"Não foi possível enviar e-mail de alerta para erro crítico: {email_err}")
@@ -2630,7 +2647,7 @@ if __name__ == '__main__':
         # Fechar conexão Redis ao finalizar
         if _redis_client:
             try:
-                await _redis_client.aclose()
+                asyncio.run(_redis_client.aclose())
                 logger.info("Conexão Redis fechada.")
             except Exception as redis_close_err:
                 logger.error(f"Erro ao fechar conexão Redis: {redis_close_err}")
