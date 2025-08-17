@@ -2065,6 +2065,12 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
         except Exception:
             pass
         logger.info(f"Watcher Redis semeado com servidores online iniciais: {online_now}")
+        # Janela curta para acordar corrotinas e, em seguida, limpar o evento
+        try:
+            await asyncio.sleep(1)
+            REBALANCE_EVENT.clear()
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(f"watch_online_servers_redis: falha ao semear estado inicial: {e}")
 
@@ -2109,6 +2115,12 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
                     except Exception:
                         pass
                     logger.info(f"Redis watcher: servidores online atualizados: {online_now}")
+                    # Janela curta para acordar corrotinas e, em seguida, limpar o evento
+                    await asyncio.sleep(1)
+                    try:
+                        REBALANCE_EVENT.clear()
+                    except Exception:
+                        pass
                     
                 # Log periódico de diagnóstico
                 if len(last_seen) > 0:
