@@ -136,6 +136,7 @@ async def publish_redis_heartbeat(info: dict) -> None:
     """Publica heartbeat via Redis (Pub/Sub + presença com TTL) usando prefixo smf:."""
     client = await get_redis_client()
     if not client:
+        logger.debug("publish_redis_heartbeat: Redis não configurado, ignorando")
         return
     try:
         # Atualiza presença com TTL usando prefixo smf:
@@ -162,9 +163,13 @@ async def publish_redis_heartbeat(info: dict) -> None:
             "ip_address": info.get("ip_address"),
         }
         await client.publish(REDIS_CHANNEL, json.dumps(msg))  # canal: smf:server_heartbeats
-        logger.debug(f"publish_redis_heartbeat: publicado no Redis (canal={REDIS_CHANNEL}, key={presence_key})")
+        logger.debug(f"publish_redis_heartbeat: publicado no Redis (canal={REDIS_CHANNEL}, key={presence_key}, TTL={REDIS_HEARTBEAT_TTL_SECS}s)")
+    except redis.RedisError as e:
+        logger.warning(f"publish_redis_heartbeat: erro Redis específico: {e}")
+    except (TypeError, OverflowError) as e:
+        logger.error(f"publish_redis_heartbeat: erro JSON ao serializar dados: {e}")
     except Exception as e:
-        logger.warning(f"publish_redis_heartbeat: falha ao publicar no Redis: {e}")
+        logger.error(f"publish_redis_heartbeat: falha inesperada ao publicar no Redis: {e}")
 
 async def get_redis_online_servers() -> list[int]:
     """Obtém lista de servidores online diretamente do Redis usando prefixo smf:."""
@@ -543,6 +548,13 @@ HEARTBEAT_INTERVAL_SECS = 60  # Enviar heartbeat a cada 1 minuto
 
 # Variável global para controle da pausa do Shazam (RESTAURADO)
 shazam_pause_until_timestamp = 0.0
+
+# Validação crítica de configuração
+if REDIS_HEARTBEAT_TTL_SECS <= HEARTBEAT_INTERVAL_SECS:
+    logger.warning(f"CONFIGURAÇÃO CRÍTICA: REDIS_HEARTBEAT_TTL_SECS ({REDIS_HEARTBEAT_TTL_SECS}s) deve ser maior que HEARTBEAT_INTERVAL_SECS ({HEARTBEAT_INTERVAL_SECS}s)!")
+    logger.warning(f"Recomendação: Configure REDIS_HEARTBEAT_TTL_SECS={HEARTBEAT_INTERVAL_SECS * 2} ou maior no .env")
+    REDIS_HEARTBEAT_TTL_SECS = max(HEARTBEAT_INTERVAL_SECS * 2, 120)  # Garantir margem de segurança
+    logger.info(f"TTL ajustado automaticamente para {REDIS_HEARTBEAT_TTL_SECS}s para evitar expirações prematuras")
 
 # Classe StreamConnectionTracker (RESTAURADO)
 class StreamConnectionTracker:
@@ -1057,9 +1069,9 @@ async def insert_data_to_db(entry_base, now_tz):
     logger.debug(f"insert_data_to_db: Iniciando processo para {song_title} - {artist} em {name}")
 
     conn = None
-    success = False # Flag para indicar sucesso da inserção
+    success = False  # Flag para indicar sucesso da inserção
     try:
-        # --- Operações de DB movidas para uma função síncrona --- 
+        # Todas as operações de DB vão ocorrer na MESMA thread e com o MESMO cursor
         def db_insert_operations():
             _conn = None
             _success = False
@@ -1067,165 +1079,178 @@ async def insert_data_to_db(entry_base, now_tz):
                 _conn = connect_db()
                 if not _conn:
                     logger.error("insert_data_to_db [thread]: Não foi possível conectar ao DB.")
-                    return _conn, False # Retorna conexão (None) e falha
+                    return _conn, False
 
                 with _conn.cursor() as cursor:
-                    # PASSO 1: Verificar duplicidade
-                    # AVISO: _internal_is_duplicate_in_db agora é async
-                    # NÃO PODE ser chamada diretamente aqui. A lógica de duplicidade
-                    # precisa ser refeita ou chamada ANTES de entrar neste thread.
-                    # ----> SOLUÇÃO TEMPORÁRIA: Movendo a verificação para fora do to_thread <----
-                    # ----> Verificação será feita antes de chamar esta função síncrona. <----
-                    
-                    # PASSO 2: Formatar date/time strings e Inserir
+                    # 1) Verificar se a tabela existe
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s)",
+                        (DB_TABLE_NAME,),
+                    )
+                    if not cursor.fetchone()[0]:
+                        logger.error(
+                            f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' "
+                            "não existe! Inserção falhou."
+                        )
+                        return _conn, False
+
+                    # 2) Verificação de duplicidade (na mesma thread/cursor)
+                    start_window_tz = now_tz - timedelta(
+                        seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
+                    )
+                    start_date = start_window_tz.date()
+                    start_time = start_window_tz.time()
+
+                    dup_query = f"""
+                        SELECT 1 FROM {DB_TABLE_NAME}
+                        WHERE name = %s AND artist = %s AND song_title = %s
+                          AND (date > %s OR (date = %s AND time >= %s))
+                        LIMIT 1
+                    """
+                    dup_params = (
+                        name,
+                        artist,
+                        song_title,
+                        start_date,
+                        start_date,
+                        start_time,
+                    )
+                    logger.debug(
+                        f"  [thread] Verificando duplicidade (DATE/TIME): {dup_query.strip()}"
+                    )
+                    logger.debug(f"  [thread] Parâmetros duplicidade: {dup_params}")
+
+                    cursor.execute(dup_query, dup_params)
+                    if cursor.fetchone():
+                        logger.info(
+                            f"insert_data_to_db [thread]: Inserção ignorada, duplicata "
+                            f"encontrada para {song_title} - {artist} em {name}."
+                        )
+                        return _conn, False
+
+                    # 3) Preparar dados para inserção
                     date_str = now_tz.strftime('%Y-%m-%d')
                     time_str = now_tz.strftime('%H:%M:%S')
-                    logger.debug(f"  [thread] Formatado para INSERT: date='{date_str}', time='{time_str}'")
+                    logger.debug(
+                        f"  [thread] Formatado para INSERT: date='{date_str}', time='{time_str}'"
+                    )
 
                     entry = entry_base.copy()
                     entry["date"] = date_str
                     entry["time"] = time_str
 
-                    # Verificar tabela
-                    cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
-                    if not cursor.fetchone()[0]:
-                        logger.error(f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' não existe! Inserção falhou.")
-                        return _conn, False
+                    logger.debug(
+                        "insert_data_to_db [thread]: identified_by(entry)='%s', "
+                        "SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
+                        entry.get("identified_by"),
+                        str(SERVER_ID),
+                        str(EFFECTIVE_SERVER_ID),
+                    )
 
-                    # Logar identified_by e IDs antes de inserir
-                logger.debug(
-                    "insert_data_to_db [thread]: identified_by(entry)='%s', SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
-                    entry.get("identified_by"),
-                    str(SERVER_ID),
-                    str(EFFECTIVE_SERVER_ID),
-                )
+                    values = (
+                        entry["date"],
+                        entry["time"],
+                        entry["name"],
+                        entry["artist"],
+                        entry["song_title"],
+                        entry.get("isrc", ""),
+                        entry.get("cidade", ""),
+                        entry.get("estado", ""),
+                        entry.get("regiao", ""),
+                        entry.get("segmento", ""),
+                        entry.get("label", ""),
+                        entry.get("genre", ""),
+                        entry.get("identified_by", str(SERVER_ID)),
+                    )
+                    logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
 
-                # Preparar valores
-                values = (
-                    entry["date"],
-                    entry["time"],
-                    entry["name"],
-                    entry["artist"],
-                    entry["song_title"],
-                    entry.get("isrc", ""),
-                    entry.get("cidade", ""),
-                    entry.get("estado", ""),
-                    entry.get("regiao", ""),
-                    entry.get("segmento", ""),
-                    entry.get("label", ""),
-                    entry.get("genre", ""),
-                    entry.get("identified_by", str(SERVER_ID)),
-                )
-                logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
+                    insert_query = f"""
+                        INSERT INTO {DB_TABLE_NAME}
+                            (date, time, name, artist, song_title, isrc,
+                             cidade, estado, regiao, segmento, label, genre, identified_by)
+                        VALUES
+                            (%s, %s, %s, %s, %s, %s,
+                             %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """
 
-                query = f'''
-                    INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                '''
-                try:
-                    cursor.execute(query, values)
-                    inserted_id = cursor.fetchone()
+                    try:
+                        cursor.execute(insert_query, values)
+                        inserted_row = cursor.fetchone()
+                        if inserted_row:
+                            _conn.commit()
+                            logger.info(
+                                "insert_data_to_db [thread]: Dados inseridos com sucesso: "
+                                f"ID={inserted_row[0]}, {song_title} - {artist} ({name})"
+                            )
+                            _success = True
+                        else:
+                            logger.error(
+                                "insert_data_to_db [thread]: Inserção falhou ou não retornou ID "
+                                f"para {song_title} - {artist}."
+                            )
+                            _conn.rollback()
+                            _success = False
 
-                    if inserted_id:
-                        _conn.commit()
-                        logger.info(
-                            f"insert_data_to_db [thread]: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})"
-                        )
-                        _success = True
-                    else:
-                        logger.error(
-                            f"insert_data_to_db [thread]: Inserção falhou ou não retornou ID para {song_title} - {artist}."
-                        )
+                    except psycopg2.errors.UniqueViolation as e_unique:
                         _conn.rollback()
+                        logger.warning(
+                            "insert_data_to_db [thread]: Inserção falhou devido a "
+                            f"violação UNIQUE: {e_unique}"
+                        )
                         _success = False
+                    except Exception as e_insert:
+                        _conn.rollback()
+                        logger.error(
+                            "insert_data_to_db [thread]: Erro GERAL ao inserir dados "
+                            f"({song_title} - {artist}): {e_insert}"
+                        )
+                        _success = False
+                        # Re-lançar para ser capturado fora e disparar alerta
+                        raise e_insert
 
-                except psycopg2.errors.UniqueViolation as e_unique:
-                    _conn.rollback()
-                    logger.warning(
-                        f"insert_data_to_db [thread]: Inserção falhou devido a violação UNIQUE: {e_unique}"
-                    )
-                    _success = False
-                except Exception as e_insert:
-                    _conn.rollback()
-                    logger.error(
-                        f"insert_data_to_db [thread]: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}"
-                    )
-                    _success = False
-                    # Re-lançar para capturar fora e enviar e-mail
-                    raise e_insert 
+            except Exception as e_db:
+                logger.error(
+                    f"insert_data_to_db [thread]: Erro no DB (cursor/execução): {e_db}"
+                )
+                if _conn:
+                    try:
+                        _conn.rollback()
+                    except Exception:
+                        pass
+                # Propaga para o nível superior da função async
+                raise e_db
 
-            except Exception as e_cursor:
-                 logger.error(f"insert_data_to_db [thread]: Erro dentro do bloco with cursor: {e_cursor}")
-                 if _conn: _conn.rollback()
-                 _success = False
-                 raise e_cursor # Re-lançar
-                 
             # Retorna a conexão (para fechar fora) e o status de sucesso
             return _conn, _success
-            
-        # --- Fim da função síncrona db_insert_operations ---
-        
-        # PASSO 1 (NOVO): Verificar duplicidade ANTES de chamar o thread de inserção
-        # Precisamos de uma conexão e cursor temporários aqui no contexto async
-        temp_conn = None
-        is_duplicate = False
-        try:
-            # Obter conexão temporária no thread
-            temp_conn = await asyncio.to_thread(connect_db)
-            if not temp_conn:
-                logger.error("insert_data_to_db: Não foi possível conectar ao DB para verificar duplicidade.")
-                return False # Falha
-            
-            # Obter cursor e verificar duplicidade (usando a função async já modificada)
-            # A função _internal_is_duplicate_in_db já usa asyncio.to_thread internamente
-            with temp_conn.cursor() as temp_cursor:
-                 is_duplicate = await _internal_is_duplicate_in_db(temp_cursor, now_tz, name, artist, song_title)
-            
-            # Fechar conexão temporária no thread
-            await asyncio.to_thread(temp_conn.close)
-            temp_conn = None # Resetar para evitar fechamento duplo no finally
-        except Exception as e_dup_check:
-             logger.error(f"insert_data_to_db: Erro ao verificar duplicidade antes da inserção: {e_dup_check}", exc_info=True)
-             if temp_conn:
-                 try: await asyncio.to_thread(temp_conn.close)
-                 except: pass # Ignorar erros ao fechar conexão temporária
-             return False # Falha
 
-        if is_duplicate:
-            logger.info(f"insert_data_to_db: Inserção ignorada, duplicata encontrada (pré-verificação) para {song_title} - {artist} em {name}.")
-            return False # Indica que não inseriu (duplicata)
-
-        # PASSO 2 (NOVO): Executar a inserção real no thread se não for duplicata
+        # Executa tudo na mesma thread (sem pré-conexão/cursor em outra thread)
         conn, success = await asyncio.to_thread(db_insert_operations)
 
-        # Se houve um erro geral de inserção dentro do thread (relançado), enviar e-mail
-        if not success and conn: # Verificar conn para saber se a falha foi após conectar
-            # (O erro já foi logado dentro do thread ou no except abaixo)
-            # Verificar se o erro foi do tipo que queremos alertar (não UniqueViolation)
-            # Idealmente, db_insert_operations poderia retornar o tipo de erro
+        if not success and conn:
             logger.info("Enviando alerta de e-mail por falha na inserção (não duplicata)")
             subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
-            body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Verifique os logs.\nDados: {entry_base}"
+            body = (
+                f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados "
+                f"na tabela {DB_TABLE_NAME}. Verifique os logs.\nDados: {entry_base}"
+            )
             send_email_alert(subject, body)
 
     except Exception as e:
-        # Erros na pré-verificação de duplicidade ou ao chamar/esperar o to_thread
-        logger.error(f"insert_data_to_db: Erro INESPERADO ({song_title} - {artist}): {e}", exc_info=True)
-        success = False # Garante que o status é de falha
-        # Se a conexão principal (não a temporária) foi estabelecida no thread e um erro ocorreu
-        # fora dele, precisamos tentar fechar.
-        # No entanto, 'conn' pode não estar definido ou ser None aqui.
-        # O fechamento principal está no finally.
+        logger.error(
+            f"insert_data_to_db: Erro INESPERADO ({song_title} - {artist}): {e}",
+            exc_info=True,
+        )
+        success = False
 
     finally:
-        if conn: # Se a conexão foi retornada do thread db_insert_operations
+        if conn:
             try:
                 await asyncio.to_thread(conn.close)
             except Exception as cl_err:
                 logger.error(f"Erro ao fechar conexão principal: {cl_err}")
-                
-    return success # Retorna True se inseriu, False caso contrário
+
+    return success
 
 # Função para atualizar o log local e chamar a inserção no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
@@ -2491,6 +2516,15 @@ async def main():
             tasks.append(task)
         logger.info(f"{len(tasks)} tasks criadas para os novos streams.")
 
+    # Iniciar heartbeat IMEDIATAMENTE após carregar streams
+    if DISTRIBUTE_LOAD:
+        logger.info("Iniciando heartbeat imediato para registro no Redis...")
+        try:
+            # Enviar heartbeat inicial antes de qualquer task
+            await send_heartbeat()
+        except Exception as e:
+            logger.error(f"Falha no heartbeat inicial: {e}")
+    
     # Criar e registrar todas as tarefas necessárias
     monitor_task = register_task(asyncio.create_task(monitor_streams_file(reload_streams)))
     shazam_task = register_task(asyncio.create_task(identify_song_shazamio(shazam)))
@@ -2500,10 +2534,12 @@ async def main():
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
     
-    # Iniciar watcher de servidores online
+    # Iniciar watcher de servidores online APÓS heartbeat inicial
     if DISTRIBUTE_LOAD:
         try:
             if REDIS_URL:
+                # Pequeno delay para garantir que o heartbeat inicial foi enviado
+                await asyncio.sleep(1)
                 online_servers_watcher_task = register_task(
                     asyncio.create_task(watch_online_servers_redis(poll_interval_secs=5))
                 )
@@ -2564,12 +2600,10 @@ async def heartbeat_loop():
     """Envia heartbeats periódicos para o banco de dados."""
     while True:
         try:
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECS)
             await send_heartbeat()
         except Exception as e:
             logger.error(f"Erro no loop de heartbeat: {e}")
-        finally:
-            # Aguardar até o próximo intervalo
-            await asyncio.sleep(HEARTBEAT_INTERVAL_SECS)
 
 # Ponto de entrada
 if __name__ == '__main__':
