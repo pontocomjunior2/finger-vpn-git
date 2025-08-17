@@ -560,18 +560,24 @@ if REDIS_HEARTBEAT_TTL_SECS <= HEARTBEAT_INTERVAL_SECS:
 class StreamConnectionTracker:
     def __init__(self):
         self.connection_errors = {} # Stores stream_name: error_timestamp
+        self.error_counts = {}  # Novo: contagem de falhas consecutivas por stream
 
     def record_error(self, stream_name):
         """Records the timestamp of the first consecutive error for a stream."""
         if stream_name not in self.connection_errors:
             self.connection_errors[stream_name] = time.time()
             logger.debug(f"Registrado primeiro erro de conexão para: {stream_name}")
+        # Incrementar contagem de falhas consecutivas
+        self.error_counts[stream_name] = self.error_counts.get(stream_name, 0) + 1
 
     def clear_error(self, stream_name):
         """Clears the error status for a stream if it was previously recorded."""
         if stream_name in self.connection_errors:
             del self.connection_errors[stream_name]
             logger.debug(f"Erro de conexão limpo para: {stream_name}")
+        # Zerar/Remover contagem de falhas na limpeza
+        if stream_name in self.error_counts:
+            del self.error_counts[stream_name]
 
     def check_persistent_errors(self, threshold_minutes=10):
         """Checks for streams that have been failing for longer than the threshold."""
@@ -586,6 +592,10 @@ class StreamConnectionTracker:
         if persistent_errors:
              logger.debug(f"Erros persistentes encontrados (> {threshold_minutes} min): {persistent_errors}")
         return persistent_errors
+
+    def get_error_count(self, stream_name) -> int:
+        """Retorna a contagem de falhas consecutivas para o stream."""
+        return self.error_counts.get(stream_name, 0)
 
 connection_tracker = StreamConnectionTracker() # Instanciar o tracker (RESTAURADO)
 
@@ -918,6 +928,18 @@ async def monitor_streams_file(callback):
             logger.error(f"Erro ao monitorar streams no banco de dados: {e}")
             await asyncio.sleep(60)  # Esperar um minuto antes de tentar novamente
 
+
+def sanitize_filename(name: str) -> str:
+    """Sanitiza nomes para uso seguro em sistemas de arquivos."""
+    invalid_chars = '<>:"/\\|?*'
+    table = str.maketrans({ch: '_' for ch in invalid_chars})
+    safe = name.translate(table)
+    # Substitui caracteres de controle/fora do ASCII básico
+    safe = ''.join(c if 32 <= ord(c) < 127 else '_' for c in safe)
+    # Remove espaços/pontos finais problemáticos no Windows
+    safe = safe.strip().rstrip('.')
+    return safe[:120] if len(safe) > 120 else safe
+
 # Função para capturar o áudio do streaming ao vivo e salvar um segmento temporário
 async def capture_stream_segment(name, url, duration=None, processed_by_server=True):
     # Se o stream não for processado por este servidor, retornar None
@@ -931,7 +953,8 @@ async def capture_stream_segment(name, url, duration=None, processed_by_server=T
         
     output_dir = SEGMENTS_DIR
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f'{name}_segment.mp3')  # Sempre o mesmo arquivo
+    safe_name = sanitize_filename(name)
+    output_path = os.path.join(output_dir, f'{safe_name}_segment.mp3')  # Sempre o mesmo arquivo
     try:
         logger.debug(f"URL do stream: {url}")
         # Remover a verificação prévia da URL com requests
@@ -2006,6 +2029,44 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
         return
 
     last_seen: dict[int, float] = {}  # server_id -> timestamp
+
+    # Semeadura inicial a partir das chaves de presença já existentes
+    try:
+        global _cached_online_servers, _last_dynamic_check
+        pattern = f"{REDIS_KEY_PREFIX}:*"  # smf:server:*
+        keys = await client.keys(pattern)
+        now_ts = time.time()
+        for key in keys:
+            try:
+                sid = int(key.split(":")[-1])
+            except (ValueError, IndexError):
+                continue
+            try:
+                ttl = await client.ttl(key)  # segundos restantes
+            except Exception:
+                ttl = -1
+            if ttl is None or ttl < 0:
+                # Sem TTL definido ou erro ao obter: considere como visto agora
+                last_seen[sid] = now_ts
+            else:
+                # Reconstrói o last_seen com base no TTL restante
+                last_seen[sid] = max(
+                    0.0,
+                    now_ts - (REDIS_HEARTBEAT_TTL_SECS - ttl)
+                )
+        online_now = sorted([
+            sid for sid, ts in last_seen.items()
+            if (now_ts - ts) < REDIS_HEARTBEAT_TTL_SECS
+        ])
+        _cached_online_servers = online_now
+        _last_dynamic_check = now_ts
+        try:
+            REBALANCE_EVENT.set()
+        except Exception:
+            pass
+        logger.info(f"Watcher Redis semeado com servidores online iniciais: {online_now}")
+    except Exception as e:
+        logger.warning(f"watch_online_servers_redis: falha ao semear estado inicial: {e}")
 
     # Assinar canal com prefixo smf:
     pubsub = client.pubsub()
