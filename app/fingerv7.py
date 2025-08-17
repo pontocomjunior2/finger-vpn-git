@@ -22,6 +22,7 @@ import signal
 import socket
 import platform
 from ftplib import FTP, error_perm
+import socket
 import datetime as dt # Usar alias para evitar conflito com variável datetime
 try:
     import pytz
@@ -1608,6 +1609,28 @@ async def send_heartbeat():
             processing_streams_count = len([s for s in STREAMS if s.get('processed_by_server', 
                                                                        (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1))])
         
+        # NOVO: nomes dos streams processados
+        try:
+            processing_stream_names = await get_streams_processed_names()
+        except Exception as e:
+            logger.exception("send_heartbeat: falha ao obter nomes de streams: %s", e)
+            processing_stream_names = []
+
+        # NOVO: detectar VPN
+        vpn_info = await asyncio.to_thread(detect_vpn)
+
+        # NOVO: últimos erros do log
+        recent_errors = await asyncio.to_thread(get_recent_errors, 5, 400)
+        
+        # Criar diagnósticos adicionais
+        diagnostics = {
+            "streams_loaded": len(STREAMS) if STREAMS else 0,
+            "processing_names_count": len(processing_stream_names),
+            "distribution_mode": str(globals().get("DISTRIBUTION_MODE") or "unknown"),
+            "distribute_load": str(globals().get("DISTRIBUTE_LOAD") or "unknown"),
+            "instance_id": str(globals().get("INSTANCE_ID") or "unknown"),
+        }
+        
         # Informações para o banco de dados
         info = {
             "hostname": hostname,
@@ -1622,8 +1645,14 @@ async def send_heartbeat():
             "python_version": platform.python_version(),
             "distribution_mode": "dynamic" if DISTRIBUTE_LOAD else "static",
             "static_total_servers": TOTAL_SERVERS,
-            "cached_active_servers": _cached_active_servers_count
+            "cached_active_servers": _cached_active_servers_count,
+            # --- Novos campos para o dashboard ---
+            "processing_stream_names": processing_stream_names,
+            "vpn": vpn_info,
+            "recent_errors": recent_errors,
+            "diagnostics": diagnostics,
         }
+        logger.debug("send_heartbeat: diagnostics=%s", diagnostics)
         info_json = json.dumps(info)
         
         # --- Operações de DB em thread separada --- 
@@ -1818,6 +1847,149 @@ OFFLINE_THRESHOLD_SECS = 600  # Janela para considerar servidor online (manter e
 
 # Evento global de rebalanceamento
 REBALANCE_EVENT = asyncio.Event()
+
+# === INÍCIO: Helpers para Dashboard: VPN, Erros e Streams Ativos ===
+import socket  # Adicionar novamente para garantir disponibilidade
+def detect_vpn() -> dict:
+    """
+    Detecta uso de VPN com heurísticas simples via interfaces de rede e env vars.
+    Retorna um dict:
+      {
+        "in_use": bool,
+        "interface": Optional[str],
+        "type": Optional[str]  # "wireguard" | "openvpn" | "unknown"
+      }
+    """
+    try:
+        import psutil as _ps
+        ifaces_stats = _ps.net_if_stats()
+        ifaces_addrs = _ps.net_if_addrs()
+        candidates = []
+
+        for iface_name, stats in ifaces_stats.items():
+            lname = iface_name.lower()
+            # Heurística: interfaces típicas de VPN
+            if any(token in lname for token in ("tun", "wg", "vpn", "tap")) and stats.isup:
+                # Verifica se possui endereço IPv4 (não loopback)
+                addrs = ifaces_addrs.get(iface_name, [])
+                has_ipv4 = any(
+                    (getattr(a, "family", None) == socket.AF_INET) or str(getattr(a, "family", None)).endswith("AF_INET")
+                    for a in addrs
+                )
+                if has_ipv4:
+                    candidates.append(iface_name)
+
+        if candidates:
+            picked = candidates[0]
+            l = picked.lower()
+            if "wg" in l:
+                return {"in_use": True, "interface": picked, "type": "wireguard"}
+            if "tun" in l or "tap" in l:
+                return {"in_use": True, "interface": picked, "type": "openvpn"}
+            return {"in_use": True, "interface": picked, "type": "unknown"}
+
+        # Fallback: variáveis de ambiente
+        vpn_type = os.getenv("VPN_TYPE") or os.getenv("VPN_SERVICE_PROVIDER")
+        if vpn_type:
+            return {"in_use": True, "interface": None, "type": vpn_type.lower()}
+        if os.getenv("OPENVPN_USER") or os.getenv("OPENVPN_PASSWORD"):
+            return {"in_use": True, "interface": None, "type": "openvpn"}
+
+        return {"in_use": False, "interface": None, "type": None}
+    except Exception:
+        # Em caso de erro, não bloquear o heartbeat
+        return {"in_use": False, "interface": None, "type": None}
+
+
+async def get_streams_processed_names() -> list:
+    """
+    Retorna lista com os nomes dos streams processados por esta instância,
+    com base na lógica dinâmica should_process_stream_dynamic.
+    """
+    names = []
+    try:
+        total_streams = len(STREAMS) if STREAMS else 0
+        if total_streams == 0:
+            logger.warning("get_streams_processed_names: STREAMS não carregados ou vazios")
+            return []
+
+        for s in STREAMS:
+            try:
+                idx = s.get("index", 0)
+                if await should_process_stream_dynamic(idx, SERVER_ID):
+                    names.append(s.get("name") or s.get("url") or f"id:{s.get('id')}")
+            except Exception as e:
+                logger.exception(
+                    "get_streams_processed_names: erro ao decidir processamento para stream id=%s name=%s: %s",
+                    s.get("id"),
+                    s.get("name"),
+                    e,
+                )
+
+        logger.info(
+            "get_streams_processed_names: total_streams=%d, selecionados=%d",
+            total_streams,
+            len(names),
+        )
+        return names
+    except Exception as e:
+        logger.exception("get_streams_processed_names: erro inesperado: %s", e)
+        return []
+
+
+def get_recent_errors(max_entries: int = 5, tail_lines: int = 400) -> list:
+    """
+    Lê o arquivo de log e extrai até 'max_entries' erros mais recentes (ERROR/CRITICAL).
+    tail_lines: número de linhas finais do arquivo a analisar (heurística para ser leve).
+    Retorna lista de dicts: [{"timestamp": str, "level": str, "message": str}, ...]
+    """
+    results = []
+    try:
+        path = SERVER_LOG_FILE  # já definido no topo como 'log.txt'
+        if not os.path.exists(path):
+            return results
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()[-tail_lines:]
+
+        # Formato do formatter: '%(asctime)s %(levelname)s: [%(threadName)s] %(message)s'
+        for line in reversed(lines):
+            # Pegamos os níveis de severidade tipicamente usados
+            if " ERROR:" in line or " CRITICAL:" in line:
+                # Tente extrair as partes, mas deixe robusto
+                # Ex: "2025-08-16 10:01:23,123 ERROR: [ThreadX] Mensagem"
+                try:
+                    # timestamp = início até o primeiro " "
+                    # nível = depois do espaço até ":"
+                    # mensagem = depois de "] "
+                    parts = line.strip().split(" ", 2)
+                    if len(parts) >= 3:
+                        ts = f"{parts[0]} {parts[1].rstrip(':')}".strip()
+                        rest = parts[2]
+                    else:
+                        ts = ""
+                        rest = line.strip()
+
+                    level = "ERROR" if " ERROR:" in line else "CRITICAL"
+                    # Tente eliminar o prefixo "[thread] "
+                    msg = rest
+                    brk = rest.find("] ")
+                    if brk != -1:
+                        msg = rest[brk + 2 :]
+                    # Limite máximo de mensagens coletadas
+                    results.append({"timestamp": ts, "level": level, "message": msg})
+                    if len(results) >= max_entries:
+                        break
+                except Exception:
+                    # Se parsing falhar, empilha simples
+                    results.append({"timestamp": "", "level": "ERROR", "message": line.strip()})
+                    if len(results) >= max_entries:
+                        break
+    except Exception:
+        # Silenciosamente ignore
+        return results
+    return results
+# === FIM: Helpers para Dashboard ===
 
 # Estado conhecido de servidores online (para detecção de mudanças)
 _last_known_online_servers = []
