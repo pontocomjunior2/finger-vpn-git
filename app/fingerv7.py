@@ -214,6 +214,7 @@ else:
 # Configurações para identificação e verificação de duplicatas
 IDENTIFICATION_DURATION = int(os.getenv('IDENTIFICATION_DURATION', '15'))  # Duração da captura em segundos
 DUPLICATE_PREVENTION_WINDOW_SECONDS = int(os.getenv('DUPLICATE_PREVENTION_WINDOW_SECONDS', '900')) # Nova janela de 15 min
+NUM_SHAZAM_WORKERS = int(os.getenv('NUM_SHAZAM_WORKERS', '4'))  # Número de tarefas de identificação simultâneas
 
 # Configurações do banco de dados PostgreSQL
 DB_HOST = os.getenv('POSTGRES_HOST')  # Removido default para forçar configuração
@@ -2706,7 +2707,12 @@ async def main():
         await reload_streams()
     
     monitor_task = register_task(asyncio.create_task(monitor_streams_file(reload_streams_wrapper)))
-    shazam_task = register_task(asyncio.create_task(identify_song_shazamio(shazam)))
+    logger.info(f"Iniciando pool de {NUM_SHAZAM_WORKERS} workers de identificação do Shazam...")
+    shazam_workers = []
+    for _ in range(NUM_SHAZAM_WORKERS):
+        worker_task = asyncio.create_task(identify_song_shazamio(shazam))
+        register_task(worker_task)
+        shazam_workers.append(worker_task)
     shutdown_monitor_task = register_task(asyncio.create_task(monitor_shutdown()))
     
     # Adicionar tarefas de heartbeat e monitoramento de servidores
@@ -2733,11 +2739,12 @@ async def main():
     
     if 'send_data_to_db' in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
-        tasks_to_gather = [monitor_task, shazam_task, send_data_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task]
+        tasks_to_gather = [monitor_task, shutdown_monitor_task, heartbeat_task, server_monitor_task]
+        tasks_to_gather.extend(shazam_workers)
+        tasks_to_gather.append(send_data_task)
     else:
-        tasks_to_gather = [monitor_task, shazam_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task]
+        tasks_to_gather = [monitor_task, shutdown_monitor_task, heartbeat_task, server_monitor_task]
+        tasks_to_gather.extend(shazam_workers)
     
     # Adicionar o watcher de servidores online às tarefas se foi iniciado
     if DISTRIBUTE_LOAD and 'online_servers_watcher_task' in locals():
