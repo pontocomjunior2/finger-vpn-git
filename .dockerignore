@@ -48,3 +48,6 @@ manuais/
 # Segmentos de áudio (são criados em runtime)
 segments/
 app/segments/
+
+# Dashboard web (não necessário para workers Python)
+# app/dashboard-web/

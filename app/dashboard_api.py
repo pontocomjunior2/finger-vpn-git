@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +10,15 @@ import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+# Novo: suporte a Redis para leitura em tempo real
+try:
+    import redis.asyncio as redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+
+# Top-level: função load_env_from_file e configuração de envs
 
 def load_env_from_file(paths: list[str]) -> None:
     """Carrega KEY=VALUE de arquivos .env para os.environ, sobrescrevendo chaves existentes e lendo todos os arquivos em ordem (os últimos prevalecem)."""
@@ -23,20 +33,18 @@ def load_env_from_file(paths: list[str]) -> None:
                         key, value = s.split("=", 1)
                         key = key.strip()
                         value = value.strip().strip('"').strip("'")
-                        # Sobrescreve variáveis existentes para garantir que o .env prevaleça
                         os.environ[key] = value
-                # Removido 'break': carregamos todos os arquivos em ordem,
-                # permitindo que os últimos sobrescrevam os anteriores.
         except Exception:
-            # Silencioso: se não conseguir ler, segue sem interromper o servidor
             pass
 
 BASE_DIR = os.path.dirname(__file__)
+ROOT_DIR = os.path.dirname(BASE_DIR)  # novo: raiz do projeto (d:\dataradio\finger_vpn)
 load_env_from_file([
-    os.path.join(BASE_DIR, "dashboard-web", ".env.local"),            # recomendado
-    os.path.join(BASE_DIR, ".env.local"),                             
-    os.path.join(BASE_DIR, "dashboard-web.env.local"),                
-    os.path.join(BASE_DIR, "dashboard-web", "dashboard-web.env.local")# seu arquivo atual
+    os.path.join(BASE_DIR, "dashboard-web", ".env.local"),            # recomendado (dev)
+    os.path.join(BASE_DIR, ".env.local"),                             # backend local
+    os.path.join(BASE_DIR, "dashboard-web.env.local"),                # legado
+    os.path.join(BASE_DIR, "dashboard-web", "dashboard-web.env.local"),# legado
+    os.path.join(ROOT_DIR, "app.env.local"),                          # novo: raiz do projeto
 ])
 
 # --- Config DB (mesmas envs do fingerv7.py) ---
@@ -128,11 +136,114 @@ def _row_to_instance(row: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
 
+# Configuração Redis (mesmo prefixo do fingerv7.py)
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "smf:server")
+REDIS_HEARTBEAT_TTL_SECS = int(os.getenv("REDIS_HEARTBEAT_TTL_SECS", "120"))
+
+_redis_client: "redis.Redis | None" = None
+
+async def get_redis_client() -> "redis.Redis | None":
+    """Inicializa cliente Redis para dashboard (mesmo prefixo smf:)."""
+    global _redis_client
+    if not REDIS_URL or not REDIS_AVAILABLE:
+        return None
+    if _redis_client is None:
+        try:
+            _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+            await _redis_client.ping()
+        except Exception:
+            _redis_client = None
+    return _redis_client
+
+async def get_redis_server_data(server_id: int) -> Optional[Dict[str, Any]]:
+    """Obtém dados de um servidor específico do Redis usando prefixo smf:."""
+    client = await get_redis_client()
+    if not client:
+        return None
+    try:
+        key = f"{REDIS_KEY_PREFIX}:{server_id}"  # smf:server:1
+        data = await client.get(key)
+        if data:
+            return json.loads(data)
+    except Exception:
+        pass
+    return None
+
+async def list_redis_online_servers() -> List[Dict[str, Any]]:
+    """Lista servidores online via Redis usando prefixo smf:."""
+    client = await get_redis_client()
+    if not client:
+        return []
+    
+    try:
+        pattern = f"{REDIS_KEY_PREFIX}:*"  # smf:server:*
+        keys = await client.keys(pattern)
+        servers = []
+        now_ts = time.time()
+        
+        for key in keys:
+            try:
+                server_id = int(key.split(":")[-1])  # smf:server:1 -> 1
+                data_str = await client.get(key)
+                if not data_str:
+                    continue
+                    
+                data = json.loads(data_str)
+                last_ts = data.get("last_ts", 0)
+                
+                # Verificar se está online baseado no TTL
+                is_online = (now_ts - last_ts) < REDIS_HEARTBEAT_TTL_SECS
+                
+                servers.append({
+                    "server_id": server_id,
+                    "last_heartbeat": datetime.fromtimestamp(last_ts, timezone.utc).isoformat(),
+                    "status": "ONLINE" if is_online else "OFFLINE",
+                    "ip_address": data.get("ip_address"),
+                    "info": {
+                        "processing_streams": data.get("processing_streams", 0),
+                        "processing_stream_names": data.get("processing_stream_names", []),
+                        # Outros campos serão None até implementarmos cache mais completo
+                        "hostname": None,
+                        "platform": None,
+                        "cpu_percent": None,
+                        "memory_percent": None,
+                        "memory_available_mb": None,
+                        "disk_percent": None,
+                        "disk_free_gb": None,
+                        "total_streams": None,
+                        "distribution_mode": None,
+                        "static_total_servers": None,
+                        "cached_active_servers": None,
+                        "python_version": None,
+                        "vpn": {"in_use": None, "interface": None, "type": None},
+                        "recent_errors": [],
+                    },
+                })
+            except Exception as e:
+                continue
+                
+        return sorted(servers, key=lambda x: x["server_id"])
+    except Exception:
+        return []
+
 @app.get("/api/instances")
-def list_instances() -> List[Dict[str, Any]]:
+async def list_instances() -> List[Dict[str, Any]]:
     """
-    Lista todas as instâncias com status (online/offline), VPN, streams e métricas.
+    Lista todas as instâncias. Prioriza Redis (tempo real) quando disponível,
+    fallback para DB quando Redis indisponível.
     """
+    # Tentar Redis primeiro (tempo real)
+    if REDIS_URL and REDIS_AVAILABLE:
+        try:
+            redis_data = await list_redis_online_servers()
+            if redis_data:  # Se temos dados do Redis, usar eles
+                return redis_data
+        except Exception as e:
+            # Log do erro mas continue para fallback DB
+            pass
+    
+    # Fallback: usar DB (comportamento original)
     try:
         conn = connect_db()
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:

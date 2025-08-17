@@ -1,5 +1,4 @@
 # Dockerfile otimizado para deploy GitHub via EasyPanel
-# Usar uma imagem base Python 3.11 slim baseada no Debian Bookworm
 FROM python:3.11-slim-bookworm
 
 # Instalar dependências do sistema: ffmpeg (essencial) e ca-certificates (para HTTPS)
@@ -19,14 +18,21 @@ COPY app/requirements.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copiar o código da aplicação
-COPY app/ .
+# Copiar somente o necessário para o worker
+COPY app/fingerv7.py .
+# Se você usa o streams.json como fallback inicial, copie-o também:
+# COPY app/streams.json .
 
-# Criar diretório de segmentos (persistente via volume no compose)
-RUN mkdir -p /app/segments && chmod -R 777 /app/segments
+# Criar usuário não-root e permissões para a aplicação
+RUN adduser --disabled-password --gecos "" appuser && \
+    mkdir -p /app/segments && \
+    chown -R appuser:appuser /app
 
 # Saída sem buffer para logs em tempo real
 ENV PYTHONUNBUFFERED=1
+
+# Executar como usuário não-root
+USER appuser
 
 # Comando de inicialização da aplicação
 CMD ["python", "fingerv7.py"]

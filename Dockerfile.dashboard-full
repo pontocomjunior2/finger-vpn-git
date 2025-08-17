@@ -1,0 +1,53 @@
+# ============= STAGE 1: Build Next.js (Standalone) =============
+FROM node:20-alpine AS nextjs-builder
+
+WORKDIR /app
+
+# Copiar package.json e instalar dependências do frontend
+COPY app/dashboard-web/package*.json ./
+RUN npm ci --only=production
+
+# Copiar código do frontend e fazer build standalone
+COPY app/dashboard-web/ ./
+RUN npm run build
+
+# ============= STAGE 2: Runtime Python + Node (Next SSR + FastAPI) =============
+FROM python:3.11-slim
+
+# Instalar Node.js (necessário para rodar Next server)
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y nodejs \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copiar requirements e instalar dependências Python
+COPY app/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar app FastAPI
+COPY app/dashboard_api.py ./
+# Opcional: se usar .env local em dev
+COPY app.env.local ./
+
+# Copiar build do Next.js do stage anterior
+COPY --from=nextjs-builder /app/.next/standalone ./next-app/
+COPY --from=nextjs-builder /app/.next/static ./next-app/.next/static
+COPY --from=nextjs-builder /app/public ./next-app/public
+
+# Usuário não-root para segurança
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /bin/sh appuser \
+  && chown -R appuser:appuser /app
+USER appuser
+
+# Copiar script de entrada
+COPY --chown=appuser:appuser entrypoint-dashboard.sh ./
+RUN chmod +x entrypoint-dashboard.sh
+
+EXPOSE 3000 8000
+
+CMD ["./entrypoint-dashboard.sh"]

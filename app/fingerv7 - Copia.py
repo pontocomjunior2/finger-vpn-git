@@ -551,73 +551,166 @@ def calculate_rotation_offset():
     logger.info(f"Calculado deslocamento de rotação: {offset} (após {rotations} rotações)")
     return offset
 
+# Função para buscar streams do banco de dados
+def fetch_streams_from_db():
+    """
+    Busca a configuração dos streams do banco de dados PostgreSQL.
+    Retorna a lista de streams ou None em caso de erro.
+    """
+    conn = None
+    try:
+        conn = connect_db()
+        if not conn:
+            logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
+            return None
+        
+        with conn.cursor() as cursor:
+            # Verificar se a tabela streams existe
+            cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
+            table_exists = cursor.fetchone()[0]
+            
+            if not table_exists:
+                logger.error("A tabela 'streams' não existe no banco de dados!")
+                return None
+            
+            # Buscar todos os streams ordenados por index
+            cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
+            rows = cursor.fetchall()
+            
+            streams = []
+            for row in rows:
+                stream = {
+                    "url": row[0],
+                    "name": row[1],
+                    "sheet": row[2],
+                    "cidade": row[3],
+                    "estado": row[4],
+                    "regiao": row[5],
+                    "segmento": row[6],
+                    "index": str(row[7]),
+                    "id": str(row[7]),  # Adicionar campo 'id' baseado no index
+                    "metadata": {}  # Adicionar campo metadata vazio
+                }
+                streams.append(stream)
+            
+            logger.info(f"Carregados {len(streams)} streams do banco de dados.")
+            return streams
+            
+    except Exception as e:
+        logger.error(f"Erro ao buscar streams do banco de dados: {e}")
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception as close_err:
+                logger.error(f"Erro ao fechar conexão do banco de dados: {close_err}")
+
+# Função para salvar streams no arquivo JSON local
+def save_streams_to_json(streams):
+    """
+    Salva a lista de streams no arquivo JSON local como backup.
+    """
+    try:
+        with open(STREAMS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(streams, f, ensure_ascii=False, indent=2)
+        logger.info(f"Streams salvos com sucesso no arquivo JSON local: {STREAMS_FILE}")
+    except Exception as e:
+        logger.error(f"Erro ao salvar streams no arquivo JSON {STREAMS_FILE}: {e}")
+
 # Função para carregar os streamings do banco de dados PostgreSQL
 def load_streams():
     """
     Carrega a configuração dos streams. Prioriza o banco de dados,
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
-    Retorna a lista de streams e um booleano indicando se carregou do DB.
+    Retorna apenas a lista de streams.
     """
-    streams_from_db = fetch_streams_from_db() # Tenta buscar do DB primeiro
+    streams_from_db = fetch_streams_from_db()  # Tenta buscar do DB primeiro
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
-        save_streams_to_json(streams_from_db) # Atualiza o JSON local como backup
-        return streams_from_db, True # Retorna streams do DB e True
+        save_streams_to_json(streams_from_db)  # Atualiza o JSON local como backup
+        return streams_from_db  # Retorna apenas a lista de streams
 
     # Fallback: Tentar carregar do JSON local se o DB falhar
-    logger.warning(f"Falha ao carregar do DB ou DB não configurado. Tentando carregar do arquivo de fallback: {STREAMS_FILE}")
+    logger.warning(
+        f"Falha ao carregar do DB ou DB não configurado. "
+        f"Tentando carregar do arquivo de fallback: {STREAMS_FILE}"
+    )
     if os.path.exists(STREAMS_FILE):
-            try:
-                with open(STREAMS_FILE, 'r', encoding='utf-8') as f:
+        try:
+            with open(STREAMS_FILE, 'r', encoding='utf-8') as f:
                 streams_from_json = json.load(f)
-                if isinstance(streams_from_json, list): # Verificar se é uma lista
-                     # Validar estrutura básica (opcional, mas recomendado)
-                     valid_streams = []
-                     seen_ids = set()
-                     for stream in streams_from_json:
-                         # Validação mais robusta
-                         stream_id_val = stream.get('id') # Obter ID para validação
-                         if (isinstance(stream, dict) and
-                             stream_id_val is not None and # ID não pode ser None
-                             'name' in stream and
-                             'url' in stream and
-                             str(stream_id_val) not in seen_ids): # Evitar IDs duplicados no JSON (comparar como string)
 
-                             stream_id_str = str(stream_id_val) # Garantir que ID seja string
+            if isinstance(streams_from_json, list):  # Verificar se é uma lista
+                # Validar estrutura básica (opcional, mas recomendado)
+                valid_streams = []
+                seen_ids = set()
+                for stream in streams_from_json:
+                    # Validação mais robusta
+                    stream_id_val = stream.get('id')  # Obter ID para validação
+                    if (
+                        isinstance(stream, dict)
+                        and stream_id_val is not None  # ID não pode ser None
+                        and 'name' in stream
+                        and 'url' in stream
+                        and str(stream_id_val) not in seen_ids  # Evitar IDs duplicados
+                    ):
+                        stream_id_str = str(stream_id_val)  # Normalizar para string
 
-                             # Garantir que 'metadata' exista e seja um dict
-                             if 'metadata' not in stream or not isinstance(stream['metadata'], dict):
-                                 if 'metadata' in stream:
-                                     logger.warning(f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON.")
-                                 stream['metadata'] = {}
+                        # Garantir que 'metadata' exista e seja um dict
+                        if 'metadata' not in stream or not isinstance(stream['metadata'], dict):
+                            if 'metadata' in stream:
+                                logger.warning(
+                                    f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON."
+                                )
+                            stream['metadata'] = {}
 
-                             # Atualizar o ID no dicionário para ser string se necessário
-                             stream['id'] = stream_id_str
-                             valid_streams.append(stream)
-                             seen_ids.add(stream_id_str)
-                         else:
-                             logger.warning(f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) encontrado e ignorado no JSON: {stream}")
-
-                     if not valid_streams:
-                          logger.error(f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}")
-                          return [], False
-
-                     logger.info(f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback.")
-                     return valid_streams, False # Retorna streams do JSON e False
-                            else:
-                    logger.error(f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida.")
-                    return [], False # Retorna lista vazia e False
-        except (IOError, json.JSONDecodeError) as e:
-            logger.error(f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}", exc_info=True)
-            return [], False # Retorna lista vazia e False
-            except Exception as e:
-             logger.error(f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}", exc_info=True)
-             return [], False
+                        # Atualizar o ID no dicionário para ser string se necessário
+                        stream['id'] = stream_id_str
+                        valid_streams.append(stream)
+                        seen_ids.add(stream_id_str)
                     else:
-        logger.critical(f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. Não há fonte de streams disponível.")
+                        logger.warning(
+                            f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) "
+                            f"encontrado e ignorado no JSON: {stream}"
+                        )
+
+                if not valid_streams:
+                    logger.error(
+                        f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
+                    )
+                    return []
+
+                logger.info(
+                    f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback."
+                )
+                return valid_streams  # Retorna apenas a lista de streams
+            else:
+                logger.error(
+                    f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida."
+                )
+                return []  # Retorna lista vazia
+
+        except (IOError, json.JSONDecodeError) as e:
+            logger.error(
+                f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}",
+                exc_info=True,
+            )
+            return []  # Retorna lista vazia
+        except Exception as e:
+            logger.error(
+                f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}",
+                exc_info=True,
+            )
+            return []
+    else:
+        logger.critical(
+            f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. "
+            f"Não há fonte de streams disponível."
+        )
         # send_email_alert("Erro Crítico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} não existe.")
-        return [], False # Retorna lista vazia e False
+        return []
 
 # Função para carregar o estado das últimas músicas identificadas
 def load_last_songs():
@@ -1129,19 +1222,26 @@ async def process_stream(stream, last_songs):
         await asyncio.sleep(60)  # Intervalo de captura de segmentos
 
 def send_email_alert(subject, body):
-    message = MIMEMultipart()
-    message["From"] = ALERT_EMAIL
-    message["To"] = RECIPIENT_EMAIL
-    message["Subject"] = subject
-    message.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(ALERT_EMAIL, ALERT_EMAIL_PASSWORD)
-            server.send_message(message)
-        logger.info("E-mail de alerta enviado com sucesso.")
-    except Exception as e:
-        logger.error(f"Erro ao enviar e-mail de alerta: {e}")
+    """
+    Função de alerta por e-mail desabilitada.
+    Apenas registra o alerta nos logs ao invés de enviar e-mail.
+    """
+    logger.warning(f"ALERTA DE E-MAIL (DESABILITADO): {subject}")
+    logger.warning(f"Conteúdo do alerta: {body}")
+    # Comentado para evitar erros de autenticação:
+    # message = MIMEMultipart()
+    # message["From"] = ALERT_EMAIL
+    # message["To"] = RECIPIENT_EMAIL
+    # message["Subject"] = subject
+    # message.attach(MIMEText(body, "plain"))
+    #
+    # try:
+    #     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    #         server.login(ALERT_EMAIL, ALERT_EMAIL_PASSWORD)
+    #         server.send_message(message)
+    #     logger.info("E-mail de alerta enviado com sucesso.")
+    # except Exception as e:
+    #     logger.error(f"Erro ao enviar e-mail de alerta: {e}")
 
 async def check_and_alert_persistent_errors():
     while True:

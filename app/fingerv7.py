@@ -24,6 +24,7 @@ import platform
 from ftplib import FTP, error_perm
 import socket
 import datetime as dt # Usar alias para evitar conflito com variável datetime
+import redis.asyncio as redis  # Novo: cliente Redis assíncrono
 try:
     import pytz
     HAS_PYTZ = True
@@ -107,6 +108,86 @@ except ImportError:
 # Carregar variáveis de ambiente
 load_dotenv()
 
+# Configuração Redis (opcional) - com prefixo smf: para isolamento
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_CHANNEL = os.getenv("REDIS_CHANNEL", "smf:server_heartbeats")
+REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "smf:server")
+REDIS_HEARTBEAT_TTL_SECS = int(os.getenv("REDIS_HEARTBEAT_TTL_SECS", "120"))
+
+_redis_client: "redis.Redis | None" = None
+
+async def get_redis_client() -> "redis.Redis | None":
+    """Inicializa e retorna o cliente Redis, ou None se não configurado/falhar."""
+    global _redis_client
+    if not REDIS_URL:
+        return None
+    if _redis_client is None:
+        try:
+            _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+            # Checagem rápida de conexão
+            await _redis_client.ping()
+            logger.info("Redis conectado com sucesso para Songmetrix Finger.")
+        except Exception as e:
+            logger.error(f"Falha ao conectar no Redis: {e}")
+            _redis_client = None
+    return _redis_client
+
+async def publish_redis_heartbeat(info: dict) -> None:
+    """Publica heartbeat via Redis (Pub/Sub + presença com TTL) usando prefixo smf:."""
+    client = await get_redis_client()
+    if not client:
+        return
+    try:
+        # Atualiza presença com TTL usando prefixo smf:
+        presence_key = f"{REDIS_KEY_PREFIX}:{SERVER_ID}"  # ex: smf:server:1
+        value = json.dumps({
+            "server_id": SERVER_ID,
+            "last_ts": int(time.time()),
+            "ip_address": info.get("ip_address"),
+            "processing_streams": info.get("processing_streams", 0),
+            "processing_stream_names": info.get("processing_stream_names", []),
+        })
+        # SETEX com TTL
+        await client.set(presence_key, value, ex=REDIS_HEARTBEAT_TTL_SECS)
+
+        # Publicar mensagem de heartbeat no canal com prefixo smf:
+        msg = {
+            "type": "heartbeat",
+            "server_id": SERVER_ID,
+            "ts": int(time.time()),
+            "processing_streams": info.get("processing_streams"),
+            "processing_stream_names": info.get("processing_stream_names", []),
+            "cpu_percent": info.get("cpu_percent"),
+            "memory_percent": info.get("memory_percent"),
+            "ip_address": info.get("ip_address"),
+        }
+        await client.publish(REDIS_CHANNEL, json.dumps(msg))  # canal: smf:server_heartbeats
+        logger.debug(f"publish_redis_heartbeat: publicado no Redis (canal={REDIS_CHANNEL}, key={presence_key})")
+    except Exception as e:
+        logger.warning(f"publish_redis_heartbeat: falha ao publicar no Redis: {e}")
+
+async def get_redis_online_servers() -> list[int]:
+    """Obtém lista de servidores online diretamente do Redis usando prefixo smf:."""
+    client = await get_redis_client()
+    if not client:
+        return []
+    try:
+        # Buscar todas as chaves de presença com prefixo smf:server:*
+        pattern = f"{REDIS_KEY_PREFIX}:*"  # smf:server:*
+        keys = await client.keys(pattern)
+        server_ids = []
+        for key in keys:
+            try:
+                # Extrair server_id da chave (ex: smf:server:1 -> 1)
+                server_id = int(key.split(":")[-1])
+                server_ids.append(server_id)
+            except (ValueError, IndexError):
+                continue
+        return sorted(server_ids)
+    except Exception as e:
+        logger.error(f"get_redis_online_servers: erro ao consultar Redis: {e}")
+        return []
+
 # Configuração para distribuição de carga entre servidores
 SERVER_ID = int(os.getenv('SERVER_ID', '1'))  # ID único para cada servidor (convertido para inteiro)
 TOTAL_SERVERS = int(os.getenv('TOTAL_SERVERS', '1'))  # Número total de servidores
@@ -114,11 +195,13 @@ DISTRIBUTE_LOAD = os.getenv('DISTRIBUTE_LOAD', 'False').lower() == 'true'  # Ati
 ROTATION_HOURS = int(os.getenv('ROTATION_HOURS', '24'))  # Horas para rotação de rádios (padrão: 24h)
 ENABLE_ROTATION = os.getenv('ENABLE_ROTATION', 'False').lower() == 'true'  # Ativar rodízio de rádios
 
-# Validar SERVER_ID
+# Validar SERVER_ID (não altere o SERVER_ID real; use um ID efetivo só para distribuição)
 if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
-    print(f"AVISO: SERVER_ID inválido ({SERVER_ID}). Deve estar entre 1 e {TOTAL_SERVERS}.")
-    print(f"Ajustando SERVER_ID para 1 automaticamente.")
-    SERVER_ID = 1  # Ajustar automaticamente para um valor válido em vez de processar todos os streams
+    logger.warning(f"AVISO: SERVER_ID inválido ({SERVER_ID}). Deve estar entre 1 e {TOTAL_SERVERS}.")
+    logger.warning("Manteremos SERVER_ID para logs/identificação e usaremos 1 apenas para distribuição.")
+    EFFECTIVE_SERVER_ID = 1
+else:
+    EFFECTIVE_SERVER_ID = SERVER_ID
 
 # Configurações para identificação e verificação de duplicatas
 IDENTIFICATION_DURATION = int(os.getenv('IDENTIFICATION_DURATION', '15'))  # Duração da captura em segundos
@@ -175,6 +258,7 @@ logger.info(f"FAILOVER_PORT: {FAILOVER_PORT}")
 logger.info(f"FAILOVER_USER: {FAILOVER_USER}")
 logger.info(f"FAILOVER_REMOTE_DIR: {FAILOVER_REMOTE_DIR}")
 logger.info(f"FAILOVER_SSH_KEY_PATH: {FAILOVER_SSH_KEY_PATH}")
+logger.info(f"EFFECTIVE_SERVER_ID (distribuição): {EFFECTIVE_SERVER_ID}")
 logger.info("======================================================")
 
 # --- Função para Envio de Arquivo via Failover (FTP/SFTP) ---
@@ -1008,15 +1092,21 @@ async def insert_data_to_db(entry_base, now_tz):
                         logger.error(f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' não existe! Inserção falhou.")
                         return _conn, False
 
-                    # Preparar valores
-                    values = (
-                        entry["date"], entry["time"], entry["name"], entry["artist"], entry["song_title"],
-                        entry.get("isrc", ""), entry.get("cidade", ""), entry.get("estado", ""),
-                        entry.get("regiao", ""), entry.get("segmento", ""), entry.get("label", ""),
-                        entry.get("genre", ""),
-                        entry.get("identified_by", str(SERVER_ID))
-                    )
-                    logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
+                    # Logar identified_by e IDs antes de inserir
+                logger.debug(
+                    "insert_data_to_db [thread]: identified_by(entry)='%s', SERVER_ID='%s', EFFECTIVE_SERVER_ID='%s'",
+                    entry.get("identified_by"), str(SERVER_ID), str(EFFECTIVE_SERVER_ID)
+                )
+
+                # Preparar valores
+                values = (
+                    entry["date"], entry["time"], entry["name"], entry["artist"], entry["song_title"],
+                    entry.get("isrc", ""), entry.get("cidade", ""), entry.get("estado", ""),
+                    entry.get("regiao", ""), entry.get("segmento", ""), entry.get("label", ""),
+                    entry.get("genre", ""),
+                    entry.get("identified_by", str(SERVER_ID))
+                )
+                logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
 
                     query = f'''
                         INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
@@ -1128,6 +1218,11 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
     stream_name = stream['name']
     logger.debug(f"update_local_log: Preparando {song_title} - {artist} em {stream_name}")
 
+    logger.debug(
+        "update_local_log: using identified_by='%s' (SERVER_ID), EFFECTIVE_SERVER_ID='%s'",
+        str(SERVER_ID), str(EFFECTIVE_SERVER_ID)
+    )
+
     # ... (Carregamento do log local - igual a antes) ...
     local_log = []
     try:
@@ -1198,7 +1293,7 @@ async def process_stream(stream, last_songs):
         except Exception as e:
             logger.error(f"Erro ao verificar distribuição dinâmica para {name}: {e}")
             # Fallback para lógica estática
-            processed_by_server = stream.get('processed_by_server', True)
+        processed_by_server = stream.get('processed_by_server', True)
         
         # Verificar se este stream está sendo processado por este servidor
         if not processed_by_server:
@@ -1339,8 +1434,8 @@ async def sync_json_with_db():
                     server_id = int(SERVER_ID)
                     if server_id >= 1 and server_id <= TOTAL_SERVERS:
                         for i, stream_item in enumerate(streams):
-                            stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (server_id - 1))
-                            stream_item['distribution_mode'] = 'static_fallback'
+                        stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (EFFECTIVE_SERVER_ID - 1))
+                        stream_item['distribution_mode'] = 'static_fallback'
             
             # Salvar os streams no arquivo JSON local (operação de I/O síncrona)
             try:
@@ -1601,17 +1696,18 @@ async def send_heartbeat():
             processing_streams_count = 0
             for stream in STREAMS:
                 stream_index = stream.get('index', 0)
-                if await should_process_stream_dynamic(stream_index, SERVER_ID):
+                if await should_process_stream_dynamic(stream_index, EFFECTIVE_SERVER_ID):
                     processing_streams_count += 1
         except Exception as calc_err:
             logger.error(f"Erro ao calcular streams processados dinamicamente: {calc_err}")
             # Fallback para lógica estática
             processing_streams_count = len([s for s in STREAMS if s.get('processed_by_server', 
-                                                                       (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1))])
+                                                                       (int(s.get('index', 0)) % TOTAL_SERVERS) == (EFFECTIVE_SERVER_ID - 1))])
         
         # NOVO: nomes dos streams processados
         try:
             processing_stream_names = await get_streams_processed_names()
+            logger.debug(f"send_heartbeat: processing_stream_names({len(processing_stream_names)}): {processing_stream_names[:10]}")
         except Exception as e:
             logger.exception("send_heartbeat: falha ao obter nomes de streams: %s", e)
             processing_stream_names = []
@@ -1633,8 +1729,8 @@ async def send_heartbeat():
         
         # Informações para o banco de dados
         info = {
-            "hostname": hostname,
-            "platform": platform.platform(),
+            "hostname": platform.node(),
+            "platform": platform.system(),
             "cpu_percent": cpu_percent,
             "memory_percent": mem_info.percent,
             "memory_available_mb": round(mem_info.available / (1024 * 1024), 2),
@@ -1642,18 +1738,23 @@ async def send_heartbeat():
             "disk_free_gb": round(disk_info.free / (1024 * 1024 * 1024), 2),
             "processing_streams": processing_streams_count,
             "total_streams": len(STREAMS),
-            "python_version": platform.python_version(),
             "distribution_mode": "dynamic" if DISTRIBUTE_LOAD else "static",
             "static_total_servers": TOTAL_SERVERS,
-            "cached_active_servers": _cached_active_servers_count,
-            # --- Novos campos para o dashboard ---
+            "cached_active_servers": len(_cached_online_servers) if _cached_online_servers else 0,
+            "python_version": platform.python_version(),
             "processing_stream_names": processing_stream_names,
             "vpn": vpn_info,
             "recent_errors": recent_errors,
+            "ip_address": ip_address,
             "diagnostics": diagnostics,
         }
         logger.debug("send_heartbeat: diagnostics=%s", diagnostics)
-        info_json = json.dumps(info)
+        
+        # Novo: publicar em Redis para presença e tempo real (não bloqueante do fluxo atual)
+        try:
+            await publish_redis_heartbeat(info)
+        except Exception as e:
+            logger.debug(f"send_heartbeat: publish_redis_heartbeat falhou: {e}")
         
         # --- Operações de DB em thread separada --- 
         def db_heartbeat_operations():
@@ -1679,14 +1780,13 @@ async def send_heartbeat():
                     # Atualizar o heartbeat
                     cursor.execute("""
                         INSERT INTO server_heartbeats (server_id, last_heartbeat, status, ip_address, info)
-                        VALUES (%s, NOW(), 'ONLINE', %s, %s::jsonb)
-                        ON CONFLICT (server_id) 
-                        DO UPDATE SET 
+                        VALUES (%s, NOW(), 'ONLINE', %s, %s)
+                        ON CONFLICT (server_id) DO UPDATE SET
                             last_heartbeat = NOW(),
                             status = 'ONLINE',
                             ip_address = EXCLUDED.ip_address,
                             info = EXCLUDED.info;
-                    """, (SERVER_ID, ip_address, info_json)) # Usa a variável info_json
+                    """, (SERVER_ID, ip_address, json.dumps(info)))
                     
                     _conn.commit()
                     logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID} (processando {processing_streams_count} streams)")
@@ -1701,6 +1801,11 @@ async def send_heartbeat():
         
     except Exception as e:
         logger.error(f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}")
+        # Publicar heartbeat via Redis se disponível mesmo com erro no DB
+        try:
+            await publish_redis_heartbeat(info)
+        except Exception as redis_err:
+            logger.warning(f"Erro ao publicar heartbeat via Redis após falha no DB: {redis_err}")
     finally:
         if conn:
             try:
@@ -1848,6 +1953,80 @@ OFFLINE_THRESHOLD_SECS = 600  # Janela para considerar servidor online (manter e
 # Evento global de rebalanceamento
 REBALANCE_EVENT = asyncio.Event()
 
+async def watch_online_servers_redis(poll_interval_secs: int = 5):
+    """
+    Observa heartbeats via Redis para manter lista de servidores online em tempo real.
+    Usa prefixo smf: para isolamento. Atualiza cache e dispara REBALANCE_EVENT.
+    """
+    client = await get_redis_client()
+    if not client:
+        logger.warning("watch_online_servers_redis: Redis indisponível, abortando watcher.")
+        return
+
+    last_seen: dict[int, float] = {}  # server_id -> timestamp
+
+    # Assinar canal com prefixo smf:
+    pubsub = client.pubsub()
+    await pubsub.subscribe(REDIS_CHANNEL)  # smf:server_heartbeats
+    logger.info(f"Watcher Redis iniciado (canal={REDIS_CHANNEL}, poll={poll_interval_secs}s).")
+
+    async def reader():
+        """Lê mensagens do canal Redis e atualiza last_seen."""
+        try:
+            async for message in pubsub.listen():
+                if not message or message.get("type") != "message":
+                    continue
+                try:
+                    data = json.loads(message.get("data", "{}"))
+                    if data.get("type") == "heartbeat":
+                        sid = int(data.get("server_id"))
+                        last_seen[sid] = time.time()
+                        logger.debug(f"Redis heartbeat recebido de servidor {sid}")
+                except Exception as e:
+                    logger.debug(f"watch_online_servers_redis: erro ao processar msg: {e}")
+        except Exception as e:
+            logger.error(f"watch_online_servers_redis: erro no loop PubSub: {e}")
+
+    async def evaluator():
+        """Avalia periodicamente quais servidores estão online e atualiza cache."""
+        global _cached_online_servers, _last_dynamic_check
+        while True:
+            try:
+                now_ts = time.time()
+                online_now = sorted([
+                    sid for sid, ts in last_seen.items()
+                    if (now_ts - ts) < REDIS_HEARTBEAT_TTL_SECS
+                ])
+                
+                if online_now != _cached_online_servers:
+                    _cached_online_servers = online_now
+                    _last_dynamic_check = now_ts
+                    try:
+                        REBALANCE_EVENT.set()
+                    except Exception:
+                        pass
+                    logger.info(f"Redis watcher: servidores online atualizados: {online_now}")
+                    
+                # Log periódico de diagnóstico
+                if len(last_seen) > 0:
+                    logger.debug(f"Redis watcher: last_seen={dict(list(last_seen.items())[:5])}, online_now={online_now}")
+                    
+            except Exception as e:
+                logger.error(f"watch_online_servers_redis.evaluator: {e}")
+            await asyncio.sleep(poll_interval_secs)
+
+    # Rodar leitor e avaliador em paralelo
+    reader_task = asyncio.create_task(reader())
+    evaluator_task = asyncio.create_task(evaluator())
+    try:
+        await asyncio.gather(reader_task, evaluator_task)
+    finally:
+        try:
+            await pubsub.unsubscribe(REDIS_CHANNEL)
+            await pubsub.close()
+        except Exception:
+            pass
+
 # === INÍCIO: Helpers para Dashboard: VPN, Erros e Streams Ativos ===
 import socket  # Adicionar novamente para garantir disponibilidade
 def detect_vpn() -> dict:
@@ -1916,7 +2095,7 @@ async def get_streams_processed_names() -> list:
         for s in STREAMS:
             try:
                 idx = s.get("index", 0)
-                if await should_process_stream_dynamic(idx, SERVER_ID):
+                if await should_process_stream_dynamic(idx, EFFECTIVE_SERVER_ID):
                     names.append(s.get("name") or s.get("url") or f"id:{s.get('id')}")
             except Exception as e:
                 logger.exception(
@@ -2188,7 +2367,8 @@ async def should_process_stream_dynamic(stream_index, server_id, online_servers=
     except Exception as e:
         logger.error(f"Erro em should_process_stream_dynamic: {e}")
         # Fallback para lógica estática
-        return (int(stream_index) % TOTAL_SERVERS) == (server_id - 1)
+        effective_id = EFFECTIVE_SERVER_ID if server_id == SERVER_ID else server_id
+        return (int(stream_index) % TOTAL_SERVERS) == (effective_id - 1)
 
 # Função principal para processar todos os streams
 async def main():
@@ -2258,15 +2438,16 @@ async def main():
             logger.error(f"Erro ao calcular distribuição dinâmica: {calc_err}")
             # Fallback para lógica estática
             for i in range(1, TOTAL_SERVERS + 1):
+                effective_id = EFFECTIVE_SERVER_ID if i == SERVER_ID else i
                 streams_for_this_server = len([s for s in STREAMS if s.get('processed_by_server', 
-                                                                          (int(s.get('index', 0)) % TOTAL_SERVERS) == (i - 1))])
+                                                                          (int(s.get('index', 0)) % TOTAL_SERVERS) == (effective_id - 1))])
                 streams_per_server[i] = streams_for_this_server
             
         logger.info(f"Distribuição DINÂMICA de streams por servidor: {streams_per_server}")
         logger.info(f"Este servidor ({SERVER_ID}) processará {streams_per_server.get(SERVER_ID, 0)} de {total_streams} streams")
         
         # Informar sobre diferenças entre configuração estática e dinâmica
-        static_streams_for_current = len([s for s in STREAMS if (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1)])
+        static_streams_for_current = len([s for s in STREAMS if (int(s.get('index', 0)) % TOTAL_SERVERS) == (EFFECTIVE_SERVER_ID - 1)])
         dynamic_streams_for_current = streams_per_server.get(SERVER_ID, 0)
         if static_streams_for_current != dynamic_streams_for_current:
             logger.info(f"DIFERENÇA DETECTADA: Configuração estática processaria {static_streams_for_current} streams, "
@@ -2302,11 +2483,19 @@ async def main():
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
     
-    # Iniciar watcher de servidores online se distribuição dinâmica estiver ativada
+    # Iniciar watcher de servidores online
     if DISTRIBUTE_LOAD:
         try:
-            online_servers_watcher_task = register_task(asyncio.create_task(monitor_online_servers(poll_interval_secs=30)))
-            logger.info("Watcher de servidores online iniciado (poll=30s).")
+            if REDIS_URL:
+                online_servers_watcher_task = register_task(
+                    asyncio.create_task(watch_online_servers_redis(poll_interval_secs=5))
+                )
+                logger.info("Watcher de servidores online via Redis iniciado (tempo real, prefixo smf:).")
+            else:
+                online_servers_watcher_task = register_task(
+                    asyncio.create_task(monitor_online_servers(poll_interval_secs=30))
+                )
+                logger.info("Watcher de servidores online iniciado (poll=30s via DB).")
         except Exception as e:
             logger.error(f"Falha ao iniciar watcher de servidores online: {e}")
     
@@ -2437,6 +2626,14 @@ if __name__ == '__main__':
                     logger.error(f"Erro ao finalizar tarefas pendentes: {e}")
             else:
                  logger.info("Loop de eventos não está ativo ou fechado, pulando cancelamento de tarefas.")
+        
+        # Fechar conexão Redis ao finalizar
+        if _redis_client:
+            try:
+                await _redis_client.aclose()
+                logger.info("Conexão Redis fechada.")
+            except Exception as redis_close_err:
+                logger.error(f"Erro ao fechar conexão Redis: {redis_close_err}")
                  
         logger.info("Aplicação encerrada.")
         sys.exit(0)

@@ -909,6 +909,10 @@ async def insert_data_to_db(entry_base, now_tz):
             logger.error("insert_data_to_db: Não foi possível conectar ao DB.")
             return False # Falha na inserção
 
+        # Logs detalhados para debugging do bug identified_by
+        logger.info(f"DEBUG INSERT - SERVER_ID sendo usado: {SERVER_ID} (tipo: {type(SERVER_ID)})")
+        logger.info(f"DEBUG INSERT - entry_base: {entry_base}")
+
         with conn.cursor() as cursor:
             # PASSO 1: Verificar duplicidade DENTRO da transação usando now_tz
             is_duplicate = await _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
@@ -918,14 +922,10 @@ async def insert_data_to_db(entry_base, now_tz):
                 return False # Indica que não inseriu (duplicata pela janela de tempo)
 
             # PASSO 2: Formatar date/time strings e Inserir se não for duplicata
-            date_str = now_tz.strftime('%Y-%m-%d')
-            time_str = now_tz.strftime('%H:%M:%S')
+            # Usar date/time do entry_base se presentes; caso contrário, usar now_tz
+            date_str = entry_base.get("date") or now_tz.strftime('%Y-%m-%d')
+            time_str = entry_base.get("time") or now_tz.strftime('%H:%M:%S')
             logger.debug(f"  Formatado para INSERT: date='{date_str}', time='{time_str}'")
-
-            # Adicionar date/time formatados ao dicionário para inserção
-            entry = entry_base.copy()
-            entry["date"] = date_str
-            entry["time"] = time_str
 
             # Verificar se a tabela existe (redundante se check_log_table funcionou, mas seguro)
             cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
@@ -933,30 +933,44 @@ async def insert_data_to_db(entry_base, now_tz):
                 logger.error(f"insert_data_to_db: A tabela '{DB_TABLE_NAME}' não existe! Inserção falhou.")
                 return False
 
+            # Garantir que identified_by use o SERVER_ID correto
+            identified_by_value = str(SERVER_ID)
+            logger.info(f"DEBUG INSERT - identified_by_value definido como: '{identified_by_value}'")
+
             # Preparar valores para inserção
             # Garantir que a ordem corresponde à query SQL
             values = (
-                entry["date"], entry["time"], entry["name"], entry["artist"], entry["song_title"],
-                entry.get("isrc", ""), entry.get("cidade", ""), entry.get("estado", ""),
-                entry.get("regiao", ""), entry.get("segmento", ""), entry.get("label", ""),
-                entry.get("genre", ""),
-                entry.get("identified_by", str(SERVER_ID)) # identified_by é o último
+                date_str,
+                time_str, 
+                entry_base.get("name"),
+                entry_base.get("artist"),
+                entry_base.get("song_title"),
+                entry_base.get("isrc", ""),
+                entry_base.get("cidade", ""),
+                entry_base.get("estado", ""),
+                entry_base.get("regiao", ""),
+                entry_base.get("segmento", ""),
+                entry_base.get("label", ""),
+                entry_base.get("genre", ""),
+                identified_by_value  # Usar variável explícita em vez de entry.get()
             )
-            logger.debug(f"insert_data_to_db: Valores para inserção: {values}")
+            
+            logger.info(f"DEBUG INSERT - Valores sendo inseridos: {values}")
 
             # Query SQL (verificar ordem das colunas)
-            query = f'''
+            insert_sql = f'''
                 INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id -- Retorna o ID para confirmação
             '''
             try:
-                cursor.execute(query, values)
+                cursor.execute(insert_sql, values)
                 inserted_id = cursor.fetchone()
 
                 if inserted_id:
                     conn.commit() # Commit SÓ SE a inserção foi bem-sucedida
                     logger.info(f"insert_data_to_db: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})")
+                    logger.info(f"Dados inseridos com sucesso no DB - identified_by='{identified_by_value}' para SERVER_ID={SERVER_ID}")
                     return True # Indica que inseriu com sucesso
                 else:
                     # Isso não deveria acontecer normalmente se a query está correta e não houve erro
@@ -974,15 +988,17 @@ async def insert_data_to_db(entry_base, now_tz):
                 # Outros erros durante a inserção
                 conn.rollback()
                 logger.error(f"insert_data_to_db: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}", exc_info=True)
+                logger.error(f"DEBUG INSERT - SERVER_ID durante erro: {SERVER_ID}")
                 # Enviar alerta para erros GERAIS de inserção
                 subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
-                body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Erro: {e_insert}\nDados: {entry}"
+                body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Erro: {e_insert}\nDados: {entry_base}"
                 send_email_alert(subject, body)
                 return False # Indica falha na inserção
 
     except Exception as e:
         # Erros na conexão ou fora do bloco with cursor
         logger.error(f"insert_data_to_db: Erro INESPERADO fora da transação ({song_title} - {artist}): {e}", exc_info=True)
+        logger.error(f"DEBUG INSERT - SERVER_ID durante erro: {SERVER_ID}")
         if conn:
             try: conn.rollback()
             except Exception as rb_err: logger.error(f"Erro no rollback externo: {rb_err}")
@@ -1011,6 +1027,9 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
     except Exception as e:
         logger.error(f"Erro ao carregar log local: {e}")
     
+    # Debug do SERVER_ID usado no log local
+    logger.info(f"DEBUG LOCAL_LOG - SERVER_ID sendo usado: {SERVER_ID}")
+    
     # Cria a nova entrada
     new_entry = {
         "date": date_str,
@@ -1027,6 +1046,8 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
         "genre": genre,
         "identified_by": str(SERVER_ID) 
     }
+    
+    logger.info(f"DEBUG LOCAL_LOG - Entry created with identified_by='{new_entry['identified_by']}'")
 
     # Tenta inserir no banco de dados (a função insert_data_to_db agora faz a checagem de duplicidade)
     inserted_successfully = await insert_data_to_db(new_entry, timestamp.replace(tzinfo=timezone.utc))
@@ -1043,12 +1064,14 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
                 json.dump(local_log, f, indent=4, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Erro ao salvar log local: {e}")
+            logger.error(f"DEBUG LOCAL_LOG - SERVER_ID durante erro: {SERVER_ID}")
             
         return True # Indica que foi uma nova inserção bem-sucedida
     else:
         # A inserção falhou (seja por duplicidade ou erro)
         # O log da falha já foi feito dentro de insert_data_to_db
         logger.info(f"update_local_log: Inserção de {song_title} - {artist} falhou ou foi ignorada (duplicata/erro). Log local não atualizado.")
+        logger.error(f"DEBUG LOCAL_LOG - SERVER_ID durante falha: {SERVER_ID}")
         return False 
 
 # Função para processar um único stream
@@ -1363,6 +1386,42 @@ def register_task(task):
     active_tasks.difference_update(done_tasks)
     return task
 
+# Função para obter nomes dos streams processados por este servidor
+async def get_streams_processed_names() -> list:
+    """
+    Retorna uma lista dos nomes dos streams que esta instância deve processar,
+    com base na lógica de distribuição estática utilizada neste script (Windows).
+    """
+    try:
+        if not STREAMS:
+            logger.warning("get_streams_processed_names: STREAMS não carregados ou vazios")
+            return []
+        
+        processed_names = []
+        for idx, stream in enumerate(STREAMS):
+            try:
+                if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
+                    should_process = (idx % TOTAL_SERVERS) == (SERVER_ID - 1)
+                else:
+                    should_process = True
+
+                if should_process:
+                    processed_names.append(stream.get('name', f"Stream_{idx}"))
+            except Exception as e:
+                logger.error(
+                    "get_streams_processed_names: erro ao decidir processamento para stream id=%s name=%s: %s",
+                    idx, stream.get('name', 'UNKNOWN'), e
+                )
+
+        logger.debug(
+            "get_streams_processed_names: total_streams=%d, selecionados=%d",
+            len(STREAMS), len(processed_names)
+        )
+        return processed_names
+    except Exception as e:
+        logger.exception("get_streams_processed_names: erro inesperado: %s", e)
+        return []
+
 # Função para enviar heartbeat para o banco de dados
 async def send_heartbeat():
     global last_heartbeat_time
@@ -1375,6 +1434,17 @@ async def send_heartbeat():
     last_heartbeat_time = current_time
     
     try:
+        # Obter lista de nomes dos streams processados
+        processing_stream_names = await get_streams_processed_names()
+
+        # Logs de debug para ver o estado exato no momento do heartbeat
+        logger.info(f"DEBUG HEARTBEAT - SERVER_ID atual: {SERVER_ID}")
+        logger.info(f"DEBUG HEARTBEAT - DISTRIBUTE_LOAD: {DISTRIBUTE_LOAD}")
+        logger.info(f"DEBUG HEARTBEAT - TOTAL_SERVERS: {TOTAL_SERVERS}")
+        logger.info(f"DEBUG HEARTBEAT - Total STREAMS carregados: {len(STREAMS) if STREAMS else 0}")
+        logger.info(f"DEBUG HEARTBEAT - processing_stream_names count: {len(processing_stream_names)}")
+        logger.info(f"DEBUG HEARTBEAT - processing_stream_names: {processing_stream_names}")
+        
         conn = connect_db()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para enviar heartbeat.")
@@ -1399,7 +1469,10 @@ async def send_heartbeat():
             "processing_streams": len([s for s in STREAMS if s.get('processed_by_server', 
                                                                (int(s.get('index', 0)) % TOTAL_SERVERS) == (SERVER_ID - 1))]),
             "total_streams": len(STREAMS),
-            "python_version": platform.python_version()
+            "python_version": platform.python_version(),
+            "processing_stream_names": processing_stream_names,
+            "server_id_debug": SERVER_ID,
+            "distribute_load": DISTRIBUTE_LOAD,
         }
 
         with conn.cursor() as cursor:
@@ -1427,10 +1500,12 @@ async def send_heartbeat():
             """, (SERVER_ID, ip_address, json.dumps(info)))
             
             conn.commit()
-            logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID}")
+            logger.info(f"Heartbeat enviado com sucesso para servidor ID: {SERVER_ID}")
+            logger.debug(f"DEBUG HEARTBEAT - Payload info enviado: {json.dumps(info, indent=2)}")
         
     except Exception as e:
         logger.error(f"Erro ao enviar heartbeat: {e}")
+        logger.error(f"DEBUG - SERVER_ID durante erro: {SERVER_ID}")
     finally:
         if conn:
             conn.close()
