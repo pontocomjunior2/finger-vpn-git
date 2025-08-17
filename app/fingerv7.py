@@ -1354,11 +1354,23 @@ async def process_stream(stream, last_songs):
         
         # Verificar dinamicamente se este stream deve ser processado por este servidor
         try:
-            processed_by_server = await should_process_stream_dynamic(stream_index, SERVER_ID)
+            # Garantir que o índice seja inteiro para distribuição
+            try:
+                stream_index_int = int(stream_index)
+            except Exception:
+                stream_index_int = 0
+            processed_by_server = await should_process_stream_dynamic(stream_index_int, SERVER_ID)
         except Exception as e:
             logger.error(f"Erro ao verificar distribuição dinâmica para {name}: {e}")
-            # Fallback para lógica estática
-        processed_by_server = stream.get('processed_by_server', True)
+            # Fallback para lógica estática SOMENTE em caso de erro
+            try:
+                server_id = int(EFFECTIVE_SERVER_ID)
+                total = int(TOTAL_SERVERS) if int(TOTAL_SERVERS) > 0 else 1
+                idx = int(stream.get('index', 0)) if str(stream.get('index', '0')).isdigit() else 0
+                processed_by_server = (idx % total == (server_id - 1))
+            except Exception as fe:
+                logger.error(f"Fallback estático falhou para {name}: {fe}. Assumindo processamento local.")
+                processed_by_server = True
         
         # Verificar se este stream está sendo processado por este servidor
         if not processed_by_server:
