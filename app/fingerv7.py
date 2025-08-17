@@ -954,7 +954,11 @@ async def capture_stream_segment(name, url, duration=None, processed_by_server=T
     output_dir = SEGMENTS_DIR
     os.makedirs(output_dir, exist_ok=True)
     safe_name = sanitize_filename(name)
-    output_path = os.path.join(output_dir, f'{safe_name}_segment.mp3')  # Sempre o mesmo arquivo
+    # Nome único por captura para evitar concorrência e sobrescrita
+    timestamp_str = dt.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    unique_suffix = uuid.uuid4().hex[:6]
+    output_filename = f"{safe_name}_{timestamp_str}_{unique_suffix}.mp3"
+    output_path = os.path.join(output_dir, output_filename)
     try:
         logger.debug(f"URL do stream: {url}")
         # Remover a verificação prévia da URL com requests
@@ -1622,8 +1626,13 @@ async def identify_song_shazamio(shazam):
                      if time_since_last_request < 1:
                          await asyncio.sleep(1 - time_since_last_request)
                      
-                     logger.info(f"Identificando música no arquivo {file_path} (tentativa {attempt + 1}/{max_retries})...")
-                     out = await asyncio.wait_for(shazam.recognize(file_path), timeout=10)
+                     # Verificar se o arquivo ainda existe antes de chamar o Shazam
+                    if not os.path.exists(file_path):
+                        logger.error(f"Arquivo de segmento não encontrado no momento da identificação: {file_path}")
+                        break
+                    
+                    logger.info(f"Identificando música no arquivo {file_path} (tentativa {attempt + 1}/{max_retries})...")
+                    out = await asyncio.wait_for(shazam.recognize(file_path), timeout=10)
                      last_request_time = time.time()
 
                      if 'track' in out:
