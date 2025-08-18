@@ -23,21 +23,21 @@ import socket
 import platform
 from ftplib import FTP, error_perm
 import socket
-import datetime as dt # Usar alias para evitar conflito com variável datetime
-import redis.asyncio as redis  # Novo: cliente Redis assíncrono
+import datetime as dt # Usar alias para evitar conflito com variÃ¡vel datetime
+import redis.asyncio as redis  # Novo: cliente Redis assÃ­ncrono
 try:
     import pytz
     HAS_PYTZ = True
 except ImportError:
     HAS_PYTZ = False
-    # O logger já está configurado aqui
-    logger.critical("Biblioteca pytz não encontrada. O tratamento de fuso horário falhará. Instale com: pip install pytz")
+    # O logger jÃ¡ estÃ¡ configurado aqui
+    logger.critical("Biblioteca pytz nÃ£o encontrada. O tratamento de fuso horÃ¡rio falharÃ¡. Instale com: pip install pytz")
     # Considerar sair se pytz for essencial
     # sys.exit(1)
 import psycopg2.errors # Para capturar UniqueViolation
 import psycopg2.extras # Para DictCursor
 
-# Definir diretório de segmentos global
+# Definir diretÃ³rio de segmentos global
 SEGMENTS_DIR = os.getenv('SEGMENTS_DIR', 'C:/DATARADIO/segments')
 
 # Configurar logging para console e arquivo (MOVIDO PARA CIMA)
@@ -58,37 +58,37 @@ file_handler = TimedRotatingFileHandler(SERVER_LOG_FILE, when='H', interval=6, b
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
-# Log inicial para confirmar que o logger está configurado
+# Log inicial para confirmar que o logger estÃ¡ configurado
 logger.info("Logger configurado.")
 
-# Verificar se Pytz está ausente após configurar o logger
+# Verificar se Pytz estÃ¡ ausente apÃ³s configurar o logger
 if not HAS_PYTZ:
-     logger.critical("Biblioteca pytz não encontrada. O tratamento de fuso horário pode falhar. Instale com: pip install pytz")
+     logger.critical("Biblioteca pytz nÃ£o encontrada. O tratamento de fuso horÃ¡rio pode falhar. Instale com: pip install pytz")
 
-# --- Fim da configuração do Logger ---\
+# --- Fim da configuraÃ§Ã£o do Logger ---\
 
-# Verificar e criar o diretório de segmentos
+# Verificar e criar o diretÃ³rio de segmentos
 if not os.path.exists(SEGMENTS_DIR):
     try:
         os.makedirs(SEGMENTS_DIR, exist_ok=True)
-        logger.info(f"Diretório de segmentos criado: {SEGMENTS_DIR}")
+        logger.info(f"DiretÃ³rio de segmentos criado: {SEGMENTS_DIR}")
     except Exception as e:
-        logger.error(f"ERRO: Não foi possível criar o diretório de segmentos: {e}")
+        logger.error(f"ERRO: NÃ£o foi possÃ­vel criar o diretÃ³rio de segmentos: {e}")
         try:
             SEGMENTS_DIR = './segments'
             os.makedirs(SEGMENTS_DIR, exist_ok=True)
-            logger.info(f"Usando diretório alternativo: {SEGMENTS_DIR}")
+            logger.info(f"Usando diretÃ³rio alternativo: {SEGMENTS_DIR}")
         except Exception as fallback_e:
-            logger.critical(f"Falha crítica: Não foi possível criar diretório de segmentos: {fallback_e}")
+            logger.critical(f"Falha crÃ­tica: NÃ£o foi possÃ­vel criar diretÃ³rio de segmentos: {fallback_e}")
             sys.exit(1)
 
-# Tentar importar psutil, necessário para o heartbeat
+# Tentar importar psutil, necessÃ¡rio para o heartbeat
 try:
     import psutil
 except ImportError:
-    logger.warning("Pacote 'psutil' não encontrado. Execute 'pip install psutil' para habilitar monitoramento completo.")
+    logger.warning("Pacote 'psutil' nÃ£o encontrado. Execute 'pip install psutil' para habilitar monitoramento completo.")
     
-    # Stub de classe para psutil se não estiver instalado
+    # Stub de classe para psutil se nÃ£o estiver instalado
     class PsutilStub:
         def virtual_memory(self): return type('obj', (object,), {'percent': 0, 'available': 0})
         def cpu_percent(self, interval=0): return 0
@@ -96,7 +96,7 @@ except ImportError:
     
     psutil = PsutilStub()
 
-# Importações para (S)FTP
+# ImportaÃ§Ãµes para (S)FTP
 from ftplib import FTP
 try:
     import pysftp
@@ -104,14 +104,14 @@ try:
     HAS_PYSFTP = True
 except ImportError:
     HAS_PYSFTP = False
-    logger.warning("Pacote 'pysftp' não encontrado. O failover SFTP não funcionará. Instale com 'pip install pysftp'.")
-    pysftpCnOpts = None # Definir como None se pysftp não estiver disponível
-    # Considerar logar um aviso se SFTP for o método escolhido
+    logger.warning("Pacote 'pysftp' nÃ£o encontrado. O failover SFTP nÃ£o funcionarÃ¡. Instale com 'pip install pysftp'.")
+    pysftpCnOpts = None # Definir como None se pysftp nÃ£o estiver disponÃ­vel
+    # Considerar logar um aviso se SFTP for o mÃ©todo escolhido
 
-# Carregar variáveis de ambiente
+# Carregar variÃ¡veis de ambiente
 load_dotenv()
 
-# Configuração Redis (opcional) - com prefixo smf: para isolamento
+# ConfiguraÃ§Ã£o Redis (opcional) - com prefixo smf: para isolamento
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_CHANNEL = os.getenv("REDIS_CHANNEL", "smf:server_heartbeats")
 REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "smf:server")
@@ -120,14 +120,14 @@ REDIS_HEARTBEAT_TTL_SECS = int(os.getenv("REDIS_HEARTBEAT_TTL_SECS", "120"))
 _redis_client: "redis.Redis | None" = None
 
 async def get_redis_client() -> "redis.Redis | None":
-    """Inicializa e retorna o cliente Redis, ou None se não configurado/falhar."""
+    """Inicializa e retorna o cliente Redis, ou None se nÃ£o configurado/falhar."""
     global _redis_client
     if not REDIS_URL:
         return None
     if _redis_client is None:
         try:
             _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            # Checagem rápida de conexão
+            # Checagem rÃ¡pida de conexÃ£o
             await _redis_client.ping()
             logger.info("Redis conectado com sucesso para Songmetrix Finger.")
         except Exception as e:
@@ -136,13 +136,13 @@ async def get_redis_client() -> "redis.Redis | None":
     return _redis_client
 
 async def publish_redis_heartbeat(info: dict) -> None:
-    """Publica heartbeat via Redis (Pub/Sub + presença com TTL) usando prefixo smf:."""
+    """Publica heartbeat via Redis (Pub/Sub + presenÃ§a com TTL) usando prefixo smf:."""
     client = await get_redis_client()
     if not client:
-        logger.debug("publish_redis_heartbeat: Redis não configurado, ignorando")
+        logger.debug("publish_redis_heartbeat: Redis nÃ£o configurado, ignorando")
         return
     try:
-        # Atualiza presença com TTL usando prefixo smf:
+        # Atualiza presenÃ§a com TTL usando prefixo smf:
         presence_key = f"{REDIS_KEY_PREFIX}:{SERVER_ID}"  # ex: smf:server:1
         value = json.dumps({
             "server_id": SERVER_ID,
@@ -168,19 +168,19 @@ async def publish_redis_heartbeat(info: dict) -> None:
         await client.publish(REDIS_CHANNEL, json.dumps(msg))  # canal: smf:server_heartbeats
         logger.debug(f"publish_redis_heartbeat: publicado no Redis (canal={REDIS_CHANNEL}, key={presence_key}, TTL={REDIS_HEARTBEAT_TTL_SECS}s)")
     except redis.RedisError as e:
-        logger.warning(f"publish_redis_heartbeat: erro Redis específico: {e}")
+        logger.warning(f"publish_redis_heartbeat: erro Redis especÃ­fico: {e}")
     except (TypeError, OverflowError) as e:
         logger.error(f"publish_redis_heartbeat: erro JSON ao serializar dados: {e}")
     except Exception as e:
         logger.error(f"publish_redis_heartbeat: falha inesperada ao publicar no Redis: {e}")
 
 async def get_redis_online_servers() -> list[int]:
-    """Obtém lista de servidores online diretamente do Redis usando prefixo smf:."""
+    """ObtÃ©m lista de servidores online diretamente do Redis usando prefixo smf:."""
     client = await get_redis_client()
     if not client:
         return []
     try:
-        # Buscar todas as chaves de presença com prefixo smf:server:*
+        # Buscar todas as chaves de presenÃ§a com prefixo smf:server:*
         pattern = f"{REDIS_KEY_PREFIX}:*"  # smf:server:*
         keys = await client.keys(pattern)
         server_ids = []
@@ -196,40 +196,40 @@ async def get_redis_online_servers() -> list[int]:
         logger.error(f"get_redis_online_servers: erro ao consultar Redis: {e}")
         return []
 
-# Configuração para distribuição de carga entre servidores
-SERVER_ID = int(os.getenv('SERVER_ID', '1'))  # ID único para cada servidor (convertido para inteiro)
-TOTAL_SERVERS = int(os.getenv('TOTAL_SERVERS', '1'))  # Número total de servidores
-DISTRIBUTE_LOAD = os.getenv('DISTRIBUTE_LOAD', 'False').lower() == 'true'  # Ativar distribuição
-ROTATION_HOURS = int(os.getenv('ROTATION_HOURS', '24'))  # Horas para rotação de rádios (padrão: 24h)
-ENABLE_ROTATION = os.getenv('ENABLE_ROTATION', 'False').lower() == 'true'  # Ativar rodízio de rádios
+# ConfiguraÃ§Ã£o para distribuiÃ§Ã£o de carga entre servidores
+SERVER_ID = int(os.getenv('SERVER_ID', '1'))  # ID Ãºnico para cada servidor (convertido para inteiro)
+TOTAL_SERVERS = int(os.getenv('TOTAL_SERVERS', '1'))  # NÃºmero total de servidores
+DISTRIBUTE_LOAD = os.getenv('DISTRIBUTE_LOAD', 'False').lower() == 'true'  # Ativar distribuiÃ§Ã£o
+ROTATION_HOURS = int(os.getenv('ROTATION_HOURS', '24'))  # Horas para rotaÃ§Ã£o de rÃ¡dios (padrÃ£o: 24h)
+ENABLE_ROTATION = os.getenv('ENABLE_ROTATION', 'False').lower() == 'true'  # Ativar rodÃ­zio de rÃ¡dios
 
-# Validar SERVER_ID (não altere o SERVER_ID real; use um ID efetivo só para distribuição)
+# Validar SERVER_ID (nÃ£o altere o SERVER_ID real; use um ID efetivo sÃ³ para distribuiÃ§Ã£o)
 if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
-    logger.warning(f"AVISO: SERVER_ID inválido ({SERVER_ID}). Deve estar entre 1 e {TOTAL_SERVERS}.")
-    logger.warning("Manteremos SERVER_ID para logs/identificação e usaremos 1 apenas para distribuição.")
+    logger.warning(f"AVISO: SERVER_ID invÃ¡lido ({SERVER_ID}). Deve estar entre 1 e {TOTAL_SERVERS}.")
+    logger.warning("Manteremos SERVER_ID para logs/identificaÃ§Ã£o e usaremos 1 apenas para distribuiÃ§Ã£o.")
     EFFECTIVE_SERVER_ID = 1
 else:
     EFFECTIVE_SERVER_ID = SERVER_ID
 
-# Configurações para identificação e verificação de duplicatas
-IDENTIFICATION_DURATION = int(os.getenv('IDENTIFICATION_DURATION', '15'))  # Duração da captura em segundos
+# ConfiguraÃ§Ãµes para identificaÃ§Ã£o e verificaÃ§Ã£o de duplicatas
+IDENTIFICATION_DURATION = int(os.getenv('IDENTIFICATION_DURATION', '15'))  # DuraÃ§Ã£o da captura em segundos
 DUPLICATE_PREVENTION_WINDOW_SECONDS = int(os.getenv('DUPLICATE_PREVENTION_WINDOW_SECONDS', '900')) # Nova janela de 15 min
-NUM_SHAZAM_WORKERS = int(os.getenv('NUM_SHAZAM_WORKERS', '4'))  # Número de tarefas de identificação simultâneas
+NUM_SHAZAM_WORKERS = int(os.getenv('NUM_SHAZAM_WORKERS', '4'))  # NÃºmero de tarefas de identificaÃ§Ã£o simultÃ¢neas
 
-# Configurações do banco de dados PostgreSQL
-DB_HOST = os.getenv('POSTGRES_HOST')  # Removido default para forçar configuração
+# ConfiguraÃ§Ãµes do banco de dados PostgreSQL
+DB_HOST = os.getenv('POSTGRES_HOST')  # Removido default para forÃ§ar configuraÃ§Ã£o
 DB_USER = os.getenv('POSTGRES_USER')
 DB_PASSWORD = os.getenv('POSTGRES_PASSWORD')
 DB_NAME = os.getenv('POSTGRES_DB')
 DB_PORT = os.getenv('POSTGRES_PORT', '5432')
 DB_TABLE_NAME = os.getenv('DB_TABLE_NAME', 'music_log')
 
-# Registrar a tabela que está sendo usada
-logger.info(f"Configuração da tabela de destino: DB_TABLE_NAME={DB_TABLE_NAME}")
+# Registrar a tabela que estÃ¡ sendo usada
+logger.info(f"ConfiguraÃ§Ã£o da tabela de destino: DB_TABLE_NAME={DB_TABLE_NAME}")
 
-# Configurações de Failover (S)FTP
+# ConfiguraÃ§Ãµes de Failover (S)FTP
 ENABLE_FAILOVER_SEND = os.getenv('ENABLE_FAILOVER_SEND', 'False').lower() == 'true'
-FAILOVER_METHOD = os.getenv('FAILOVER_METHOD', 'SFTP').upper()  # Carrega método
+FAILOVER_METHOD = os.getenv('FAILOVER_METHOD', 'SFTP').upper()  # Carrega mÃ©todo
 FAILOVER_HOST = os.getenv('FAILOVER_HOST')
 _failover_port_str = os.getenv('FAILOVER_PORT')
 FAILOVER_PORT = int(_failover_port_str) if _failover_port_str and _failover_port_str.isdigit() else (22 if FAILOVER_METHOD == 'SFTP' else 21)
@@ -240,20 +240,20 @@ FAILOVER_SSH_KEY_PATH = os.getenv('FAILOVER_SSH_KEY_PATH')  # Pode ser None
 
 # Caminho para o arquivo JSON contendo os streamings
 STREAMS_FILE = 'streams.json'
-# Caminho para o arquivo JSON que armazenará o estado das últimas músicas identificadas
+# Caminho para o arquivo JSON que armazenarÃ¡ o estado das Ãºltimas mÃºsicas identificadas
 LAST_SONGS_FILE = 'last_songs.json'
 # Caminho para o arquivo de log local
 LOCAL_LOG_FILE = 'local_log.json'
 
-# Configurações para o sistema de alerta por e-mail
+# ConfiguraÃ§Ãµes para o sistema de alerta por e-mail
 ALERT_EMAIL = os.getenv('ALERT_EMAIL', "junior@pontocomaudio.net")
 ALERT_EMAIL_PASSWORD = os.getenv('ALERT_EMAIL_PASSWORD', "conquista")
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL', "junior@pontocomaudio.net")
 
 # Configurar logging para console e arquivo (REMOVIDO DAQUI)
 
-# Registrar informações sobre as variáveis de ambiente carregadas
-logger.info("=== Iniciando script com as seguintes configurações ===")
+# Registrar informaÃ§Ãµes sobre as variÃ¡veis de ambiente carregadas
+logger.info("=== Iniciando script com as seguintes configuraÃ§Ãµes ===")
 logger.info(f"SERVER_ID: {SERVER_ID} (tipo: {type(SERVER_ID).__name__})")
 logger.info(f"TOTAL_SERVERS: {TOTAL_SERVERS} (tipo: {type(TOTAL_SERVERS).__name__})")
 logger.info(f"DISTRIBUTE_LOAD: {DISTRIBUTE_LOAD}")
@@ -267,25 +267,25 @@ logger.info(f"FAILOVER_PORT: {FAILOVER_PORT}")
 logger.info(f"FAILOVER_USER: {FAILOVER_USER}")
 logger.info(f"FAILOVER_REMOTE_DIR: {FAILOVER_REMOTE_DIR}")
 logger.info(f"FAILOVER_SSH_KEY_PATH: {FAILOVER_SSH_KEY_PATH}")
-logger.info(f"EFFECTIVE_SERVER_ID (distribuição): {EFFECTIVE_SERVER_ID}")
+logger.info(f"EFFECTIVE_SERVER_ID (distribuiÃ§Ã£o): {EFFECTIVE_SERVER_ID}")
 logger.info("======================================================")
 
-# --- Função para Envio de Arquivo via Failover (FTP/SFTP) ---
+# --- FunÃ§Ã£o para Envio de Arquivo via Failover (FTP/SFTP) ---
 async def send_file_via_failover(local_file_path, stream_index):
     """Envia um arquivo para o servidor de failover configurado (FTP ou SFTP)."""
     if not ENABLE_FAILOVER_SEND:
-        logger.debug("Envio para failover desabilitado nas configurações.")
+        logger.debug("Envio para failover desabilitado nas configuraÃ§Ãµes.")
         return
 
     if not all([FAILOVER_HOST, FAILOVER_USER, FAILOVER_PASSWORD, FAILOVER_REMOTE_DIR]):
-        logger.error("Configurações de failover incompletas no .env. Impossível enviar arquivo.")
+        logger.error("ConfiguraÃ§Ãµes de failover incompletas no .env. ImpossÃ­vel enviar arquivo.")
         return
 
     if stream_index is None:
-        logger.error("Índice do stream não fornecido. Não é possível nomear o arquivo de failover.")
+        logger.error("Ãndice do stream nÃ£o fornecido. NÃ£o Ã© possÃ­vel nomear o arquivo de failover.")
         return
 
-    # Criar um nome de arquivo único no servidor remoto
+    # Criar um nome de arquivo Ãºnico no servidor remoto
     timestamp_str = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     remote_filename = f"{stream_index}_{timestamp_str}_{os.path.basename(local_file_path)}"
     # Usar os.path.join e depois replace para garantir compatibilidade entre OS no caminho remoto
@@ -297,15 +297,15 @@ async def send_file_via_failover(local_file_path, stream_index):
     try:
         if FAILOVER_METHOD == 'SFTP':
             if not HAS_PYSFTP:
-                logger.error("SFTP selecionado, mas a biblioteca pysftp não está instalada.")
+                logger.error("SFTP selecionado, mas a biblioteca pysftp nÃ£o estÃ¡ instalada.")
                 return
 
             cnopts = pysftpCnOpts()
-            # Ignorar verificação da chave do host (menos seguro, mas evita problemas de configuração inicial)
-            # Considere configurar known_hosts para produção
+            # Ignorar verificaÃ§Ã£o da chave do host (menos seguro, mas evita problemas de configuraÃ§Ã£o inicial)
+            # Considere configurar known_hosts para produÃ§Ã£o
             cnopts.hostkeys = None
 
-            # Definir kwargs para conexão SFTP
+            # Definir kwargs para conexÃ£o SFTP
             sftp_kwargs = {
                 'host': FAILOVER_HOST,
                 'port': FAILOVER_PORT,
@@ -315,43 +315,43 @@ async def send_file_via_failover(local_file_path, stream_index):
             if FAILOVER_SSH_KEY_PATH and os.path.exists(FAILOVER_SSH_KEY_PATH):
                 sftp_kwargs['private_key'] = FAILOVER_SSH_KEY_PATH
                 sftp_kwargs['private_key_pass'] = FAILOVER_PASSWORD # Senha da chave, se houver
-                logger.debug("Usando chave SSH para autenticação SFTP.")
+                logger.debug("Usando chave SSH para autenticaÃ§Ã£o SFTP.")
             else:
                 sftp_kwargs['password'] = FAILOVER_PASSWORD
-                logger.debug("Usando senha para autenticação SFTP.")
+                logger.debug("Usando senha para autenticaÃ§Ã£o SFTP.")
 
-            # Usar asyncio.to_thread para a operação sftp bloqueante
+            # Usar asyncio.to_thread para a operaÃ§Ã£o sftp bloqueante
             await asyncio.to_thread(_sftp_upload_sync, sftp_kwargs, local_file_path, remote_path)
 
         elif FAILOVER_METHOD == 'FTP':
-            # Usar asyncio.to_thread para operações de FTP bloqueantes
+            # Usar asyncio.to_thread para operaÃ§Ãµes de FTP bloqueantes
             await asyncio.to_thread(_ftp_upload_sync, local_file_path, remote_path)
 
         else:
-            logger.error(f"Método de failover desconhecido: {FAILOVER_METHOD}. Use 'FTP' ou 'SFTP'.")
+            logger.error(f"MÃ©todo de failover desconhecido: {FAILOVER_METHOD}. Use 'FTP' ou 'SFTP'.")
 
     except Exception as e:
         logger.error(f"Erro ao enviar arquivo via {FAILOVER_METHOD} para {FAILOVER_HOST}: {e}", exc_info=True)
 
-# Função auxiliar bloqueante para SFTP (para ser usada com asyncio.to_thread)
+# FunÃ§Ã£o auxiliar bloqueante para SFTP (para ser usada com asyncio.to_thread)
 def _sftp_upload_sync(sftp_kwargs, local_file_path, remote_path):
-    # A conexão SFTP é feita dentro do 'with' que agora está nesta função síncrona
+    # A conexÃ£o SFTP Ã© feita dentro do 'with' que agora estÃ¡ nesta funÃ§Ã£o sÃ­ncrona
     with pysftp.Connection(**sftp_kwargs) as sftp:
         logger.info(f"Conectado ao SFTP: {FAILOVER_HOST}")
         remote_dir = os.path.dirname(remote_path)
-        # Garantir que o diretório remoto exista (opcional, mas útil)
+        # Garantir que o diretÃ³rio remoto exista (opcional, mas Ãºtil)
         try:
             sftp.makedirs(remote_dir)
-            logger.debug(f"Diretório remoto {remote_dir} verificado/criado.")
+            logger.debug(f"DiretÃ³rio remoto {remote_dir} verificado/criado.")
         except OSError as e:
-             # Ignora erro se o diretório já existe, mas loga outros erros
+             # Ignora erro se o diretÃ³rio jÃ¡ existe, mas loga outros erros
              if "Directory already exists" not in str(e):
-                  logger.warning(f"Não foi possível criar/verificar diretório SFTP {remote_dir}: {e}")
+                  logger.warning(f"NÃ£o foi possÃ­vel criar/verificar diretÃ³rio SFTP {remote_dir}: {e}")
 
         sftp.put(local_file_path, remote_path)
         logger.info(f"Arquivo {os.path.basename(remote_path)} enviado com sucesso via SFTP para {remote_dir}")
 
-# Função auxiliar bloqueante para FTP (para ser usada com asyncio.to_thread)
+# FunÃ§Ã£o auxiliar bloqueante para FTP (para ser usada com asyncio.to_thread)
 def _ftp_upload_sync(local_file_path, remote_path):
     ftp = None
     try:
@@ -360,7 +360,7 @@ def _ftp_upload_sync(local_file_path, remote_path):
         ftp.login(FAILOVER_USER, FAILOVER_PASSWORD)
         logger.info(f"Conectado ao FTP: {FAILOVER_HOST}")
 
-        # Tentar criar diretórios recursivamente (simples)
+        # Tentar criar diretÃ³rios recursivamente (simples)
         remote_dir = os.path.dirname(remote_path)
         dirs_to_create = remote_dir.strip('/').split('/') # Remover barras inicial/final e dividir
         current_dir = ''
@@ -369,22 +369,22 @@ def _ftp_upload_sync(local_file_path, remote_path):
             current_dir = f'{current_dir}/{d}' if current_dir else f'/{d}' # Construir caminho absoluto
             try:
                 ftp.mkd(current_dir)
-                logger.debug(f"Diretório FTP criado: {current_dir}")
+                logger.debug(f"DiretÃ³rio FTP criado: {current_dir}")
             except error_perm as e:
-                if not e.args[0].startswith('550'): # Ignorar erro "já existe" ou "permissão negada" (pode já existir)
-                    logger.warning(f"Não foi possível criar diretório FTP {current_dir}: {e}")
+                if not e.args[0].startswith('550'): # Ignorar erro "jÃ¡ existe" ou "permissÃ£o negada" (pode jÃ¡ existir)
+                    logger.warning(f"NÃ£o foi possÃ­vel criar diretÃ³rio FTP {current_dir}: {e}")
                 # else:
-                #     logger.debug(f"Diretório FTP já existe ou permissão negada para criar: {current_dir}")
+                #     logger.debug(f"DiretÃ³rio FTP jÃ¡ existe ou permissÃ£o negada para criar: {current_dir}")
 
-        # Mudar para o diretório final (se existir)
+        # Mudar para o diretÃ³rio final (se existir)
         try:
             ftp.cwd(remote_dir)
-            logger.debug(f"Mudado para diretório FTP: {remote_dir}")
+            logger.debug(f"Mudado para diretÃ³rio FTP: {remote_dir}")
         except error_perm as e:
-            logger.error(f"Não foi possível mudar para o diretório FTP {remote_dir}: {e}. Upload pode falhar.")
-            # Considerar lançar o erro ou retornar se o diretório é essencial
-            # raise # Re-lança o erro se não conseguir mudar para o diretório
-            return # Ou simplesmente retorna se não conseguir mudar
+            logger.error(f"NÃ£o foi possÃ­vel mudar para o diretÃ³rio FTP {remote_dir}: {e}. Upload pode falhar.")
+            # Considerar lanÃ§ar o erro ou retornar se o diretÃ³rio Ã© essencial
+            # raise # Re-lanÃ§a o erro se nÃ£o conseguir mudar para o diretÃ³rio
+            return # Ou simplesmente retorna se nÃ£o conseguir mudar
 
         with open(local_file_path, 'rb') as fp:
             ftp.storbinary(f'STOR {os.path.basename(remote_path)}', fp)
@@ -397,7 +397,7 @@ def _ftp_upload_sync(local_file_path, remote_path):
             except Exception:
                 pass # Ignorar erros ao fechar
 
-# --- Fim das Funções de Failover ---
+# --- Fim das FunÃ§Ãµes de Failover ---
 
 # Verificar se a tabela de logs existe (RESTAURADO)
 async def check_log_table():
@@ -406,7 +406,7 @@ async def check_log_table():
     try:
         conn = await connect_db()
         if not conn:
-            logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
+            logger.error("NÃ£o foi possÃ­vel conectar ao banco de dados para verificar a tabela de logs.")
             return False
 
         with conn.cursor() as cursor:
@@ -415,16 +415,16 @@ async def check_log_table():
             table_exists = cursor.fetchone()[0]
 
             if not table_exists:
-                logger.error(f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!")
-                # Listar tabelas disponíveis
+                logger.error(f"A tabela de logs '{DB_TABLE_NAME}' nÃ£o existe no banco de dados!")
+                # Listar tabelas disponÃ­veis
                 cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
                 tables = [row[0] for row in cursor.fetchall()]
-                logger.info(f"Tabelas disponíveis no banco: {tables}")
+                logger.info(f"Tabelas disponÃ­veis no banco: {tables}")
 
                 # Criar tabela automaticamente para evitar erros
                 try:
                     logger.info(f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente...")
-                    # Corrigir a formatação da string SQL multi-linha
+                    # Corrigir a formataÃ§Ã£o da string SQL multi-linha
                     create_table_sql = """
 CREATE TABLE {} (
     id SERIAL PRIMARY KEY,
@@ -454,18 +454,18 @@ CREATE TABLE {} (
                     # logger.info(create_table_sql) # Don't log potentially large SQL
                     return False
             else:
-                # Verificar as colunas da tabela (garantir indentação correta aqui)
+                # Verificar as colunas da tabela (garantir indentaÃ§Ã£o correta aqui)
                 cursor.execute(f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'")
                 columns_info = {row[0].lower(): {'type': row[1], 'default': row[2]} for row in cursor.fetchall()}
                 logger.info(f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}")
                 columns = list(columns_info.keys())
 
-                # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
+                # --- Ajuste da coluna 'identified_by' --- (garantir indentaÃ§Ã£o correta)
                 col_identified_by = 'identified_by'
 
                 if col_identified_by in columns:
-                    # (Lógica interna do if permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do if col_identified_by...)
+                    # (LÃ³gica interna do if permanece a mesma, verificar indentaÃ§Ã£o)
+                    # ... (cÃ³digo existente dentro do if col_identified_by...)
                     current_info = columns_info[col_identified_by]
                     needs_alter = False
                     alter_parts = []
@@ -488,24 +488,24 @@ CREATE TABLE {} (
                             logger.error(f"Erro ao alterar coluna '{col_identified_by}': {e}")
                             conn.rollback()
                 else:
-                     # (Lógica interna do else permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do else para adicionar coluna) ...
+                     # (LÃ³gica interna do else permanece a mesma, verificar indentaÃ§Ã£o)
+                    # ... (cÃ³digo existente dentro do else para adicionar coluna) ...
                     try:
-                        logger.info(f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'...")
+                        logger.info(f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) Ã  tabela '{DB_TABLE_NAME}'...")
                         add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
                         cursor.execute(add_sql)
                         conn.commit()
                         logger.info(f"Coluna '{col_identified_by}' adicionada com sucesso.")
-                        columns.append(col_identified_by) # Adiciona à lista local
+                        columns.append(col_identified_by) # Adiciona Ã  lista local
                     except Exception as e:
                         logger.error(f"Erro ao adicionar coluna '{col_identified_by}': {e}")
                         conn.rollback()
 
-                # --- Remoção da coluna 'identified_by_server' --- (garantir indentação correta)
+                # --- RemoÃ§Ã£o da coluna 'identified_by_server' --- (garantir indentaÃ§Ã£o correta)
                 col_to_remove = 'identified_by_server'
                 if col_to_remove in columns:
-                    # (Lógica interna do if permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do if col_to_remove...) ...
+                    # (LÃ³gica interna do if permanece a mesma, verificar indentaÃ§Ã£o)
+                    # ... (cÃ³digo existente dentro do if col_to_remove...) ...
                     try:
                         logger.info(f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'...")
                         drop_sql = f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
@@ -517,24 +517,24 @@ CREATE TABLE {} (
                         logger.error(f"Erro ao remover coluna '{col_to_remove}': {e}")
                         conn.rollback()
 
-                # Verificar colunas essenciais (garantir indentação correta)
+                # Verificar colunas essenciais (garantir indentaÃ§Ã£o correta)
                 required_columns = ['date', 'time', 'name', 'artist', 'song_title']
                 missing_columns = [col for col in required_columns if col not in columns]
 
                 if missing_columns:
-                    logger.error(f"A tabela '{DB_TABLE_NAME}' existe, mas não possui as colunas necessárias: {missing_columns}")
-                    return False # Este return está dentro do else, está correto
+                    logger.error(f"A tabela '{DB_TABLE_NAME}' existe, mas nÃ£o possui as colunas necessÃ¡rias: {missing_columns}")
+                    return False # Este return estÃ¡ dentro do else, estÃ¡ correto
 
-                # Mostrar algumas linhas da tabela para diagnóstico (garantir indentação correta)
+                # Mostrar algumas linhas da tabela para diagnÃ³stico (garantir indentaÃ§Ã£o correta)
                 try:
                     cursor.execute(f"SELECT COUNT(*) FROM {DB_TABLE_NAME}")
                     count = cursor.fetchone()[0]
-                    logger.info(f"A tabela '{DB_TABLE_NAME}' contém {count} registros.")
+                    logger.info(f"A tabela '{DB_TABLE_NAME}' contÃ©m {count} registros.")
                 except Exception as e:
                     logger.error(f"Erro ao consultar dados da tabela '{DB_TABLE_NAME}': {e}")
 
                 logger.info(f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!")
-                return True # Este return está dentro do else, está correto
+                return True # Este return estÃ¡ dentro do else, estÃ¡ correto
 
     except Exception as e:
         logger.error(f"Erro ao verificar tabela de logs: {e}", exc_info=True) # Add exc_info
@@ -544,21 +544,21 @@ CREATE TABLE {} (
             conn.close()
 
 # Fila para enviar ao Shazamio (RESTAURADO)
-shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memória
+shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memÃ³ria
 
-# Variável para controlar o último heartbeat enviado (RESTAURADO)
+# VariÃ¡vel para controlar o Ãºltimo heartbeat enviado (RESTAURADO)
 last_heartbeat_time = 0
 HEARTBEAT_INTERVAL_SECS = 60  # Enviar heartbeat a cada 1 minuto
 
-# Variável global para controle da pausa do Shazam (RESTAURADO)
+# VariÃ¡vel global para controle da pausa do Shazam (RESTAURADO)
 shazam_pause_until_timestamp = 0.0
 
-# Validação crítica de configuração
+# ValidaÃ§Ã£o crÃ­tica de configuraÃ§Ã£o
 if REDIS_HEARTBEAT_TTL_SECS <= HEARTBEAT_INTERVAL_SECS:
-    logger.warning(f"CONFIGURAÇÃO CRÍTICA: REDIS_HEARTBEAT_TTL_SECS ({REDIS_HEARTBEAT_TTL_SECS}s) deve ser maior que HEARTBEAT_INTERVAL_SECS ({HEARTBEAT_INTERVAL_SECS}s)!")
-    logger.warning(f"Recomendação: Configure REDIS_HEARTBEAT_TTL_SECS={HEARTBEAT_INTERVAL_SECS * 2} ou maior no .env")
-    REDIS_HEARTBEAT_TTL_SECS = max(HEARTBEAT_INTERVAL_SECS * 2, 120)  # Garantir margem de segurança
-    logger.info(f"TTL ajustado automaticamente para {REDIS_HEARTBEAT_TTL_SECS}s para evitar expirações prematuras")
+    logger.warning(f"CONFIGURAÃ‡ÃƒO CRÃTICA: REDIS_HEARTBEAT_TTL_SECS ({REDIS_HEARTBEAT_TTL_SECS}s) deve ser maior que HEARTBEAT_INTERVAL_SECS ({HEARTBEAT_INTERVAL_SECS}s)!")
+    logger.warning(f"RecomendaÃ§Ã£o: Configure REDIS_HEARTBEAT_TTL_SECS={HEARTBEAT_INTERVAL_SECS * 2} ou maior no .env")
+    REDIS_HEARTBEAT_TTL_SECS = max(HEARTBEAT_INTERVAL_SECS * 2, 120)  # Garantir margem de seguranÃ§a
+    logger.info(f"TTL ajustado automaticamente para {REDIS_HEARTBEAT_TTL_SECS}s para evitar expiraÃ§Ãµes prematuras")
 
 # Classe StreamConnectionTracker (RESTAURADO)
 class StreamConnectionTracker:
@@ -570,7 +570,7 @@ class StreamConnectionTracker:
         """Records the timestamp of the first consecutive error for a stream."""
         if stream_name not in self.connection_errors:
             self.connection_errors[stream_name] = time.time()
-            logger.debug(f"Registrado primeiro erro de conexão para: {stream_name}")
+            logger.debug(f"Registrado primeiro erro de conexÃ£o para: {stream_name}")
         # Incrementar contagem de falhas consecutivas
         self.error_counts[stream_name] = self.error_counts.get(stream_name, 0) + 1
 
@@ -578,7 +578,7 @@ class StreamConnectionTracker:
         """Clears the error status for a stream if it was previously recorded."""
         if stream_name in self.connection_errors:
             del self.connection_errors[stream_name]
-            logger.debug(f"Erro de conexão limpo para: {stream_name}")
+            logger.debug(f"Erro de conexÃ£o limpo para: {stream_name}")
         # Zerar/Remover contagem de falhas na limpeza
         if stream_name in self.error_counts:
             del self.error_counts[stream_name]
@@ -603,26 +603,26 @@ class StreamConnectionTracker:
 
 connection_tracker = StreamConnectionTracker() # Instanciar o tracker (RESTAURADO)
 
-# Função para conectar ao banco de dados PostgreSQL
+# FunÃ§Ã£o para conectar ao banco de dados PostgreSQL
 async def connect_db():
     """
     Conecta ao banco de dados PostgreSQL usando asyncio.to_thread 
     para evitar bloqueio do event loop.
     
     Returns:
-        psycopg2.connection: Conexão com o banco de dados ou None em caso de erro
+        psycopg2.connection: ConexÃ£o com o banco de dados ou None em caso de erro
     """
-    # Validação das variáveis de ambiente necessárias
+    # ValidaÃ§Ã£o das variÃ¡veis de ambiente necessÃ¡rias
     required_vars = [DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]
     missing_vars = [var for var in required_vars if not var]
     
     if missing_vars:
-        logger.error("Variáveis de ambiente de banco de dados não configuradas.")
+        logger.error("VariÃ¡veis de ambiente de banco de dados nÃ£o configuradas.")
         logger.error("Verifique: POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB")
         return None
     
     def _connect_sync():
-        """Função síncrona para conectar ao banco de dados"""
+        """FunÃ§Ã£o sÃ­ncrona para conectar ao banco de dados"""
         try:
             conn = psycopg2.connect(
                 host=DB_HOST,
@@ -633,48 +633,48 @@ async def connect_db():
             )
             return conn
         except psycopg2.OperationalError as e:
-            logger.error(f"Erro de conexão com o banco de dados: {e}")
+            logger.error(f"Erro de conexÃ£o com o banco de dados: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro inesperado ao conectar ao banco de dados: {e}")
             return None
     
     try:
-        # Executar conexão em thread separada para não bloquear event loop
+        # Executar conexÃ£o em thread separada para nÃ£o bloquear event loop
         conn = await asyncio.to_thread(_connect_sync)
         if conn:
-            logger.debug("Conexão com banco de dados estabelecida com sucesso")
+            logger.debug("ConexÃ£o com banco de dados estabelecida com sucesso")
         return conn
     except Exception as e:
-        logger.error(f"Erro ao executar conexão assíncrona com o banco: {e}")
+        logger.error(f"Erro ao executar conexÃ£o assÃ­ncrona com o banco: {e}")
         return None
 
-# Função para calcular o deslocamento de rotação com base no tempo
+# FunÃ§Ã£o para calcular o deslocamento de rotaÃ§Ã£o com base no tempo
 def calculate_rotation_offset():
     if not ENABLE_ROTATION:
         return 0
     
-    # Calcular quantas rotações já ocorreram desde o início do tempo (1/1/1970)
+    # Calcular quantas rotaÃ§Ãµes jÃ¡ ocorreram desde o inÃ­cio do tempo (1/1/1970)
     hours_since_epoch = int(time.time() / 3600)  # Converter segundos para horas
     rotations = hours_since_epoch // ROTATION_HOURS
     
-    # O deslocamento é o número de rotações módulo o número total de servidores
+    # O deslocamento Ã© o nÃºmero de rotaÃ§Ãµes mÃ³dulo o nÃºmero total de servidores
     offset = rotations % TOTAL_SERVERS
     
-    logger.info(f"Calculado deslocamento de rotação: {offset} (após {rotations} rotações)")
+    logger.info(f"Calculado deslocamento de rotaÃ§Ã£o: {offset} (apÃ³s {rotations} rotaÃ§Ãµes)")
     return offset
 
-# Função para buscar streams do banco de dados
+# FunÃ§Ã£o para buscar streams do banco de dados
 async def fetch_streams_from_db():
     """
-    Busca a configuração dos streams do banco de dados PostgreSQL.
+    Busca a configuraÃ§Ã£o dos streams do banco de dados PostgreSQL.
     Retorna a lista de streams ou None em caso de erro.
     """
     conn = None
     try:
         conn = await connect_db()
         if not conn:
-            logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
+            logger.warning("NÃ£o foi possÃ­vel conectar ao banco de dados para buscar streams.")
             return None
         
         with conn.cursor() as cursor:
@@ -683,7 +683,7 @@ async def fetch_streams_from_db():
             table_exists = cursor.fetchone()[0]
             
             if not table_exists:
-                logger.error("A tabela 'streams' não existe no banco de dados!")
+                logger.error("A tabela 'streams' nÃ£o existe no banco de dados!")
                 return None
             
             # Buscar todos os streams ordenados por index
@@ -717,9 +717,9 @@ async def fetch_streams_from_db():
             try:
                 conn.close()
             except Exception as close_err:
-                logger.error(f"Erro ao fechar conexão do banco de dados: {close_err}")
+                logger.error(f"Erro ao fechar conexÃ£o do banco de dados: {close_err}")
 
-# Função para salvar streams no arquivo JSON local
+# FunÃ§Ã£o para salvar streams no arquivo JSON local
 def save_streams_to_json(streams):
     """
     Salva a lista de streams no arquivo JSON local como backup.
@@ -731,11 +731,11 @@ def save_streams_to_json(streams):
     except Exception as e:
         logger.error(f"Erro ao salvar streams no arquivo JSON {STREAMS_FILE}: {e}")
 
-# Função para carregar os streamings do banco de dados PostgreSQL
+# FunÃ§Ã£o para carregar os streamings do banco de dados PostgreSQL
 async def load_streams():
     """
-    Carrega a configuração dos streams. Prioriza o banco de dados,
-    usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
+    Carrega a configuraÃ§Ã£o dos streams. Prioriza o banco de dados,
+    usa o JSON local como fallback e atualiza o JSON apÃ³s sucesso no DB.
     Retorna apenas a lista de streams.
     """
     streams_from_db = await fetch_streams_from_db()  # Tenta buscar do DB primeiro
@@ -747,7 +747,7 @@ async def load_streams():
 
     # Fallback: Tentar carregar do JSON local se o DB falhar
     logger.warning(
-        f"Falha ao carregar do DB ou DB não configurado. "
+        f"Falha ao carregar do DB ou DB nÃ£o configurado. "
         f"Tentando carregar do arquivo de fallback: {STREAMS_FILE}"
     )
     if os.path.exists(STREAMS_FILE):
@@ -755,16 +755,16 @@ async def load_streams():
             with open(STREAMS_FILE, 'r', encoding='utf-8') as f:
                 streams_from_json = json.load(f)
 
-            if isinstance(streams_from_json, list):  # Verificar se é uma lista
-                # Validar estrutura básica (opcional, mas recomendado)
+            if isinstance(streams_from_json, list):  # Verificar se Ã© uma lista
+                # Validar estrutura bÃ¡sica (opcional, mas recomendado)
                 valid_streams = []
                 seen_ids = set()
                 for stream in streams_from_json:
-                    # Validação mais robusta
-                    stream_id_val = stream.get('id')  # Obter ID para validação
+                    # ValidaÃ§Ã£o mais robusta
+                    stream_id_val = stream.get('id')  # Obter ID para validaÃ§Ã£o
                     if (
                         isinstance(stream, dict)
-                        and stream_id_val is not None  # ID não pode ser None
+                        and stream_id_val is not None  # ID nÃ£o pode ser None
                         and 'name' in stream
                         and 'url' in stream
                         and str(stream_id_val) not in seen_ids  # Evitar IDs duplicados
@@ -775,33 +775,33 @@ async def load_streams():
                         if 'metadata' not in stream or not isinstance(stream['metadata'], dict):
                             if 'metadata' in stream:
                                 logger.warning(
-                                    f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON."
+                                    f"Corrigindo campo 'metadata' invÃ¡lido para stream ID {stream_id_str} no JSON."
                                 )
                             stream['metadata'] = {}
 
-                        # Atualizar o ID no dicionário para ser string se necessário
+                        # Atualizar o ID no dicionÃ¡rio para ser string se necessÃ¡rio
                         stream['id'] = stream_id_str
                         valid_streams.append(stream)
                         seen_ids.add(stream_id_str)
                     else:
                         logger.warning(
-                            f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) "
+                            f"Stream invÃ¡lido, sem ID, ou ID duplicado ({stream_id_val}) "
                             f"encontrado e ignorado no JSON: {stream}"
                         )
 
                 if not valid_streams:
                     logger.error(
-                        f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
+                        f"Nenhum stream vÃ¡lido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
                     )
                     return []
 
                 logger.info(
-                    f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback."
+                    f"Carregados {len(valid_streams)} streams vÃ¡lidos do arquivo JSON de fallback."
                 )
                 return valid_streams  # Retorna apenas a lista de streams
             else:
                 logger.error(
-                    f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida."
+                    f"ConteÃºdo do arquivo JSON ({STREAMS_FILE}) nÃ£o Ã© uma lista vÃ¡lida."
                 )
                 return []  # Retorna lista vazia
 
@@ -819,30 +819,30 @@ async def load_streams():
             return []
     else:
         logger.critical(
-            f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. "
-            f"Não há fonte de streams disponível."
+            f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} nÃ£o encontrado. "
+            f"NÃ£o hÃ¡ fonte de streams disponÃ­vel."
         )
-        # send_email_alert("Erro Crítico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} não existe.")
+        # send_email_alert("Erro CrÃ­tico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} nÃ£o existe.")
         return []
 
-# Função para carregar o estado das últimas músicas identificadas
+# FunÃ§Ã£o para carregar o estado das Ãºltimas mÃºsicas identificadas
 def load_last_songs():
-    logger.debug("Iniciando a função load_last_songs()")
+    logger.debug("Iniciando a funÃ§Ã£o load_last_songs()")
     try:
         if os.path.exists(LAST_SONGS_FILE):
             with open(LAST_SONGS_FILE, 'r', encoding='utf-8') as f:
                 last_songs = json.load(f)
-                logger.info(f"{len(last_songs)} últimas músicas carregadas.")
+                logger.info(f"{len(last_songs)} Ãºltimas mÃºsicas carregadas.")
                 return last_songs
         else:
             return {}
     except Exception as e:
-        logger.error(f"Erro ao carregar o arquivo de estado das últimas músicas: {e}")
+        logger.error(f"Erro ao carregar o arquivo de estado das Ãºltimas mÃºsicas: {e}")
         return {}
 
-# Função para salvar o estado das últimas músicas identificadas
+# FunÃ§Ã£o para salvar o estado das Ãºltimas mÃºsicas identificadas
 def save_last_songs(last_songs):
-    logger.debug("Iniciando a função save_last_songs()")
+    logger.debug("Iniciando a funÃ§Ã£o save_last_songs()")
     try:
         with open(LAST_SONGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(last_songs, f, indent=4, ensure_ascii=False)
@@ -850,9 +850,9 @@ def save_last_songs(last_songs):
     except IOError as e:
         logger.error(f"Erro ao salvar estado em {LAST_SONGS_FILE}: {e}")
 
-# Função para carregar o log local
+# FunÃ§Ã£o para carregar o log local
 def load_local_log():
-    logger.debug("Iniciando a função load_local_log()")
+    logger.debug("Iniciando a funÃ§Ã£o load_local_log()")
     try:
         if os.path.exists(LOCAL_LOG_FILE):
             with open(LOCAL_LOG_FILE, 'r', encoding='utf-8') as f:
@@ -865,9 +865,9 @@ def load_local_log():
         logger.error(f"Erro ao carregar o log local: {e}")
         return []
 
-# Função para salvar o log local
+# FunÃ§Ã£o para salvar o log local
 def save_local_log(local_log):
-    logger.debug("Iniciando a função save_local_log()")
+    logger.debug("Iniciando a funÃ§Ã£o save_local_log()")
     try:
         with open(LOCAL_LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump(local_log, f, ensure_ascii=False)
@@ -875,9 +875,9 @@ def save_local_log(local_log):
     except IOError as e:
         logger.error(f"Erro ao salvar log local em {LOCAL_LOG_FILE}: {e}")
 
-# Função para apagar o log local
+# FunÃ§Ã£o para apagar o log local
 def clear_local_log():
-    logger.debug("Iniciando a função clear_local_log()")
+    logger.debug("Iniciando a funÃ§Ã£o clear_local_log()")
     try:
         with open(LOCAL_LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump([], f, ensure_ascii=False)
@@ -885,16 +885,16 @@ def clear_local_log():
     except IOError as e:
         logger.error(f"Erro ao limpar o log local {LOCAL_LOG_FILE}: {e}")
 
-# Função para verificar duplicidade na log local
+# FunÃ§Ã£o para verificar duplicidade na log local
 def is_duplicate_in_log(song_title, artist, name):
-    logger.debug("Iniciando a função is_duplicate_in_log()")
+    logger.debug("Iniciando a funÃ§Ã£o is_duplicate_in_log()")
     local_log = load_local_log()
     for entry in local_log:
         if entry["song_title"] == song_title and entry["artist"] == artist and entry["name"] == name:
             return True
     return False
 
-# Função para converter a data e hora ISO 8601 para dd/mm/yyyy e HH:MM:SS
+# FunÃ§Ã£o para converter a data e hora ISO 8601 para dd/mm/yyyy e HH:MM:SS
 def convert_iso8601_to_datetime(iso_date):
     try:
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
@@ -903,9 +903,9 @@ def convert_iso8601_to_datetime(iso_date):
         logger.error(f"Erro ao converter a data e hora: {e}")
         return iso_date, iso_date
 
-# Função para monitorar periodicamente o banco de dados para atualizações nos streams
+# FunÃ§Ã£o para monitorar periodicamente o banco de dados para atualizaÃ§Ãµes nos streams
 async def monitor_streams_file(callback):
-    logger.debug("Iniciando a função monitor_streams_file()")
+    logger.debug("Iniciando a funÃ§Ã£o monitor_streams_file()")
     last_streams_count = 0
     last_check_time = 0
     check_interval = 300  # Verificar a cada 5 minutos (300 segundos)
@@ -920,15 +920,15 @@ async def monitor_streams_file(callback):
                     with conn.cursor() as cursor:
                         cursor.execute("SELECT COUNT(*) FROM streams")
                         current_count = cursor.fetchone()[0]
-                        # Se o número de streams mudou, recarregar
+                        # Se o nÃºmero de streams mudou, recarregar
                         if current_count != last_streams_count:
-                            logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
+                            logger.info(f"MudanÃ§a detectada no nÃºmero de streams: {last_streams_count} -> {current_count}")
                             last_streams_count = current_count
                             callback()
                     conn.close()
                 last_check_time = current_time
             
-            await asyncio.sleep(60)  # Verificar a cada minuto se é hora de checar o banco
+            await asyncio.sleep(60)  # Verificar a cada minuto se Ã© hora de checar o banco
         except Exception as e:
             logger.error(f"Erro ao monitorar streams no banco de dados: {e}")
             await asyncio.sleep(60)  # Esperar um minuto antes de tentar novamente
@@ -939,35 +939,35 @@ def sanitize_filename(name: str) -> str:
     invalid_chars = '<>:"/\\|?*'
     table = str.maketrans({ch: '_' for ch in invalid_chars})
     safe = name.translate(table)
-    # Substitui caracteres de controle/fora do ASCII básico
+    # Substitui caracteres de controle/fora do ASCII bÃ¡sico
     safe = ''.join(c if 32 <= ord(c) < 127 else '_' for c in safe)
-    # Remove espaços/pontos finais problemáticos no Windows
+    # Remove espaÃ§os/pontos finais problemÃ¡ticos no Windows
     safe = safe.strip().rstrip('.')
     return safe[:120] if len(safe) > 120 else safe
 
-# Função para capturar o áudio do streaming ao vivo e salvar um segmento temporário
+# FunÃ§Ã£o para capturar o Ã¡udio do streaming ao vivo e salvar um segmento temporÃ¡rio
 async def capture_stream_segment(name, url, duration=None, processed_by_server=True):
-    # Se o stream não for processado por este servidor, retornar None
+    # Se o stream nÃ£o for processado por este servidor, retornar None
     if not processed_by_server:
-        logger.info(f"Pulando captura do stream {name} pois não é processado por este servidor.")
+        logger.info(f"Pulando captura do stream {name} pois nÃ£o Ã© processado por este servidor.")
         return None
     
-    # Usar configuração global se não especificado
+    # Usar configuraÃ§Ã£o global se nÃ£o especificado
     if duration is None:
         duration = IDENTIFICATION_DURATION
         
     output_dir = SEGMENTS_DIR
     os.makedirs(output_dir, exist_ok=True)
     safe_name = sanitize_filename(name)
-    # Nome único por captura para evitar concorrência e sobrescrita
+    # Nome Ãºnico por captura para evitar concorrÃªncia e sobrescrita
     timestamp_str = dt.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
     unique_suffix = uuid.uuid4().hex[:6]
     output_filename = f"{safe_name}_{timestamp_str}_{unique_suffix}.mp3"
     output_path = os.path.join(output_dir, output_filename)
     try:
         logger.debug(f"URL do stream: {url}")
-        # Remover a verificação prévia da URL com requests
-        # Remover o parâmetro -headers
+        # Remover a verificaÃ§Ã£o prÃ©via da URL com requests
+        # Remover o parÃ¢metro -headers
         command = [
             'ffmpeg', '-y', '-i', url,
             '-t', str(duration), '-ac', '1', '-ar', '44100', '-b:a', '192k', '-acodec', 'libmp3lame', output_path
@@ -976,28 +976,28 @@ async def capture_stream_segment(name, url, duration=None, processed_by_server=T
         logger.debug(f"Comando FFmpeg: {' '.join(command)}")
         
         # Usar o timeout aumentado
-        capture_timeout = duration + 30  # 30 segundos a mais do que a duração desejada
+        capture_timeout = duration + 30  # 30 segundos a mais do que a duraÃ§Ã£o desejada
         
         process = await asyncio.create_subprocess_exec(*command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=capture_timeout)
         
         if process.returncode != 0:
-            stderr_text = stderr.decode(errors='ignore') if stderr else "Sem saída de erro"
+            stderr_text = stderr.decode(errors='ignore') if stderr else "Sem saÃ­da de erro"
             logger.error(f"Erro ao capturar o stream {url}: {stderr_text}")
             connection_tracker.record_error(name)  # Registra o erro
             return None
         else:
-            # Verificar se o arquivo foi criado e tem um tamanho razoável
+            # Verificar se o arquivo foi criado e tem um tamanho razoÃ¡vel
             if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:  # Mais de 1KB
                 logger.info(f"Segmento de {duration} segundos capturado com sucesso para {name}.")
                 connection_tracker.clear_error(name)  # Limpa o erro se a captura for bem-sucedida
                 return output_path
             else:
-                logger.error(f"Arquivo de saída vazio ou muito pequeno para {name}.")
+                logger.error(f"Arquivo de saÃ­da vazio ou muito pequeno para {name}.")
                 connection_tracker.record_error(name)
                 return None
     except asyncio.TimeoutError:
-        logger.error(f"Tempo esgotado para capturar o stream {url} após {capture_timeout}s")
+        logger.error(f"Tempo esgotado para capturar o stream {url} apÃ³s {capture_timeout}s")
         connection_tracker.record_error(name)  # Registra o erro
         if 'process' in locals():
             process.kill()
@@ -1010,34 +1010,34 @@ async def capture_stream_segment(name, url, duration=None, processed_by_server=T
         connection_tracker.record_error(name)  # Registra o erro
         return None
 
-# Função para verificar duplicatas no banco de dados (MODIFICADA)
+# FunÃ§Ã£o para verificar duplicatas no banco de dados (MODIFICADA)
 async def _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title):
     # Recebe datetime timezone-aware (now_tz)
-    # --- Log Detalhado Início ---
-    logger.debug(f"[_internal_is_duplicate] Iniciando verificação para:")
+    # --- Log Detalhado InÃ­cio ---
+    logger.debug(f"[_internal_is_duplicate] Iniciando verificaÃ§Ã£o para:")
     logger.debug(f"  Stream: {name}")
     logger.debug(f"  Artista: {artist}")
-    logger.debug(f"  Título: {song_title}")
+    logger.debug(f"  TÃ­tulo: {song_title}")
     logger.debug(f"  Timestamp Atual (TZ): {now_tz}") # Log do timestamp TZ-aware
     logger.debug(f"  Janela (s): {DUPLICATE_PREVENTION_WINDOW_SECONDS}")
     # --- Fim Log Detalhado ---
 
     try:
-        # Calcular o início da janela de verificação usando o timestamp TZ-aware
+        # Calcular o inÃ­cio da janela de verificaÃ§Ã£o usando o timestamp TZ-aware
         start_window_tz = now_tz - timedelta(seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS)
         # Extrair data e hora (como objetos date e time) para a query
         start_date = start_window_tz.date()
         start_time = start_window_tz.time()
 
-        # --- Log Detalhado Cálculo Janela ---
-        logger.debug(f"  Início Janela (TZ): {start_window_tz}")
-        logger.debug(f"  Data Início Janela: {start_date}")
-        logger.debug(f"  Hora Início Janela: {start_time}")
+        # --- Log Detalhado CÃ¡lculo Janela ---
+        logger.debug(f"  InÃ­cio Janela (TZ): {start_window_tz}")
+        logger.debug(f"  Data InÃ­cio Janela: {start_date}")
+        logger.debug(f"  Hora InÃ­cio Janela: {start_time}")
         # --- Fim Log Detalhado ---
 
         result = None
         try:
-            # Usar apenas a abordagem de comparação separada (mais robusta)
+            # Usar apenas a abordagem de comparaÃ§Ã£o separada (mais robusta)
             query = f"""
             SELECT id, date, time FROM {DB_TABLE_NAME}
                 WHERE name = %s AND artist = %s AND song_title = %s
@@ -1047,37 +1047,37 @@ async def _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
             params = (name, artist, song_title, start_date, start_date, start_time)
             # --- Log Detalhado Query ---
             logger.debug(f"  Executando Query (DATE/TIME): {query.strip()}")
-            logger.debug(f"  Parâmetros Query: {params}")
+            logger.debug(f"  ParÃ¢metros Query: {params}")
             # --- Fim Log Detalhado ---
             
-            # Executar a operação de banco de dados em um thread
+            # Executar a operaÃ§Ã£o de banco de dados em um thread
             def db_query():
                 try:
                     cursor.execute(query, params)
                     return cursor.fetchone()
                 except Exception as e_query_thread:
-                    # Logar o erro aqui também, pois pode não ser propagado corretamente
+                    # Logar o erro aqui tambÃ©m, pois pode nÃ£o ser propagado corretamente
                     logger.error(f"[_internal_is_duplicate] Erro dentro do thread db_query: {e_query_thread}")
-                    raise # Re-lança para ser pego pelo bloco except externo
+                    raise # Re-lanÃ§a para ser pego pelo bloco except externo
             
             result = await asyncio.to_thread(db_query)
 
             if result:
                  logger.debug(f"  Query encontrou resultado: ID={result[0]}, Data={result[1]}, Hora={result[2]}")
             else:
-                 logger.debug(f"  Query não encontrou resultado.")
+                 logger.debug(f"  Query nÃ£o encontrou resultado.")
 
         except Exception as e_query:
              logger.error(f"[_internal_is_duplicate] Erro ao executar query de duplicidade (possivelmente no to_thread): {e_query}", exc_info=True)
              # --- Log Detalhado Erro Query ---
              logger.debug(f"[_internal_is_duplicate] Retornando False devido a erro na query.")
              # --- Fim Log Detalhado ---
-             return False # Assume não duplicata se a query falhar
+             return False # Assume nÃ£o duplicata se a query falhar
 
         is_duplicate = result is not None
         # --- Log Detalhado Resultado Final ---
         if is_duplicate:
-            logger.info(f"[_internal_is_duplicate] Duplicata ENCONTRADA para {song_title} - {artist} em {name} (ID={result[0]} às {result[1]} {result[2]}).")
+            logger.info(f"[_internal_is_duplicate] Duplicata ENCONTRADA para {song_title} - {artist} em {name} (ID={result[0]} Ã s {result[1]} {result[2]}).")
             logger.debug(f"[_internal_is_duplicate] Retornando True.")
         else:
             logger.info(f"[_internal_is_duplicate] Nenhuma duplicata ENCONTRADA para {song_title} - {artist} em {name} na janela de tempo.") # Mais claro
@@ -1090,11 +1090,11 @@ async def _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
         # --- Log Detalhado Erro Geral ---
         logger.debug(f"[_internal_is_duplicate] Retornando False devido a erro geral.")
         # --- Fim Log Detalhado ---
-        return False # Assume não duplicata em caso de erro na verificação
+        return False # Assume nÃ£o duplicata em caso de erro na verificaÃ§Ã£o
 
-# Função para inserir dados no banco de dados (MODIFICADA)
+# FunÃ§Ã£o para inserir dados no banco de dados (MODIFICADA)
 async def insert_data_to_db(entry_base, now_tz):
-    # Recebe dicionário base e timestamp TZ-aware
+    # Recebe dicionÃ¡rio base e timestamp TZ-aware
     song_title = entry_base['song_title']
     artist = entry_base['artist']
     name = entry_base['name']
@@ -1104,7 +1104,7 @@ async def insert_data_to_db(entry_base, now_tz):
         _conn = None
         _success = False
         try:
-            # Esta função será executada em thread separada, então podemos usar connect_db síncrono
+            # Esta funÃ§Ã£o serÃ¡ executada em thread separada, entÃ£o podemos usar connect_db sÃ­ncrono
             _conn = psycopg2.connect(
                 host=DB_HOST,
                 user=DB_USER,
@@ -1114,7 +1114,7 @@ async def insert_data_to_db(entry_base, now_tz):
             )
             
             if not _conn:
-                logger.error("insert_data_to_db [thread]: Não foi possível conectar ao DB.")
+                logger.error("insert_data_to_db [thread]: NÃ£o foi possÃ­vel conectar ao DB.")
                 return False
 
             with _conn.cursor() as cursor:
@@ -1126,11 +1126,11 @@ async def insert_data_to_db(entry_base, now_tz):
                 if not cursor.fetchone()[0]:
                     logger.error(
                         f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' "
-                        "não existe! Inserção falhou."
+                        "nÃ£o existe! InserÃ§Ã£o falhou."
                     )
                     return False
 
-                # 2) Verificação de duplicidade (na mesma thread/cursor)
+                # 2) VerificaÃ§Ã£o de duplicidade (na mesma thread/cursor)
                 start_window_tz = now_tz - timedelta(
                     seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
                 )
@@ -1154,17 +1154,17 @@ async def insert_data_to_db(entry_base, now_tz):
                 logger.debug(
                     f"  [thread] Verificando duplicidade (DATE/TIME): {dup_query.strip()}"
                 )
-                logger.debug(f"  [thread] Parâmetros duplicidade: {dup_params}")
+                logger.debug(f"  [thread] ParÃ¢metros duplicidade: {dup_params}")
 
                 cursor.execute(dup_query, dup_params)
                 if cursor.fetchone():
                     logger.info(
-                        f"insert_data_to_db [thread]: Inserção ignorada, duplicata "
+                        f"insert_data_to_db [thread]: InserÃ§Ã£o ignorada, duplicata "
                         f"encontrada para {song_title} - {artist} em {name}."
                     )
                     return False
 
-                # 3) Preparar dados para inserção
+                # 3) Preparar dados para inserÃ§Ã£o
                 date_str = now_tz.strftime('%Y-%m-%d')
                 time_str = now_tz.strftime('%H:%M:%S')
                 logger.debug(
@@ -1198,7 +1198,7 @@ async def insert_data_to_db(entry_base, now_tz):
                     entry.get("genre", ""),
                     entry.get("identified_by", str(SERVER_ID)),
                 )
-                logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
+                logger.debug(f"insert_data_to_db [thread]: Valores para inserÃ§Ã£o: {values}")
 
                 insert_query = f"""
                     INSERT INTO {DB_TABLE_NAME}
@@ -1222,7 +1222,7 @@ async def insert_data_to_db(entry_base, now_tz):
                         _success = True
                     else:
                         logger.error(
-                            "insert_data_to_db [thread]: Inserção falhou ou não retornou ID "
+                            "insert_data_to_db [thread]: InserÃ§Ã£o falhou ou nÃ£o retornou ID "
                             f"para {song_title} - {artist}."
                         )
                         _conn.rollback()
@@ -1231,8 +1231,8 @@ async def insert_data_to_db(entry_base, now_tz):
                 except psycopg2.errors.UniqueViolation as e_unique:
                     _conn.rollback()
                     logger.warning(
-                        "insert_data_to_db [thread]: Inserção falhou devido a "
-                        f"violação UNIQUE: {e_unique}"
+                        "insert_data_to_db [thread]: InserÃ§Ã£o falhou devido a "
+                        f"violaÃ§Ã£o UNIQUE: {e_unique}"
                     )
                     _success = False
                 except Exception as e_insert:
@@ -1242,14 +1242,14 @@ async def insert_data_to_db(entry_base, now_tz):
                         f"({song_title} - {artist}): {e_insert}"
                     )
                     _success = False
-                    # Re-lançar para ser capturado fora e disparar alerta
+                    # Re-lanÃ§ar para ser capturado fora e disparar alerta
                     raise e_insert
                     
             return _success
 
         except Exception as e_db:
             logger.error(
-                f"insert_data_to_db [thread]: Erro no DB (cursor/execução): {e_db}"
+                f"insert_data_to_db [thread]: Erro no DB (cursor/execuÃ§Ã£o): {e_db}"
             )
             if _conn:
                 try:
@@ -1262,14 +1262,14 @@ async def insert_data_to_db(entry_base, now_tz):
                 try:
                     _conn.close()
                 except Exception as cl_err:
-                    logger.error(f"Erro ao fechar conexão DB em thread: {cl_err}")
+                    logger.error(f"Erro ao fechar conexÃ£o DB em thread: {cl_err}")
 
-    # Executar operações de banco em thread separada
+    # Executar operaÃ§Ãµes de banco em thread separada
     try:
         success = await asyncio.to_thread(db_insert_operations)
         
         if not success:
-            logger.info("Enviando alerta de e-mail por falha na inserção (não duplicata)")
+            logger.info("Enviando alerta de e-mail por falha na inserÃ§Ã£o (nÃ£o duplicata)")
             subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
             body = (
                 f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados "
@@ -1286,9 +1286,9 @@ async def insert_data_to_db(entry_base, now_tz):
         )
         return False
 
-# Função para atualizar o log local e chamar a inserção no DB
+# FunÃ§Ã£o para atualizar o log local e chamar a inserÃ§Ã£o no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
-    # ... (Criação de date_str, time_str, stream_name - igual a antes) ...
+    # ... (CriaÃ§Ã£o de date_str, time_str, stream_name - igual a antes) ...
     date_str = timestamp.strftime('%Y-%m-%d')
     time_str = timestamp.strftime('%H:%M:%S')
     stream_name = stream['name']
@@ -1327,14 +1327,14 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
         "identified_by": str(SERVER_ID) 
     }
 
-    # Tenta inserir no banco de dados (a função insert_data_to_db agora faz a checagem de duplicidade)
+    # Tenta inserir no banco de dados (a funÃ§Ã£o insert_data_to_db agora faz a checagem de duplicidade)
     inserted_successfully = await insert_data_to_db(new_entry, timestamp.replace(tzinfo=timezone.utc))
         
     if inserted_successfully:
-        logger.info(f"update_local_log: Inserção de {song_title} - {artist} bem-sucedida. Atualizando log local.")
+        logger.info(f"update_local_log: InserÃ§Ã£o de {song_title} - {artist} bem-sucedida. Atualizando log local.")
         # Adiciona ao log local apenas se inserido com sucesso no DB
         local_log.append(new_entry)
-        local_log = local_log[-1000:] # Mantém tamanho gerenciável
+        local_log = local_log[-1000:] # MantÃ©m tamanho gerenciÃ¡vel
             
         # Salva o log local atualizado
         try:
@@ -1343,16 +1343,16 @@ async def update_local_log(stream, song_title, artist, timestamp, isrc=None, lab
         except Exception as e:
             logger.error(f"Erro ao salvar log local: {e}")
             
-        return True # Indica que foi uma nova inserção bem-sucedida
+        return True # Indica que foi uma nova inserÃ§Ã£o bem-sucedida
     else:
-        # A inserção falhou (seja por duplicidade ou erro)
-        # O log da falha já foi feito dentro de insert_data_to_db
-        logger.info(f"update_local_log: Inserção de {song_title} - {artist} falhou ou foi ignorada (duplicata/erro). Log local não atualizado.")
+        # A inserÃ§Ã£o falhou (seja por duplicidade ou erro)
+        # O log da falha jÃ¡ foi feito dentro de insert_data_to_db
+        logger.info(f"update_local_log: InserÃ§Ã£o de {song_title} - {artist} falhou ou foi ignorada (duplicata/erro). Log local nÃ£o atualizado.")
         return False 
 
-# Modificar função process_stream para usar distribuição dinâmica
+# Modificar funÃ§Ã£o process_stream para usar distribuiÃ§Ã£o dinÃ¢mica
 async def process_stream(stream, last_songs):
-    logger.debug("Iniciando a função process_stream()")
+    logger.debug("Iniciando a funÃ§Ã£o process_stream()")
     url = stream['url']
     name = stream['name']
     # Use stream index or name as the key for tracking
@@ -1365,29 +1365,29 @@ async def process_stream(stream, last_songs):
         
         # Verificar dinamicamente se este stream deve ser processado por este servidor
         try:
-            # Garantir que o índice seja inteiro para distribuição
+            # Garantir que o Ã­ndice seja inteiro para distribuiÃ§Ã£o
             try:
                 stream_index_int = int(stream_index)
             except Exception:
                 stream_index_int = 0
             processed_by_server = await should_process_stream_dynamic(stream_index_int, SERVER_ID)
         except Exception as e:
-            logger.error(f"Erro ao verificar distribuição dinâmica para {name}: {e}")
-            # Fallback para lógica estática SOMENTE em caso de erro
+            logger.error(f"Erro ao verificar distribuiÃ§Ã£o dinÃ¢mica para {name}: {e}")
+            # Fallback para lÃ³gica estÃ¡tica SOMENTE em caso de erro
             try:
                 server_id = int(EFFECTIVE_SERVER_ID)
                 total = int(TOTAL_SERVERS) if int(TOTAL_SERVERS) > 0 else 1
                 idx = int(stream.get('index', 0)) if str(stream.get('index', '0')).isdigit() else 0
                 processed_by_server = (idx % total == (server_id - 1))
             except Exception as fe:
-                logger.error(f"Fallback estático falhou para {name}: {fe}. Assumindo processamento local.")
+                logger.error(f"Fallback estÃ¡tico falhou para {name}: {fe}. Assumindo processamento local.")
                 processed_by_server = True
         
-        # Verificar se este stream está sendo processado por este servidor
+        # Verificar se este stream estÃ¡ sendo processado por este servidor
         if not processed_by_server:
             logger.info(
-                f"Stream {name} ({stream_key}) não é processado por este servidor. "
-                f"Verificando novamente (rebalance-aware) em até 60 segundos."
+                f"Stream {name} ({stream_key}) nÃ£o Ã© processado por este servidor. "
+                f"Verificando novamente (rebalance-aware) em atÃ© 60 segundos."
             )
             await wait_for_rebalance_or_timeout(60)
             continue
@@ -1407,7 +1407,7 @@ async def process_stream(stream, last_songs):
                 
             logger.error(
                 f"Falha ao capturar segmento do streaming {name} ({stream_key}). "
-                f"Falha #{failure_count}. Tentando novamente em até {wait_time} segundos..."
+                f"Falha #{failure_count}. Tentando novamente em atÃ© {wait_time} segundos..."
             )
             await wait_for_rebalance_or_timeout(wait_time)
             continue
@@ -1417,22 +1417,22 @@ async def process_stream(stream, last_songs):
 
         # Se a captura foi bem-sucedida, enfileirar sem aguardar processamento
         await shazam_queue.put((current_segment_path, stream, last_songs))
-        logger.debug(f"Segmento enfileirado para identificação: {current_segment_path}")
+        logger.debug(f"Segmento enfileirado para identificaÃ§Ã£o: {current_segment_path}")
 
         logger.info(
-            f"Aguardando até 60 segundos (rebalance-aware) para o próximo ciclo do stream "
+            f"Aguardando atÃ© 60 segundos (rebalance-aware) para o prÃ³ximo ciclo do stream "
             f"{name} ({stream_key})..."
         )
         await wait_for_rebalance_or_timeout(60)
 
 def send_email_alert(subject, body):
     """
-    Função de alerta por e-mail desabilitada.
-    Apenas registra o alerta nos logs ao invés de enviar e-mail.
+    FunÃ§Ã£o de alerta por e-mail desabilitada.
+    Apenas registra o alerta nos logs ao invÃ©s de enviar e-mail.
     """
     logger.warning(f"ALERTA DE E-MAIL (DESABILITADO): {subject}")
-    logger.warning(f"Conteúdo do alerta: {body}")
-    # Comentado para evitar erros de autenticação:
+    logger.warning(f"ConteÃºdo do alerta: {body}")
+    # Comentado para evitar erros de autenticaÃ§Ã£o:
     # message = MIMEMultipart()
     # message["From"] = ALERT_EMAIL
     # message["To"] = RECIPIENT_EMAIL
@@ -1452,39 +1452,39 @@ async def check_and_alert_persistent_errors():
         await asyncio.sleep(600)  # Verifica a cada 10 minutos
         persistent_errors = connection_tracker.check_persistent_errors()
         if persistent_errors:
-            subject = "Alerta: Erros de Conexão Persistentes em Streams de Rádio"
-            body = f"Os seguintes streams estão com erros de conexão há mais de 10 minutos:\n\n"
+            subject = "Alerta: Erros de ConexÃ£o Persistentes em Streams de RÃ¡dio"
+            body = f"Os seguintes streams estÃ£o com erros de conexÃ£o hÃ¡ mais de 10 minutos:\n\n"
             for stream in persistent_errors:
                 body += f"- {stream}\n"
-            body += "\nPor favor, verifique esses streams o mais rápido possível."
+            body += "\nPor favor, verifique esses streams o mais rÃ¡pido possÃ­vel."
             
             send_email_alert(subject, body)
             logger.warning(f"Alerta enviado para erros persistentes: {persistent_errors}")
 
-# Função para sincronizar o arquivo JSON local com o banco de dados
+# FunÃ§Ã£o para sincronizar o arquivo JSON local com o banco de dados
 async def sync_json_with_db():
-    logger.debug("Iniciando a função sync_json_with_db()")
+    logger.debug("Iniciando a funÃ§Ã£o sync_json_with_db()")
     conn = None
     rows = None
     try:
-        # Operações de DB em thread separada
+        # OperaÃ§Ãµes de DB em thread separada
         async def db_operations():
             _conn = await connect_db()
             if not _conn:
-                return None, None # Retorna None para conn e rows se a conexão falhar
+                return None, None # Retorna None para conn e rows se a conexÃ£o falhar
             try:
                 with _conn.cursor() as _cursor:
                     _cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
                     _rows = _cursor.fetchall()
-                return _conn, _rows # Retorna a conexão e as linhas
+                return _conn, _rows # Retorna a conexÃ£o e as linhas
             except Exception as db_err:
-                logger.error(f"Erro DB em sync_json_with_db (operações cursor): {db_err}")
-                return _conn, None # Retorna a conexão (para fechar) e None para rows
-            # O finally não é necessário aqui, pois o close será chamado fora
+                logger.error(f"Erro DB em sync_json_with_db (operaÃ§Ãµes cursor): {db_err}")
+                return _conn, None # Retorna a conexÃ£o (para fechar) e None para rows
+            # O finally nÃ£o Ã© necessÃ¡rio aqui, pois o close serÃ¡ chamado fora
 
         conn, rows = await db_operations()
 
-        if conn and rows is not None: # Checar se rows não é None
+        if conn and rows is not None: # Checar se rows nÃ£o Ã© None
             streams = []
             for row in rows:
                 stream = {
@@ -1499,33 +1499,33 @@ async def sync_json_with_db():
                 }
                 streams.append(stream)
             
-            # Aplicar distribuição de carga dinâmica se ativada (apenas para visualização no arquivo JSON)
+            # Aplicar distribuiÃ§Ã£o de carga dinÃ¢mica se ativada (apenas para visualizaÃ§Ã£o no arquivo JSON)
             if DISTRIBUTE_LOAD and len(streams) > 0:
                 try:
                     # Obter servidores online dinamicamente
                     online_servers = await get_online_server_ids()
                     active_servers_count = len(online_servers)
                     
-                    logger.info(f"sync_json_with_db: Aplicando distribuição dinâmica com {active_servers_count} servidores online: {online_servers}")
+                    logger.info(f"sync_json_with_db: Aplicando distribuiÃ§Ã£o dinÃ¢mica com {active_servers_count} servidores online: {online_servers}")
                     
-                    # Marcar quais streams são processados por este servidor
+                    # Marcar quais streams sÃ£o processados por este servidor
                     for i, stream_item in enumerate(streams):
                         stream_index = int(stream_item.get('index', i))
                         should_process = await should_process_stream_dynamic(stream_index, SERVER_ID, online_servers)
                         stream_item['processed_by_server'] = should_process
-                        stream_item['assigned_to_servers'] = online_servers  # Para debug/informação
+                        stream_item['assigned_to_servers'] = online_servers  # Para debug/informaÃ§Ã£o
                         stream_item['total_active_servers'] = active_servers_count
                         
                 except Exception as dyn_err:
-                    logger.error(f"Erro ao aplicar distribuição dinâmica em sync_json_with_db: {dyn_err}")
-                    # Fallback para lógica estática
+                    logger.error(f"Erro ao aplicar distribuiÃ§Ã£o dinÃ¢mica em sync_json_with_db: {dyn_err}")
+                    # Fallback para lÃ³gica estÃ¡tica
                     server_id = int(SERVER_ID)
                     if server_id >= 1 and server_id <= TOTAL_SERVERS:
                         for i, stream_item in enumerate(streams):
                             stream_item['processed_by_server'] = (i % TOTAL_SERVERS == (EFFECTIVE_SERVER_ID - 1))
                             stream_item['distribution_mode'] = 'static_fallback'
             
-            # Salvar os streams no arquivo JSON local (operação de I/O síncrona)
+            # Salvar os streams no arquivo JSON local (operaÃ§Ã£o de I/O sÃ­ncrona)
             try:
                 with open(STREAMS_FILE, 'w', encoding='utf-8') as f:
                     json.dump(streams, f, ensure_ascii=False, indent=2)
@@ -1534,8 +1534,8 @@ async def sync_json_with_db():
                 logger.error(f"Erro ao salvar arquivo JSON local em sync_json_with_db: {file_err}")
 
         elif conn is None:
-             logger.error("Não foi possível conectar ao banco de dados para sincronizar o arquivo JSON local.")
-        else: # conn existe, mas rows é None (erro no cursor)
+             logger.error("NÃ£o foi possÃ­vel conectar ao banco de dados para sincronizar o arquivo JSON local.")
+        else: # conn existe, mas rows Ã© None (erro no cursor)
              logger.error("Erro ao buscar dados do banco para sincronizar o arquivo JSON local.")
              
     except Exception as e:
@@ -1543,24 +1543,24 @@ async def sync_json_with_db():
     finally:
         if conn:
             try:
-                # Fechar conexão em thread separada
+                # Fechar conexÃ£o em thread separada
                 await asyncio.to_thread(conn.close)
             except Exception as close_err:
-                logger.error(f"Erro ao fechar conexão DB em sync_json_with_db: {close_err}")
+                logger.error(f"Erro ao fechar conexÃ£o DB em sync_json_with_db: {close_err}")
 
-# Função para agendar a sincronização periódica do arquivo JSON
+# FunÃ§Ã£o para agendar a sincronizaÃ§Ã£o periÃ³dica do arquivo JSON
 async def schedule_json_sync():
-    logger.info("Iniciando agendamento de sincronização do arquivo JSON local")
+    logger.info("Iniciando agendamento de sincronizaÃ§Ã£o do arquivo JSON local")
     while True:
-        await sync_json_with_db()  # Sincroniza imediatamente na inicialização
-        await asyncio.sleep(3600)  # Aguarda 1 hora (3600 segundos) antes da próxima sincronização
+        await sync_json_with_db()  # Sincroniza imediatamente na inicializaÃ§Ã£o
+        await asyncio.sleep(3600)  # Aguarda 1 hora (3600 segundos) antes da prÃ³xima sincronizaÃ§Ã£o
 
-# Função para verificar se é hora de recarregar os streams devido à rotação
+# FunÃ§Ã£o para verificar se Ã© hora de recarregar os streams devido Ã  rotaÃ§Ã£o
 async def check_rotation_schedule():
     if not (DISTRIBUTE_LOAD and ENABLE_ROTATION):
-        return False  # Não fazer nada se a rotação não estiver ativada
+        return False  # NÃ£o fazer nada se a rotaÃ§Ã£o nÃ£o estiver ativada
     
-    logger.info("Iniciando monitoramento de rotação de streams")
+    logger.info("Iniciando monitoramento de rotaÃ§Ã£o de streams")
     last_rotation_offset = calculate_rotation_offset()
     
     while True:
@@ -1568,84 +1568,84 @@ async def check_rotation_schedule():
         current_rotation_offset = calculate_rotation_offset()
         
         if current_rotation_offset != last_rotation_offset:
-            logger.info(f"Detectada mudança na rotação: {last_rotation_offset} -> {current_rotation_offset}")
+            logger.info(f"Detectada mudanÃ§a na rotaÃ§Ã£o: {last_rotation_offset} -> {current_rotation_offset}")
             last_rotation_offset = current_rotation_offset
             
-            # Recarregar streams com a nova rotação
+            # Recarregar streams com a nova rotaÃ§Ã£o
             global STREAMS
             STREAMS = load_streams()
-            logger.info(f"Streams recarregados devido à rotação. Agora processando {len(STREAMS)} streams.")
+            logger.info(f"Streams recarregados devido Ã  rotaÃ§Ã£o. Agora processando {len(STREAMS)} streams.")
             
-            # Atualizar as tarefas (isso será chamado na função main)
+            # Atualizar as tarefas (isso serÃ¡ chamado na funÃ§Ã£o main)
             return True
         
         return False
 
-# Função worker para identificar música usando Shazamio (MODIFICADA)
+# FunÃ§Ã£o worker para identificar mÃºsica usando Shazamio (MODIFICADA)
 async def identify_song_shazamio(shazam):
     global last_request_time, shazam_pause_until_timestamp
-    # Definir o fuso horário uma vez fora do loop usando pytz
+    # Definir o fuso horÃ¡rio uma vez fora do loop usando pytz
     target_tz = None
     if HAS_PYTZ:
         try:
             target_tz = pytz.timezone("America/Sao_Paulo")
             logger.info(
-                "Fuso horário definido (via pytz) para verificação de duplicatas: "
+                "Fuso horÃ¡rio definido (via pytz) para verificaÃ§Ã£o de duplicatas: "
                 "America/Sao_Paulo"
             )
         except pytz.exceptions.UnknownTimeZoneError:
             logger.critical(
-                "Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: "
+                "Erro ao definir fuso horÃ¡rio 'America/Sao_Paulo' com pytz: "
                 "Zona desconhecida. Verifique o nome."
             )
             sys.exit(1)
         except Exception as tz_err:
             logger.critical(
-                f"Erro ao definir fuso horário 'America/Sao_Paulo' com pytz: {tz_err}. "
+                f"Erro ao definir fuso horÃ¡rio 'America/Sao_Paulo' com pytz: {tz_err}. "
                 "Saindo."
             )
             sys.exit(1)
     else:
-        # Se pytz não foi importado, sair (já logado criticamente na importação)
+        # Se pytz nÃ£o foi importado, sair (jÃ¡ logado criticamente na importaÃ§Ã£o)
         logger.critical(
-            "pytz não está disponível. Impossível continuar com tratamento de fuso horário."
+            "pytz nÃ£o estÃ¡ disponÃ­vel. ImpossÃ­vel continuar com tratamento de fuso horÃ¡rio."
         )
         sys.exit(1)
 
     while True:
         file_path, stream, last_songs = await shazam_queue.get()
-        stream_index = stream.get("index")  # Obter índice aqui para uso posterior
+        stream_index = stream.get("index")  # Obter Ã­ndice aqui para uso posterior
         
         try:
             # Verificar se o arquivo existe (pode ter sido pulado na captura)
             if file_path is None:
                 logger.info(
-                    f"Arquivo de segmento para o stream {stream['name']} não foi capturado. "
-                    "Pulando identificação."
+                    f"Arquivo de segmento para o stream {stream['name']} nÃ£o foi capturado. "
+                    "Pulando identificaÃ§Ã£o."
                 )
                 continue
 
             identification_attempted = False
             out = None  # Inicializar fora do loop de retentativa
 
-            # --- Verificar se o Shazam está em pausa ---
+            # --- Verificar se o Shazam estÃ¡ em pausa ---
             current_time_check = time.time()
             if current_time_check < shazam_pause_until_timestamp:
                 logger.info(
                     "Shazam em pausa devido a erro 429 anterior "
-                    f"(até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). "
+                    f"(atÃ© {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). "
                     f"Enviando {os.path.basename(file_path)} diretamente para failover."
                 )
                 if ENABLE_FAILOVER_SEND:
                     asyncio.create_task(send_file_via_failover(file_path, stream_index))
             else:
-                # --- Tentar identificação se não estiver em pausa ---
+                # --- Tentar identificaÃ§Ã£o se nÃ£o estiver em pausa ---
                 identification_attempted = True
                 # ... (loop de retentativas com tratamento de erro 429 e failover) ...
                 max_retries = 5
                 for attempt in range(max_retries):
                     try:
-                        # ... (código do try existente: esperar, logar, shazam.recognize) ...
+                        # ... (cÃ³digo do try existente: esperar, logar, shazam.recognize) ...
                         current_time = time.time()
                         time_since_last_request = current_time - last_request_time
                         if time_since_last_request < 1:
@@ -1654,13 +1654,13 @@ async def identify_song_shazamio(shazam):
                         # Verificar se o arquivo ainda existe antes de chamar o Shazam
                         if not os.path.exists(file_path):
                             logger.error(
-                                f"Arquivo de segmento não encontrado no momento da "
-                                f"identificação: {file_path}"
+                                f"Arquivo de segmento nÃ£o encontrado no momento da "
+                                f"identificaÃ§Ã£o: {file_path}"
                             )
                             break
 
                         logger.info(
-                            f"Identificando música no arquivo {file_path} "
+                            f"Identificando mÃºsica no arquivo {file_path} "
                             f"(tentativa {attempt + 1}/{max_retries})..."
                         )
                         out = await asyncio.wait_for(
@@ -1672,7 +1672,7 @@ async def identify_song_shazamio(shazam):
                             break
                         else:
                             logger.info(
-                                "Nenhuma música identificada (resposta vazia do Shazam)."
+                                "Nenhuma mÃºsica identificada (resposta vazia do Shazam)."
                             )
                             break
 
@@ -1698,18 +1698,18 @@ async def identify_song_shazamio(shazam):
                             )
                             await asyncio.sleep(wait_time)
                     except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
-                        # ... (tratamento erro conexão/timeout) ...
+                        # ... (tratamento erro conexÃ£o/timeout) ...
                         wait_time = 2**attempt
                         logger.error(
-                            "Erro de conexão/timeout com Shazam "
+                            "Erro de conexÃ£o/timeout com Shazam "
                             f"(tentativa {attempt + 1}/{max_retries}): {e_conn}. "
                             f"Esperando {wait_time}s..."
                         )
                         await asyncio.sleep(wait_time)
                     except Exception as e_gen:
-                        # ... (tratamento erro genérico) ...
+                        # ... (tratamento erro genÃ©rico) ...
                         logger.error(
-                            "Erro inesperado ao identificar a música "
+                            "Erro inesperado ao identificar a mÃºsica "
                             f"(tentativa {attempt + 1}/{max_retries}): {e_gen}",
                             exc_info=True,
                         )
@@ -1717,20 +1717,20 @@ async def identify_song_shazamio(shazam):
                 else:
                     if identification_attempted:
                         logger.error(
-                            "Falha na identificação de "
-                            f"{os.path.basename(file_path)} após {max_retries} tentativas "
-                            "(sem erro 429 ou erro genérico)."
+                            "Falha na identificaÃ§Ã£o de "
+                            f"{os.path.basename(file_path)} apÃ³s {max_retries} tentativas "
+                            "(sem erro 429 ou erro genÃ©rico)."
                         )
 
-            # --- Processar resultado (se houve identificação e não estava em pausa) ---
+            # --- Processar resultado (se houve identificaÃ§Ã£o e nÃ£o estava em pausa) ---
             if identification_attempted and out and "track" in out:
                 track = out["track"]
                 title = track["title"]
                 artist = track["subtitle"]
-                isrc = track.get("isrc", "ISRC não disponível")
+                isrc = track.get("isrc", "ISRC nÃ£o disponÃ­vel")
                 label = None
                 genre = None
-                # ... (extração de label/genre) ...
+                # ... (extraÃ§Ã£o de label/genre) ...
                 if "sections" in track:
                     for section in track["sections"]:
                         if section["type"] == "SONG":
@@ -1741,14 +1741,14 @@ async def identify_song_shazamio(shazam):
                     genre = track["genres"].get("primary", None)
 
                 logger.info(
-                    f"Música identificada: {title} por {artist} "
-                    f"(ISRC: {isrc}, Gravadora: {label}, Gênero: {genre})"
+                    f"MÃºsica identificada: {title} por {artist} "
+                    f"(ISRC: {isrc}, Gravadora: {label}, GÃªnero: {genre})"
                 )
 
-                # Obter timestamp atual COM FUSO HORÁRIO
+                # Obter timestamp atual COM FUSO HORÃRIO
                 now_tz = dt.datetime.now(target_tz)
 
-                # Criar dicionário base SEM date/time
+                # Criar dicionÃ¡rio base SEM date/time
                 entry_base = {
                     "name": stream["name"],
                     "artist": artist,
@@ -1763,15 +1763,15 @@ async def identify_song_shazamio(shazam):
                     "identified_by": str(SERVER_ID),
                 }
 
-                # Chamar insert_data_to_db, que fará a verificação e a inserção
+                # Chamar insert_data_to_db, que farÃ¡ a verificaÃ§Ã£o e a inserÃ§Ã£o
                 inserted = await insert_data_to_db(entry_base, now_tz)
 
-                if inserted:  # Salvar last_songs apenas se inserção foi bem-sucedida
+                if inserted:  # Salvar last_songs apenas se inserÃ§Ã£o foi bem-sucedida
                     last_songs[stream["name"]] = (title, artist)
                     save_last_songs(last_songs)
 
             # --- Limpeza do arquivo local ---
-            # ... (código de limpeza existente) ...
+            # ... (cÃ³digo de limpeza existente) ...
             if os.path.exists(file_path):
                 try:
                     await asyncio.to_thread(os.remove, file_path)
@@ -1785,20 +1785,20 @@ async def identify_song_shazamio(shazam):
             # GARANTIR que task_done seja sempre chamado
             shazam_queue.task_done()
 
-# Variáveis globais para controle de finalização
+# VariÃ¡veis globais para controle de finalizaÃ§Ã£o
 shutdown_event = asyncio.Event()
 active_tasks = set()
 
-# Função para lidar com sinais de finalização (CTRL+C, etc.)
+# FunÃ§Ã£o para lidar com sinais de finalizaÃ§Ã£o (CTRL+C, etc.)
 def handle_shutdown_signal(sig, frame):
-    logger.info(f"Sinal de finalização recebido ({sig}). Iniciando o encerramento controlado...")
+    logger.info(f"Sinal de finalizaÃ§Ã£o recebido ({sig}). Iniciando o encerramento controlado...")
     shutdown_event.set()
 
 # Registrar o handler para os sinais
 signal.signal(signal.SIGINT, handle_shutdown_signal)
 signal.signal(signal.SIGTERM, handle_shutdown_signal)
 
-# Função para monitorar shutdown e cancelar tarefas
+# FunÃ§Ã£o para monitorar shutdown e cancelar tarefas
 async def monitor_shutdown():
     await shutdown_event.wait()
     logger.info("Cancelando todas as tarefas ativas...")
@@ -1808,7 +1808,7 @@ async def monitor_shutdown():
         if not task.done():
             task.cancel()
     
-    # Aguardar até 5 segundos para as tarefas serem canceladas
+    # Aguardar atÃ© 5 segundos para as tarefas serem canceladas
     if active_tasks:
         try:
             await asyncio.wait(active_tasks, timeout=5)
@@ -1817,17 +1817,17 @@ async def monitor_shutdown():
         except Exception as e:
             logger.error(f"Erro ao aguardar cancelamento de tarefas: {e}")
     
-    logger.info("Processo de finalização concluído.")
+    logger.info("Processo de finalizaÃ§Ã£o concluÃ­do.")
 
-# Função para adicionar uma tarefa ao conjunto de tarefas ativas
+# FunÃ§Ã£o para adicionar uma tarefa ao conjunto de tarefas ativas
 def register_task(task):
     active_tasks.add(task)
-    # Remover tarefas concluídas para evitar vazamentos de memória
+    # Remover tarefas concluÃ­das para evitar vazamentos de memÃ³ria
     done_tasks = {t for t in active_tasks if t.done()}
     active_tasks.difference_update(done_tasks)
     return task
 
-# Função para enviar heartbeat para o banco de dados
+# FunÃ§Ã£o para enviar heartbeat para o banco de dados
 async def send_heartbeat():
     global last_heartbeat_time
     current_time = time.time()
@@ -1840,7 +1840,7 @@ async def send_heartbeat():
     conn = None
     
     try:
-        # Coletar informações do sistema (fora do thread DB)
+        # Coletar informaÃ§Ãµes do sistema (fora do thread DB)
         hostname = socket.gethostname()
         ip_address = socket.gethostbyname(hostname)
         mem_info = await asyncio.to_thread(psutil.virtual_memory)
@@ -1856,7 +1856,7 @@ async def send_heartbeat():
                     processing_streams_count += 1
         except Exception as calc_err:
             logger.error(f"Erro ao calcular streams processados dinamicamente: {calc_err}")
-            # Fallback para lógica estática
+            # Fallback para lÃ³gica estÃ¡tica
             processing_streams_count = len([s for s in STREAMS if s.get('processed_by_server', 
                                                                        (int(s.get('index', 0)) % TOTAL_SERVERS) == (EFFECTIVE_SERVER_ID - 1))])
         
@@ -1871,10 +1871,10 @@ async def send_heartbeat():
         # NOVO: detectar VPN
         vpn_info = await asyncio.to_thread(detect_vpn)
 
-        # NOVO: últimos erros do log
+        # NOVO: Ãºltimos erros do log
         recent_errors = await asyncio.to_thread(get_recent_errors, 5, 400)
         
-        # Criar diagnósticos adicionais
+        # Criar diagnÃ³sticos adicionais
         diagnostics = {
             "streams_loaded": len(STREAMS) if STREAMS else 0,
             "processing_names_count": len(processing_stream_names),
@@ -1883,7 +1883,7 @@ async def send_heartbeat():
             "instance_id": str(globals().get("INSTANCE_ID") or "unknown"),
         }
         
-        # Informações para o banco de dados
+        # InformaÃ§Ãµes para o banco de dados
         info = {
             "hostname": platform.node(),
             "platform": platform.system(),
@@ -1906,20 +1906,20 @@ async def send_heartbeat():
         }
         logger.debug("send_heartbeat: diagnostics=%s", diagnostics)
         
-        # Novo: publicar em Redis para presença e tempo real (não bloqueante do fluxo atual)
+        # Novo: publicar em Redis para presenÃ§a e tempo real (nÃ£o bloqueante do fluxo atual)
         try:
             await publish_redis_heartbeat(info)
         except Exception as e:
             logger.debug(f"send_heartbeat: publish_redis_heartbeat falhou: {e}")
         
-        # --- Operações de DB --- 
+        # --- OperaÃ§Ãµes de DB --- 
         async def db_heartbeat_operations():
             _conn = None
             try:
                 _conn = await connect_db()
                 if not _conn:
-                    logger.error("send_heartbeat [thread]: Não foi possível conectar ao DB.")
-                    return None # Retorna None se conexão falhar
+                    logger.error("send_heartbeat [thread]: NÃ£o foi possÃ­vel conectar ao DB.")
+                    return None # Retorna None se conexÃ£o falhar
 
                 with _conn.cursor() as cursor:
                     # Verificar/Criar tabela
@@ -1946,30 +1946,30 @@ async def send_heartbeat():
                     
                     _conn.commit()
                     logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID} (processando {processing_streams_count} streams)")
-                return _conn # Retorna a conexão para ser fechada fora
+                return _conn # Retorna a conexÃ£o para ser fechada fora
             except Exception as db_err:
                 logger.error(f"Erro DB em send_heartbeat [thread]: {db_err}")
                 if _conn: _conn.rollback() # Tentar rollback
-                return _conn # Retorna a conexão (possivelmente None) para tentar fechar
+                return _conn # Retorna a conexÃ£o (possivelmente None) para tentar fechar
 
-        # Executar operações DB
+        # Executar operaÃ§Ãµes DB
         conn = await db_heartbeat_operations()
         
     except Exception as e:
-        logger.error(f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}")
-        # Publicar heartbeat via Redis se disponível mesmo com erro no DB
+        logger.error(f"Erro ao coletar informaÃ§Ãµes do sistema ou executar DB thread em send_heartbeat: {e}")
+        # Publicar heartbeat via Redis se disponÃ­vel mesmo com erro no DB
         try:
             await publish_redis_heartbeat(info)
         except Exception as redis_err:
-            logger.warning(f"Erro ao publicar heartbeat via Redis após falha no DB: {redis_err}")
+            logger.warning(f"Erro ao publicar heartbeat via Redis apÃ³s falha no DB: {redis_err}")
     finally:
         if conn:
             try:
                 await asyncio.to_thread(conn.close)
             except Exception as close_err:
-                 logger.error(f"Erro ao fechar conexão DB em send_heartbeat: {close_err}")
+                 logger.error(f"Erro ao fechar conexÃ£o DB em send_heartbeat: {close_err}")
 
-# Função para verificar status de outros servidores
+# FunÃ§Ã£o para verificar status de outros servidores
 async def check_servers_status():
     # Intervalos e limites
     CHECK_INTERVAL_SECS = 300
@@ -1980,7 +1980,7 @@ async def check_servers_status():
         try:
             await asyncio.sleep(CHECK_INTERVAL_SECS)
             
-            # --- Operações DB --- 
+            # --- OperaÃ§Ãµes DB --- 
             async def db_check_status_operations():
                 _conn = None
                 _offline_servers_data = []
@@ -1990,7 +1990,7 @@ async def check_servers_status():
                 try:
                     _conn = await connect_db()
                     if not _conn:
-                        logger.error("check_servers_status [thread]: Não foi possível conectar ao DB.")
+                        logger.error("check_servers_status [thread]: NÃ£o foi possÃ­vel conectar ao DB.")
                         return _conn, [], [], False # conn, offline, online, send_alert
 
                     with _conn.cursor() as cursor:
@@ -2003,7 +2003,7 @@ async def check_servers_status():
                         """)
                         
                         if not cursor.fetchone()[0]:
-                            logger.warning("check_servers_status [thread]: Tabela de heartbeats não existe.")
+                            logger.warning("check_servers_status [thread]: Tabela de heartbeats nÃ£o existe.")
                             return _conn, [], [], False
                         
                         # Marcar servidores offline
@@ -2016,7 +2016,7 @@ async def check_servers_status():
                         """, (OFFLINE_THRESHOLD_SECS,))
                         
                         _offline_servers_data = cursor.fetchall()
-                        _conn.commit() # Commit da atualização de status
+                        _conn.commit() # Commit da atualizaÃ§Ã£o de status
                         
                         if _offline_servers_data:
                             server_ids = [row[0] for row in _offline_servers_data]
@@ -2025,7 +2025,7 @@ async def check_servers_status():
                             if SERVER_ID == 1:
                                 _send_alert = True
                         
-                        # Obter estatísticas dos servidores online
+                        # Obter estatÃ­sticas dos servidores online
                         cursor.execute("""
                             SELECT server_id, last_heartbeat, ip_address, info
                             FROM server_heartbeats
@@ -2039,10 +2039,10 @@ async def check_servers_status():
                 except Exception as db_err:
                     logger.error(f"Erro DB em check_servers_status [thread]: {db_err}")
                     if _conn: _conn.rollback()
-                    # Retorna a conexão para fechar, mas listas vazias e sem alerta
+                    # Retorna a conexÃ£o para fechar, mas listas vazias e sem alerta
                     return _conn, [], [], False 
 
-            # Executar operações DB
+            # Executar operaÃ§Ãµes DB
             conn, offline_servers, online_servers, send_alert = await db_check_status_operations()
 
             # Processar resultados fora do thread
@@ -2050,22 +2050,22 @@ async def check_servers_status():
                 # Servidores detectados como offline E este servidor deve alertar
                 server_ids = [row[0] for row in offline_servers]
                 last_heartbeats = [row[1] for row in offline_servers]
-                servers_info = "\n".join([f"Servidor {sid}: Último heartbeat em {lh}" 
+                servers_info = "\n".join([f"Servidor {sid}: Ãšltimo heartbeat em {lh}" 
                                           for sid, lh in zip(server_ids, last_heartbeats)])
                 
-                subject = "ALERTA: Servidores de Identificação OFFLINE"
-                body = f"""Foram detectados servidores offline no sistema de identificação musical.
+                subject = "ALERTA: Servidores de IdentificaÃ§Ã£o OFFLINE"
+                body = f"""Foram detectados servidores offline no sistema de identificaÃ§Ã£o musical.
 
 Servidores offline:
 {servers_info}
 
 O que fazer:
-1. Verificar se os servidores estão operacionais
+1. Verificar se os servidores estÃ£o operacionais
 2. Verificar logs de erro
-3. Reiniciar os servidores offline se necessário
-4. Se um servidor não for retornar, considere ajustar TOTAL_SERVERS={TOTAL_SERVERS-len(server_ids)} e reiniciar os demais
+3. Reiniciar os servidores offline se necessÃ¡rio
+4. Se um servidor nÃ£o for retornar, considere ajustar TOTAL_SERVERS={TOTAL_SERVERS-len(server_ids)} e reiniciar os demais
 
-Este é um alerta automático enviado pelo servidor {SERVER_ID}.
+Este Ã© um alerta automÃ¡tico enviado pelo servidor {SERVER_ID}.
 """
                 send_email_alert(subject, body)
                 logger.info(f"Alerta de servidores offline enviado por e-mail")
@@ -2082,9 +2082,9 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
                             logger.debug(f"Servidor {server_id} ({ip}): {streams_info}, {sys_info}")
                         except Exception as json_err:
                             logger.warning(f"Erro ao processar info JSON do servidor {server_id}: {json_err}")
-                            logger.debug(f"Servidor {server_id} ({ip}): Último heartbeat em {last_hb} (info JSON inválido)")
+                            logger.debug(f"Servidor {server_id} ({ip}): Ãšltimo heartbeat em {last_hb} (info JSON invÃ¡lido)")
                     else:
-                         logger.debug(f"Servidor {server_id} ({ip}): Último heartbeat em {last_hb} (sem info JSON)")
+                         logger.debug(f"Servidor {server_id} ({ip}): Ãšltimo heartbeat em {last_hb} (sem info JSON)")
                 
         except Exception as e:
             logger.error(f"Erro no loop principal de check_servers_status: {e}")
@@ -2092,14 +2092,14 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
             if conn:
                 try:
                     await asyncio.to_thread(conn.close)
-                    conn = None # Garantir que não tentará fechar novamente
+                    conn = None # Garantir que nÃ£o tentarÃ¡ fechar novamente
                 except Exception as close_err:
-                     logger.error(f"Erro ao fechar conexão DB em check_servers_status: {close_err}")
+                     logger.error(f"Erro ao fechar conexÃ£o DB em check_servers_status: {close_err}")
 
-# Variável global para controlar o tempo da última solicitação
+# VariÃ¡vel global para controlar o tempo da Ãºltima solicitaÃ§Ã£o
 last_request_time = 0
 
-# Variáveis globais para cache de servidores dinâmicos
+# VariÃ¡veis globais para cache de servidores dinÃ¢micos
 _last_dynamic_check = 0
 _cached_online_servers = []
 _cached_active_servers_count = 1
@@ -2116,12 +2116,12 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
     """
     client = await get_redis_client()
     if not client:
-        logger.warning("watch_online_servers_redis: Redis indisponível, abortando watcher.")
+        logger.warning("watch_online_servers_redis: Redis indisponÃ­vel, abortando watcher.")
         return
 
     last_seen: dict[int, float] = {}  # server_id -> timestamp
 
-    # Semeadura inicial a partir das chaves de presença já existentes
+    # Semeadura inicial a partir das chaves de presenÃ§a jÃ¡ existentes
     try:
         global _cached_online_servers, _last_dynamic_check
         pattern = f"{REDIS_KEY_PREFIX}:*"  # smf:server:*
@@ -2140,7 +2140,7 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
                 # Sem TTL definido ou erro ao obter: considere como visto agora
                 last_seen[sid] = now_ts
             else:
-                # Reconstrói o last_seen com base no TTL restante
+                # ReconstrÃ³i o last_seen com base no TTL restante
                 last_seen[sid] = max(
                     0.0,
                     now_ts - (REDIS_HEARTBEAT_TTL_SECS - ttl)
@@ -2171,7 +2171,7 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
     logger.info(f"Watcher Redis iniciado (canal={REDIS_CHANNEL}, poll={poll_interval_secs}s).")
 
     async def reader():
-        """Lê mensagens do canal Redis e atualiza last_seen."""
+        """LÃª mensagens do canal Redis e atualiza last_seen."""
         try:
             async for message in pubsub.listen():
                 if not message or message.get("type") != "message":
@@ -2188,7 +2188,7 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
             logger.error(f"watch_online_servers_redis: erro no loop PubSub: {e}")
 
     async def evaluator():
-        """Avalia periodicamente quais servidores estão online e atualiza cache."""
+        """Avalia periodicamente quais servidores estÃ£o online e atualiza cache."""
         global _cached_online_servers, _last_dynamic_check
         while True:
             try:
@@ -2213,7 +2213,7 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
                     except Exception:
                         pass
                     
-                # Log periódico de diagnóstico
+                # Log periÃ³dico de diagnÃ³stico
                 if len(last_seen) > 0:
                     logger.debug(f"Redis watcher: last_seen={dict(list(last_seen.items())[:5])}, online_now={online_now}")
                     
@@ -2233,11 +2233,11 @@ async def watch_online_servers_redis(poll_interval_secs: int = 5):
         except Exception:
             pass
 
-# === INÍCIO: Helpers para Dashboard: VPN, Erros e Streams Ativos ===
+# === INÃCIO: Helpers para Dashboard: VPN, Erros e Streams Ativos ===
 import socket  # Adicionar novamente para garantir disponibilidade
 def detect_vpn() -> dict:
     """
-    Detecta uso de VPN com heurísticas simples via interfaces de rede e env vars.
+    Detecta uso de VPN com heurÃ­sticas simples via interfaces de rede e env vars.
     Retorna um dict:
       {
         "in_use": bool,
@@ -2253,9 +2253,9 @@ def detect_vpn() -> dict:
 
         for iface_name, stats in ifaces_stats.items():
             lname = iface_name.lower()
-            # Heurística: interfaces típicas de VPN
+            # HeurÃ­stica: interfaces tÃ­picas de VPN
             if any(token in lname for token in ("tun", "wg", "vpn", "tap")) and stats.isup:
-                # Verifica se possui endereço IPv4 (não loopback)
+                # Verifica se possui endereÃ§o IPv4 (nÃ£o loopback)
                 addrs = ifaces_addrs.get(iface_name, [])
                 has_ipv4 = any(
                     (getattr(a, "family", None) == socket.AF_INET) or str(getattr(a, "family", None)).endswith("AF_INET")
@@ -2273,7 +2273,7 @@ def detect_vpn() -> dict:
                 return {"in_use": True, "interface": picked, "type": "openvpn"}
             return {"in_use": True, "interface": picked, "type": "unknown"}
 
-        # Fallback: variáveis de ambiente
+        # Fallback: variÃ¡veis de ambiente
         vpn_type = os.getenv("VPN_TYPE") or os.getenv("VPN_SERVICE_PROVIDER")
         if vpn_type:
             return {"in_use": True, "interface": None, "type": vpn_type.lower()}
@@ -2282,20 +2282,20 @@ def detect_vpn() -> dict:
 
         return {"in_use": False, "interface": None, "type": None}
     except Exception:
-        # Em caso de erro, não bloquear o heartbeat
+        # Em caso de erro, nÃ£o bloquear o heartbeat
         return {"in_use": False, "interface": None, "type": None}
 
 
 async def get_streams_processed_names() -> list:
     """
-    Retorna lista com os nomes dos streams processados por esta instância,
-    com base na lógica dinâmica should_process_stream_dynamic.
+    Retorna lista com os nomes dos streams processados por esta instÃ¢ncia,
+    com base na lÃ³gica dinÃ¢mica should_process_stream_dynamic.
     """
     names = []
     try:
         total_streams = len(STREAMS) if STREAMS else 0
         if total_streams == 0:
-            logger.warning("get_streams_processed_names: STREAMS não carregados ou vazios")
+            logger.warning("get_streams_processed_names: STREAMS nÃ£o carregados ou vazios")
             return []
 
         for s in STREAMS:
@@ -2324,13 +2324,13 @@ async def get_streams_processed_names() -> list:
 
 def get_recent_errors(max_entries: int = 5, tail_lines: int = 400) -> list:
     """
-    Lê o arquivo de log e extrai até 'max_entries' erros mais recentes (ERROR/CRITICAL).
-    tail_lines: número de linhas finais do arquivo a analisar (heurística para ser leve).
+    LÃª o arquivo de log e extrai atÃ© 'max_entries' erros mais recentes (ERROR/CRITICAL).
+    tail_lines: nÃºmero de linhas finais do arquivo a analisar (heurÃ­stica para ser leve).
     Retorna lista de dicts: [{"timestamp": str, "level": str, "message": str}, ...]
     """
     results = []
     try:
-        path = SERVER_LOG_FILE  # já definido no topo como 'log.txt'
+        path = SERVER_LOG_FILE  # jÃ¡ definido no topo como 'log.txt'
         if not os.path.exists(path):
             return results
 
@@ -2339,13 +2339,13 @@ def get_recent_errors(max_entries: int = 5, tail_lines: int = 400) -> list:
 
         # Formato do formatter: '%(asctime)s %(levelname)s: [%(threadName)s] %(message)s'
         for line in reversed(lines):
-            # Pegamos os níveis de severidade tipicamente usados
+            # Pegamos os nÃ­veis de severidade tipicamente usados
             if " ERROR:" in line or " CRITICAL:" in line:
                 # Tente extrair as partes, mas deixe robusto
                 # Ex: "2025-08-16 10:01:23,123 ERROR: [ThreadX] Mensagem"
                 try:
-                    # timestamp = início até o primeiro " "
-                    # nível = depois do espaço até ":"
+                    # timestamp = inÃ­cio atÃ© o primeiro " "
+                    # nÃ­vel = depois do espaÃ§o atÃ© ":"
                     # mensagem = depois de "] "
                     parts = line.strip().split(" ", 2)
                     if len(parts) >= 3:
@@ -2361,7 +2361,7 @@ def get_recent_errors(max_entries: int = 5, tail_lines: int = 400) -> list:
                     brk = rest.find("] ")
                     if brk != -1:
                         msg = rest[brk + 2 :]
-                    # Limite máximo de mensagens coletadas
+                    # Limite mÃ¡ximo de mensagens coletadas
                     results.append({"timestamp": ts, "level": level, "message": msg})
                     if len(results) >= max_entries:
                         break
@@ -2376,20 +2376,20 @@ def get_recent_errors(max_entries: int = 5, tail_lines: int = 400) -> list:
     return results
 # === FIM: Helpers para Dashboard ===
 
-# Estado conhecido de servidores online (para detecção de mudanças)
+# Estado conhecido de servidores online (para detecÃ§Ã£o de mudanÃ§as)
 _last_known_online_servers = []
 
-# Função para obter servidores online baseado em heartbeats
+# FunÃ§Ã£o para obter servidores online baseado em heartbeats
 async def get_online_server_ids(force_refresh=False):
     """
     Consulta a tabela server_heartbeats para obter lista de servidores online.
-    Retorna lista de server_ids que estão com status 'ONLINE' e heartbeat recente.
+    Retorna lista de server_ids que estÃ£o com status 'ONLINE' e heartbeat recente.
     Se force_refresh=True, ignora o cache.
     """
     global _last_dynamic_check, _cached_online_servers
 
     current_time = time.time()
-    # Usar cache se permitido e ainda válido
+    # Usar cache se permitido e ainda vÃ¡lido
     if not force_refresh and (current_time - _last_dynamic_check < DYNAMIC_CACHE_TTL) and _cached_online_servers:
         return _cached_online_servers
 
@@ -2397,7 +2397,7 @@ async def get_online_server_ids(force_refresh=False):
         async def db_get_online_servers():
             _conn = await connect_db()
             if not _conn:
-                logger.warning("get_online_server_ids: Não foi possível conectar ao DB. Usando configuração estática.")
+                logger.warning("get_online_server_ids: NÃ£o foi possÃ­vel conectar ao DB. Usando configuraÃ§Ã£o estÃ¡tica.")
                 return [SERVER_ID]  # Fallback para servidor atual
 
             try:
@@ -2410,7 +2410,7 @@ async def get_online_server_ids(force_refresh=False):
                         );
                     """)
                     if not cursor.fetchone()[0]:
-                        logger.debug("get_online_server_ids: Tabela heartbeats não existe. Usando configuração estática.")
+                        logger.debug("get_online_server_ids: Tabela heartbeats nÃ£o existe. Usando configuraÃ§Ã£o estÃ¡tica.")
                         return [SERVER_ID]
 
                     # Obter servidores online
@@ -2431,9 +2431,9 @@ async def get_online_server_ids(force_refresh=False):
                 try:
                     _conn.close()
                 except Exception as close_err:
-                    logger.error(f"Erro ao fechar conexão em get_online_server_ids (inner): {close_err}")
+                    logger.error(f"Erro ao fechar conexÃ£o em get_online_server_ids (inner): {close_err}")
 
-        # Executa a consulta e obtém diretamente a lista de servidores online
+        # Executa a consulta e obtÃ©m diretamente a lista de servidores online
         online_servers = await db_get_online_servers()
 
         # Atualizar cache
@@ -2447,11 +2447,11 @@ async def get_online_server_ids(force_refresh=False):
         logger.error(f"Erro ao obter servidores online: {e}")
         return [SERVER_ID]  # Fallback para servidor atual
 
-# Função para obter número de servidores ativos dinamicamente
+# FunÃ§Ã£o para obter nÃºmero de servidores ativos dinamicamente
 async def get_active_servers_count():
     """
-    Retorna o número de servidores atualmente online e ativos.
-    Se não conseguir determinar dinamicamente, retorna TOTAL_SERVERS estático.
+    Retorna o nÃºmero de servidores atualmente online e ativos.
+    Se nÃ£o conseguir determinar dinamicamente, retorna TOTAL_SERVERS estÃ¡tico.
     """
     global _cached_active_servers_count
 
@@ -2459,7 +2459,7 @@ async def get_active_servers_count():
         online_servers = await get_online_server_ids()
         active_count = len(online_servers)
 
-        # Validação: pelo menos 1 servidor (o atual) deve estar ativo
+        # ValidaÃ§Ã£o: pelo menos 1 servidor (o atual) deve estar ativo
         if active_count < 1:
             logger.warning("get_active_servers_count: Nenhum servidor detectado como online. Usando fallback.")
             active_count = 1
@@ -2470,14 +2470,14 @@ async def get_active_servers_count():
 
     except Exception as e:
         logger.error(f"Erro ao obter contagem de servidores ativos: {e}")
-        # Fallback para configuração estática
+        # Fallback para configuraÃ§Ã£o estÃ¡tica
         return TOTAL_SERVERS
 
-# Função auxiliar: aguardar rebalanceamento ou timeout
+# FunÃ§Ã£o auxiliar: aguardar rebalanceamento ou timeout
 async def wait_for_rebalance_or_timeout(timeout_secs: int):
     """
-    Aguarda até o REBALANCE_EVENT ser disparado ou até atingir timeout.
-    Não limpa o evento global aqui (limpeza centralizada no watcher).
+    Aguarda atÃ© o REBALANCE_EVENT ser disparado ou atÃ© atingir timeout.
+    NÃ£o limpa o evento global aqui (limpeza centralizada no watcher).
     """
     try:
         await asyncio.wait_for(REBALANCE_EVENT.wait(), timeout=timeout_secs)
@@ -2488,7 +2488,7 @@ async def wait_for_rebalance_or_timeout(timeout_secs: int):
 async def monitor_online_servers(poll_interval_secs: int = 30):
     """
     Observa a lista de servidores online ignorando cache, e dispara rebalanceamento
-    quando detectar mudanças (entrada/saída de servidores).
+    quando detectar mudanÃ§as (entrada/saÃ­da de servidores).
     """
     global _last_known_online_servers, _cached_active_servers_count, _cached_online_servers, _last_dynamic_check
     # Inicializar estado conhecido
@@ -2507,7 +2507,7 @@ async def monitor_online_servers(poll_interval_secs: int = 30):
             online_now = await get_online_server_ids(force_refresh=True)
             if set(online_now) != set(_last_known_online_servers):
                 logger.info(
-                    f"Rebalanceamento: mudança detectada na lista de servidores online. "
+                    f"Rebalanceamento: mudanÃ§a detectada na lista de servidores online. "
                     f"antes={_last_known_online_servers} agora={online_now}"
                 )
                 # Atualiza caches imediata/explicitamente
@@ -2517,7 +2517,7 @@ async def monitor_online_servers(poll_interval_secs: int = 30):
                 
                 # Atualiza o estado conhecido e o cache
                 _last_known_online_servers = online_now
-                # Manter o cache interno coerente com a mudança
+                # Manter o cache interno coerente com a mudanÃ§a
                 _cached_online_servers = online_now
                 _last_dynamic_check = time.time()
                 
@@ -2530,32 +2530,32 @@ async def monitor_online_servers(poll_interval_secs: int = 30):
         
         await asyncio.sleep(poll_interval_secs)
 
-# Função para calcular se um stream deve ser processado por este servidor (dinâmico)
+# FunÃ§Ã£o para calcular se um stream deve ser processado por este servidor (dinÃ¢mico)
 async def should_process_stream_dynamic(stream_index, server_id, online_servers=None):
     """
-    Determina se um stream deve ser processado por este servidor baseado na distribuição dinâmica.
+    Determina se um stream deve ser processado por este servidor baseado na distribuiÃ§Ã£o dinÃ¢mica.
     """
     if not DISTRIBUTE_LOAD:
         return True
     
     try:
-        # Durante um rebalanceamento, forçar refresh da lista de online
+        # Durante um rebalanceamento, forÃ§ar refresh da lista de online
         if online_servers is None:
             if REBALANCE_EVENT.is_set():
                 online_servers = await get_online_server_ids(force_refresh=True)
             else:
                 online_servers = await get_online_server_ids()
         
-        # Se não há servidores online ou apenas este servidor
+        # Se nÃ£o hÃ¡ servidores online ou apenas este servidor
         if not online_servers or len(online_servers) == 1:
             return True
         
-        # Verificar se o servidor atual está na lista de online
+        # Verificar se o servidor atual estÃ¡ na lista de online
         if server_id not in online_servers:
-            logger.warning(f"Servidor atual ({server_id}) não está na lista de servidores online: {online_servers}")
-            return True  # Processar por segurança
+            logger.warning(f"Servidor atual ({server_id}) nÃ£o estÃ¡ na lista de servidores online: {online_servers}")
+            return True  # Processar por seguranÃ§a
         
-        # Distribuição por módulo baseada apenas em servidores online
+        # DistribuiÃ§Ã£o por mÃ³dulo baseada apenas em servidores online
         online_servers_sorted = sorted(online_servers)
         server_position = online_servers_sorted.index(server_id)
         total_online = len(online_servers_sorted)
@@ -2572,33 +2572,33 @@ async def should_process_stream_dynamic(stream_index, server_id, online_servers=
         
     except Exception as e:
         logger.error(f"Erro em should_process_stream_dynamic: {e}")
-        # Fallback para lógica estática
+        # Fallback para lÃ³gica estÃ¡tica
         effective_id = EFFECTIVE_SERVER_ID if server_id == SERVER_ID else server_id
         return (int(stream_index) % TOTAL_SERVERS) == (effective_id - 1)
 
-# Função principal para processar todos os streams
+# FunÃ§Ã£o principal para processar todos os streams
 async def main():
-    logger.debug("Iniciando a função main()")
-    logger.info(f"Configurações de distribuição carregadas do .env: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}")
-    logger.info(f"Distribuição de carga: {DISTRIBUTE_LOAD}, Rotação: {ENABLE_ROTATION}, Horas de rotação: {ROTATION_HOURS}")
+    logger.debug("Iniciando a funÃ§Ã£o main()")
+    logger.info(f"ConfiguraÃ§Ãµes de distribuiÃ§Ã£o carregadas do .env: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}")
+    logger.info(f"DistribuiÃ§Ã£o de carga: {DISTRIBUTE_LOAD}, RotaÃ§Ã£o: {ENABLE_ROTATION}, Horas de rotaÃ§Ã£o: {ROTATION_HOURS}")
     
-    # Verificar se a tabela de logs existe e criar se necessário
+    # Verificar se a tabela de logs existe e criar se necessÃ¡rio
     try:
         table_ok = await check_log_table()
         if not table_ok:
-            logger.warning("A verificação/criação da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros.")
+            logger.warning("A verificaÃ§Ã£o/criaÃ§Ã£o da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros.")
     except Exception as e_check_table:
          logger.error(f"Erro ao executar check_log_table: {e_check_table}")
-         logger.warning("Prosseguindo sem verificação da tabela de logs.")
+         logger.warning("Prosseguindo sem verificaÃ§Ã£o da tabela de logs.")
 
-    # Criar instância do Shazam para reconhecimento
+    # Criar instÃ¢ncia do Shazam para reconhecimento
     shazam = Shazam()
     
     global STREAMS
     STREAMS = await load_streams()
     
     if not STREAMS:
-        logger.error("Não foi possível carregar os streamings. Verifique a configuração do banco de dados ou o arquivo JSON local.")
+        logger.error("NÃ£o foi possÃ­vel carregar os streamings. Verifique a configuraÃ§Ã£o do banco de dados ou o arquivo JSON local.")
         sys.exit(1)
         
     last_songs = load_last_songs()
@@ -2606,27 +2606,27 @@ async def main():
     
     # Inicializar fila para processamento
     global shazam_queue
-    shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memória
+    shazam_queue = asyncio.Queue(maxsize=100)  # Limitar tamanho da fila para evitar uso excessivo de memÃ³ria
     
-    # Registrar informações sobre a distribuição de carga
+    # Registrar informaÃ§Ãµes sobre a distribuiÃ§Ã£o de carga
     if DISTRIBUTE_LOAD:
-        logger.info(f"Modo de distribuição de carga DINÂMICA ativado: Servidor {SERVER_ID}")
-        logger.info(f"TOTAL_SERVERS estático configurado: {TOTAL_SERVERS}")
+        logger.info(f"Modo de distribuiÃ§Ã£o de carga DINÃ‚MICA ativado: Servidor {SERVER_ID}")
+        logger.info(f"TOTAL_SERVERS estÃ¡tico configurado: {TOTAL_SERVERS}")
         
-        # Obter informações dinâmicas de servidores
+        # Obter informaÃ§Ãµes dinÃ¢micas de servidores
         try:
             online_servers = await get_online_server_ids()
             active_count = len(online_servers)
             logger.info(f"Servidores online detectados: {online_servers} (total: {active_count})")
 
-            # VALIDAÇÃO CRÍTICA: Alertar sobre discrepância entre configuração e realidade
+            # VALIDAÃ‡ÃƒO CRÃTICA: Alertar sobre discrepÃ¢ncia entre configuraÃ§Ã£o e realidade
             if active_count != TOTAL_SERVERS:
                 logger.warning("=" * 80)
-                logger.warning("DISCREPÂNCIA CRÍTICA DETECTADA:")
+                logger.warning("DISCREPÃ‚NCIA CRÃTICA DETECTADA:")
                 logger.warning(f"TOTAL_SERVERS configurado: {TOTAL_SERVERS}")
                 logger.warning(f"Servidores realmente online: {active_count} ({online_servers})")
-                logger.warning("Esta discrepância pode causar distribuição de carga inadequada!")
-                logger.warning("Recomendação: Verifique se todos os servidores estão funcionando ou")
+                logger.warning("Esta discrepÃ¢ncia pode causar distribuiÃ§Ã£o de carga inadequada!")
+                logger.warning("RecomendaÃ§Ã£o: Verifique se todos os servidores estÃ£o funcionando ou")
                 logger.warning(f"ajuste TOTAL_SERVERS para {active_count} no arquivo .env")
                 logger.warning("=" * 80)
 
@@ -2634,14 +2634,14 @@ async def main():
             logger.error(f"Erro ao obter servidores online: {e}")
             online_servers = [SERVER_ID]
             active_count = 1
-            logger.warning(f"Fallback: Assumindo apenas este servidor ({SERVER_ID}) está online")
+            logger.warning(f"Fallback: Assumindo apenas este servidor ({SERVER_ID}) estÃ¡ online")
         
         if ENABLE_ROTATION:
-            logger.info(f"Rotação de rádios ativada: a cada {ROTATION_HOURS} horas")
+            logger.info(f"RotaÃ§Ã£o de rÃ¡dios ativada: a cada {ROTATION_HOURS} horas")
             rotation_offset = calculate_rotation_offset()
-            logger.info(f"Offset de rotação atual: {rotation_offset}")
+            logger.info(f"Offset de rotaÃ§Ã£o atual: {rotation_offset}")
         
-        # Calcular e exibir quantos streams cada servidor está processando (dinâmico)
+        # Calcular e exibir quantos streams cada servidor estÃ¡ processando (dinÃ¢mico)
         streams_per_server = {}
         total_streams = len(STREAMS)
         
@@ -2654,32 +2654,32 @@ async def main():
                         streams_for_this_server += 1
                 streams_per_server[server_id] = streams_for_this_server
         except Exception as calc_err:
-            logger.error(f"Erro ao calcular distribuição dinâmica: {calc_err}")
-            # Fallback para lógica estática
+            logger.error(f"Erro ao calcular distribuiÃ§Ã£o dinÃ¢mica: {calc_err}")
+            # Fallback para lÃ³gica estÃ¡tica
             for i in range(1, TOTAL_SERVERS + 1):
                 effective_id = EFFECTIVE_SERVER_ID if i == SERVER_ID else i
                 streams_for_this_server = len([s for s in STREAMS if s.get('processed_by_server', 
                                                                           (int(s.get('index', 0)) % TOTAL_SERVERS) == (effective_id - 1))])
                 streams_per_server[i] = streams_for_this_server
             
-        logger.info(f"Distribuição DINÂMICA de streams por servidor: {streams_per_server}")
-        logger.info(f"Este servidor ({SERVER_ID}) processará {streams_per_server.get(SERVER_ID, 0)} de {total_streams} streams")
+        logger.info(f"DistribuiÃ§Ã£o DINÃ‚MICA de streams por servidor: {streams_per_server}")
+        logger.info(f"Este servidor ({SERVER_ID}) processarÃ¡ {streams_per_server.get(SERVER_ID, 0)} de {total_streams} streams")
         
-        # Informar sobre diferenças entre configuração estática e dinâmica
+        # Informar sobre diferenÃ§as entre configuraÃ§Ã£o estÃ¡tica e dinÃ¢mica
         static_streams_for_current = len([s for s in STREAMS if (int(s.get('index', 0)) % TOTAL_SERVERS) == (EFFECTIVE_SERVER_ID - 1)])
         dynamic_streams_for_current = streams_per_server.get(SERVER_ID, 0)
         if static_streams_for_current != dynamic_streams_for_current:
-            logger.info(f"DIFERENÇA DETECTADA: Configuração estática processaria {static_streams_for_current} streams, "
-                       f"distribuição dinâmica processará {dynamic_streams_for_current} streams")
+            logger.info(f"DIFERENÃ‡A DETECTADA: ConfiguraÃ§Ã£o estÃ¡tica processaria {static_streams_for_current} streams, "
+                       f"distribuiÃ§Ã£o dinÃ¢mica processarÃ¡ {dynamic_streams_for_current} streams")
     else:
-        logger.info("Modo de distribuição de carga desativado. Processando todos os streams.")
+        logger.info("Modo de distribuiÃ§Ã£o de carga desativado. Processando todos os streams.")
 
     async def reload_streams():
         global STREAMS
         STREAMS = await load_streams()
         logger.info("Streams recarregados.")
         if 'update_streams_in_db' in globals():
-            update_streams_in_db(STREAMS)  # Atualiza o banco de dados com as rádios do arquivo
+            update_streams_in_db(STREAMS)  # Atualiza o banco de dados com as rÃ¡dios do arquivo
         # Cancelar todas as tarefas existentes
         for task in tasks:
             if not task.done():
@@ -2689,11 +2689,11 @@ async def main():
         # Apenas adicionar tarefas para streams que devem ser processados por este servidor
         for stream in STREAMS:
             task = asyncio.create_task(process_stream(stream, last_songs))
-            register_task(task)  # Registrar para controle de finalização
+            register_task(task)  # Registrar para controle de finalizaÃ§Ã£o
             tasks.append(task)
         logger.info(f"{len(tasks)} tasks criadas para os novos streams.")
 
-    # Iniciar heartbeat IMEDIATAMENTE após carregar streams
+    # Iniciar heartbeat IMEDIATAMENTE apÃ³s carregar streams
     if DISTRIBUTE_LOAD:
         logger.info("Iniciando heartbeat imediato para registro no Redis...")
         try:
@@ -2702,12 +2702,12 @@ async def main():
         except Exception as e:
             logger.error(f"Falha no heartbeat inicial: {e}")
     
-    # Criar e registrar todas as tarefas necessárias
+    # Criar e registrar todas as tarefas necessÃ¡rias
     async def reload_streams_wrapper():
         await reload_streams()
     
     monitor_task = register_task(asyncio.create_task(monitor_streams_file(reload_streams_wrapper)))
-    logger.info(f"Iniciando pool de {NUM_SHAZAM_WORKERS} workers de identificação do Shazam...")
+    logger.info(f"Iniciando pool de {NUM_SHAZAM_WORKERS} workers de identificaÃ§Ã£o do Shazam...")
     shazam_workers = []
     for _ in range(NUM_SHAZAM_WORKERS):
         worker_task = asyncio.create_task(identify_song_shazamio(shazam))
@@ -2719,7 +2719,7 @@ async def main():
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
     
-    # Iniciar watcher de servidores online APÓS heartbeat inicial
+    # Iniciar watcher de servidores online APÃ“S heartbeat inicial
     if DISTRIBUTE_LOAD:
         try:
             if REDIS_URL:
@@ -2746,7 +2746,7 @@ async def main():
         tasks_to_gather = [monitor_task, shutdown_monitor_task, heartbeat_task, server_monitor_task]
         tasks_to_gather.extend(shazam_workers)
     
-    # Adicionar o watcher de servidores online às tarefas se foi iniciado
+    # Adicionar o watcher de servidores online Ã s tarefas se foi iniciado
     if DISTRIBUTE_LOAD and 'online_servers_watcher_task' in locals():
         tasks_to_gather.append(online_servers_watcher_task)
     
@@ -2755,7 +2755,7 @@ async def main():
     
     tasks_to_gather.extend([alert_task, json_sync_task])
     
-    # Adicionar tarefa para verificar a rotação de streams
+    # Adicionar tarefa para verificar a rotaÃ§Ã£o de streams
     if DISTRIBUTE_LOAD and ENABLE_ROTATION:
         rotation_task = register_task(asyncio.create_task(check_rotation_schedule()))
         tasks.append(rotation_task)
@@ -2772,18 +2772,18 @@ async def main():
     except asyncio.CancelledError:
         logger.info("Tarefas principais canceladas devido ao encerramento do programa.")
     except Exception as e:
-        logger.error(f"Erro durante execução principal: {e}")
+        logger.error(f"Erro durante execuÃ§Ã£o principal: {e}")
     finally:
-        logger.info("Finalizando aplicação...")
+        logger.info("Finalizando aplicaÃ§Ã£o...")
 
 def stop_and_restart():
-    """Função para parar e reiniciar o script."""
+    """FunÃ§Ã£o para parar e reiniciar o script."""
     logger.info("Reiniciando o script...")
     os.execv(sys.executable, ['python'] + sys.argv)
 
-# Função de loop para enviar heartbeats periodicamente
+# FunÃ§Ã£o de loop para enviar heartbeats periodicamente
 async def heartbeat_loop():
-    """Envia heartbeats periódicos para o banco de dados."""
+    """Envia heartbeats periÃ³dicos para o banco de dados."""
     while True:
         try:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECS)
@@ -2793,7 +2793,7 @@ async def heartbeat_loop():
 
 # Ponto de entrada
 if __name__ == '__main__':
-    # Configurar temporizador para reinício a cada 30 minutos
+    # Configurar temporizador para reinÃ­cio a cada 30 minutos
     schedule.every(30).minutes.do(stop_and_restart)
 
     # Iniciar thread para verificar o schedule
@@ -2807,7 +2807,7 @@ if __name__ == '__main__':
             time.sleep(60)  # Verificar a cada minuto
         
     schedule_thread = threading.Thread(target=run_schedule)
-    schedule_thread.daemon = True  # Thread será encerrada quando o programa principal terminar
+    schedule_thread.daemon = True  # Thread serÃ¡ encerrada quando o programa principal terminar
     schedule_thread.start()
 
     # Bloco try/except/finally principal corretamente indentado
@@ -2815,21 +2815,21 @@ if __name__ == '__main__':
         # Executar o loop principal
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Programa interrompido pelo usuário (KeyboardInterrupt)")
+        logger.info("Programa interrompido pelo usuÃ¡rio (KeyboardInterrupt)")
         shutdown_event.set() # Aciona o evento de shutdown
     except Exception as e:
-        logger.critical(f"Erro crítico: {e}", exc_info=True)
-        shutdown_event.set() # Aciona o evento de shutdown em caso de erro crítico
+        logger.critical(f"Erro crÃ­tico: {e}", exc_info=True)
+        shutdown_event.set() # Aciona o evento de shutdown em caso de erro crÃ­tico
         
-        # Enviar e-mail de alerta para erro crítico
+        # Enviar e-mail de alerta para erro crÃ­tico
         try:
-            subject = "Erro Crítico no Servidor de Identificação"
-            body = f"O servidor {SERVER_ID} encontrou um erro crítico e precisou ser encerrado.\n\nErro: {e}\n\nPor favor, verifique os logs para mais detalhes."
+            subject = "Erro CrÃ­tico no Servidor de IdentificaÃ§Ã£o"
+            body = f"O servidor {SERVER_ID} encontrou um erro crÃ­tico e precisou ser encerrado.\n\nErro: {e}\n\nPor favor, verifique os logs para mais detalhes."
             send_email_alert(subject, body)
         except Exception as email_err:
-            logger.error(f"Não foi possível enviar e-mail de alerta para erro crítico: {email_err}")
+            logger.error(f"NÃ£o foi possÃ­vel enviar e-mail de alerta para erro crÃ­tico: {email_err}")
     finally:
-        logger.info("Aplicação encerrando...")
+        logger.info("AplicaÃ§Ã£o encerrando...")
         # Garantir que todas as tarefas sejam canceladas no encerramento
         if 'active_tasks' in globals() and active_tasks:
             logger.info(f"Tentando cancelar {len(active_tasks)} tarefas ativas...")
@@ -2842,35 +2842,35 @@ if __name__ == '__main__':
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                logger.info("Nenhum loop de eventos em execução para cancelar tarefas.")
+                logger.info("Nenhum loop de eventos em execuÃ§Ã£o para cancelar tarefas.")
 
             if loop and not loop.is_closed():
                 # Dar tempo para as tarefas serem canceladas
-                # A função monitor_shutdown já aguarda asyncio.wait
+                # A funÃ§Ã£o monitor_shutdown jÃ¡ aguarda asyncio.wait
                 # Apenas esperamos que ela termine (ou timeout)
-                for task in active_tasks: # Indentação correta do for loop
+                for task in active_tasks: # IndentaÃ§Ã£o correta do for loop
                     if not task.done():
                         task.cancel()
                 try: # try/except corretamente indentado
                     # Espera por um tempo curto para o cancelamento ocorrer
-                    # Não usar loop.run_until_complete aqui pois o loop principal já foi encerrado
+                    # NÃ£o usar loop.run_until_complete aqui pois o loop principal jÃ¡ foi encerrado
                     # e pode causar erros
                     # Basta confiar que as tarefas foram sinalizadas para cancelar
                     logger.info("Tarefas sinalizadas para cancelamento.")
                 except asyncio.CancelledError:
-                    logger.info("Cancelamento durante a finalização.")
+                    logger.info("Cancelamento durante a finalizaÃ§Ã£o.")
                 except Exception as e:
                     logger.error(f"Erro ao finalizar tarefas pendentes: {e}")
             else:
-                 logger.info("Loop de eventos não está ativo ou fechado, pulando cancelamento de tarefas.")
+                 logger.info("Loop de eventos nÃ£o estÃ¡ ativo ou fechado, pulando cancelamento de tarefas.")
         
-        # Fechar conexão Redis ao finalizar
+        # Fechar conexÃ£o Redis ao finalizar
         if _redis_client:
             try:
                 asyncio.run(_redis_client.aclose())
-                logger.info("Conexão Redis fechada.")
+                logger.info("ConexÃ£o Redis fechada.")
             except Exception as redis_close_err:
-                logger.error(f"Erro ao fechar conexão Redis: {redis_close_err}")
+                logger.error(f"Erro ao fechar conexÃ£o Redis: {redis_close_err}")
                  
-        logger.info("Aplicação encerrada.")
+        logger.info("AplicaÃ§Ã£o encerrada.")
         sys.exit(0)
