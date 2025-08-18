@@ -9,6 +9,8 @@ from shazamio import Shazam
 from aiohttp import ClientConnectorError, ClientResponseError, ClientTimeout, ClientError
 import asyncio
 import json
+import random
+from typing import Optional
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import schedule
@@ -1189,6 +1191,17 @@ async def process_stream(stream, last_songs):
     stream_index = stream.get('index', 0)
     previous_segment = None
 
+    # Atraso inicial escalonado com jitter para evitar pico simultâneo
+    try:
+        jitter = random.uniform(0.2, 1.0)
+        base_delay = min(5, stream_index % 5)  # distribui em janelas curtas por índice
+        initial_delay = base_delay + jitter
+        if initial_delay > 0:
+            logger.info(f"Atraso inicial escalonado de {initial_delay:.2f}s para stream {name} ({stream_key}).")
+            await asyncio.sleep(initial_delay)
+    except Exception as e:
+        logger.debug(f"Falha ao aplicar atraso inicial escalonado: {e}")
+
     while True:
         logger.info(f"Processando streaming: {name}")
         
@@ -1204,9 +1217,9 @@ async def process_stream(stream, last_songs):
         if not processed_by_server:
             logger.info(
                 f"Stream {name} ({stream_key}) não é processado por este servidor. "
-                f"Verificando novamente (rebalance-aware) em até 60 segundos."
+                f"Aguardando evento de rebalanceamento (sem polling, safety 15min) para reavaliar."
             )
-            await wait_for_rebalance_or_timeout(60)
+            await wait_for_rebalance_or_timeout(None)
             continue
 
         current_segment_path = await capture_stream_segment(
@@ -1236,11 +1249,19 @@ async def process_stream(stream, last_songs):
         await shazam_queue.put((current_segment_path, stream, last_songs))
         await shazam_queue.join()
 
+        # Bypass de espera do próximo ciclo se rebalanceamento ocorreu recentemente
+        if (time.time() - _last_rebalance_ts) < REBALANCE_BYPASS_WINDOW_SECS:
+            logger.info(
+                f"Rebalanceamento recente (<= {REBALANCE_BYPASS_WINDOW_SECS}s). "
+                f"Pulando espera para reavaliar imediatamente o stream {name} ({stream_key})."
+            )
+            continue
+
         logger.info(
-            f"Aguardando até 60 segundos (rebalance-aware) para o próximo ciclo do stream "
+            f"Aguardando até 30 segundos (rebalance-aware) para o próximo ciclo do stream "
             f"{name} ({stream_key})..."
         )
-        await wait_for_rebalance_or_timeout(60)
+        await wait_for_rebalance_or_timeout(30)
 
 def send_email_alert(subject, body):
     """
@@ -1842,11 +1863,15 @@ last_request_time = 0
 _last_dynamic_check = 0
 _cached_online_servers = []
 _cached_active_servers_count = 1
-DYNAMIC_CACHE_TTL = 120  # Cache por 2 minutos
+DYNAMIC_CACHE_TTL = 30  # Cache por 30 segundos (mais responsivo)
 OFFLINE_THRESHOLD_SECS = 600  # Janela para considerar servidor online (manter em sincronia com check_servers_status)
 
 # Evento global de rebalanceamento
 REBALANCE_EVENT = asyncio.Event()
+
+# Janela para bypass imediato pós-rebalanceamento
+REBALANCE_BYPASS_WINDOW_SECS = 10
+_last_rebalance_ts = 0.0
 
 # === INÍCIO: Helpers para Dashboard: VPN, Erros e Streams Ativos ===
 import socket  # Adicionar novamente para garantir disponibilidade
@@ -2089,23 +2114,28 @@ async def get_active_servers_count():
         return TOTAL_SERVERS
 
 # Função auxiliar: aguardar rebalanceamento ou timeout
-async def wait_for_rebalance_or_timeout(timeout_secs: int):
+async def wait_for_rebalance_or_timeout(timeout_secs: Optional[int]):
     """
-    Aguarda até o REBALANCE_EVENT ser disparado ou até atingir timeout.
+    Aguarda o REBALANCE_EVENT. Se timeout_secs for None, aguarda apenas o evento
+    (sem polling) com uma salvaguarda de segurança de 900s para evitar deadlock.
     Não limpa o evento global aqui (limpeza centralizada no watcher).
     """
     try:
-        await asyncio.wait_for(REBALANCE_EVENT.wait(), timeout=timeout_secs)
+        if timeout_secs is None:
+            # Safety net: acorda após 15 minutos caso um evento seja perdido
+            await asyncio.wait_for(REBALANCE_EVENT.wait(), timeout=900)
+        else:
+            await asyncio.wait_for(REBALANCE_EVENT.wait(), timeout=timeout_secs)
     except asyncio.TimeoutError:
         pass
 
 # Watcher de servidores online que dispara o gatilho de rebalanceamento
-async def monitor_online_servers(poll_interval_secs: int = 30):
+async def monitor_online_servers(poll_interval_secs: int = 15):
     """
     Observa a lista de servidores online ignorando cache, e dispara rebalanceamento
-    quando detectar mudanças (entrada/saída de servidores).
+    APENAS quando detectar novos servidores (não quando servidores saem).
     """
-    global _last_known_online_servers, _cached_active_servers_count, _cached_online_servers, _last_dynamic_check
+    global _last_known_online_servers, _cached_active_servers_count, _cached_online_servers, _last_dynamic_check, _last_rebalance_ts
     # Inicializar estado conhecido
     try:
         _last_known_online_servers = await get_online_server_ids(force_refresh=True)
@@ -2114,19 +2144,28 @@ async def monitor_online_servers(poll_interval_secs: int = 30):
     
     logger.info(
         f"monitor_online_servers: inicial online={_last_known_online_servers} "
-        f"(poll={poll_interval_secs}s)"
+        f"(poll={poll_interval_secs}s) - Modo: apenas novos servidores disparam rebalanceamento"
     )
     
     while True:
         try:
             online_now = await get_online_server_ids(force_refresh=True)
-            if set(online_now) != set(_last_known_online_servers):
+            
+            # Verificar se há NOVOS servidores (não apenas mudanças)
+            set_before = set(_last_known_online_servers)
+            set_now = set(online_now)
+            new_servers = set_now - set_before
+            removed_servers = set_before - set_now
+            
+            if new_servers:
                 logger.info(
-                    f"Rebalanceamento: mudança detectada na lista de servidores online. "
+                    f"Rebalanceamento: NOVOS servidores detectados: {list(new_servers)}. "
                     f"antes={_last_known_online_servers} agora={online_now}"
                 )
                 # Atualiza caches imediata/explicitamente
                 _cached_active_servers_count = max(1, len(online_now))
+                # Registrar timestamp do rebalanceamento para bypass imediato
+                _last_rebalance_ts = time.time()
                 # Dispara o evento para acordar as corrotinas
                 REBALANCE_EVENT.set()
                 
@@ -2140,6 +2179,18 @@ async def monitor_online_servers(poll_interval_secs: int = 30):
                 await asyncio.sleep(1)
                 # Limpar o evento para permitir novos rebalanceamentos futuros
                 REBALANCE_EVENT.clear()
+            elif removed_servers:
+                logger.info(
+                    f"Servidores offline detectados: {list(removed_servers)}. "
+                    f"antes={_last_known_online_servers} agora={online_now}. "
+                    f"SEM rebalanceamento (apenas quando novos servidores se adicionam)."
+                )
+                # Apenas atualizar o estado conhecido sem disparar rebalanceamento
+                _last_known_online_servers = online_now
+                _cached_active_servers_count = max(1, len(online_now))
+                _cached_online_servers = online_now
+                _last_dynamic_check = time.time()
+                
         except Exception as e:
             logger.error(f"monitor_online_servers: erro ao monitorar servidores online: {e}")
         
@@ -2305,8 +2356,8 @@ async def main():
     # Iniciar watcher de servidores online se distribuição dinâmica estiver ativada
     if DISTRIBUTE_LOAD:
         try:
-            online_servers_watcher_task = register_task(asyncio.create_task(monitor_online_servers(poll_interval_secs=30)))
-            logger.info("Watcher de servidores online iniciado (poll=30s).")
+            online_servers_watcher_task = register_task(asyncio.create_task(monitor_online_servers(poll_interval_secs=15)))
+            logger.info("Watcher de servidores online iniciado (poll=15s).")
         except Exception as e:
             logger.error(f"Falha ao iniciar watcher de servidores online: {e}")
     
@@ -2338,7 +2389,23 @@ async def main():
         tasks.append(stream_task)
     
     tasks_to_gather.extend(tasks)
-    
+
+    # Enviar heartbeat inicial e sinalizar rebalanceamento local antes de iniciar processamento dos streams
+    try:
+        await send_heartbeat()
+        logger.info("Heartbeat inicial enviado antes de iniciar tarefas de stream.")
+    except Exception as e:
+        logger.error(f"Falha ao enviar heartbeat inicial: {e}")
+    # Definir janela de bypass e acordar tasks recém-criadas
+    try:
+        global _last_rebalance_ts
+        _last_rebalance_ts = time.time()
+        REBALANCE_EVENT.set()
+        await asyncio.sleep(1)
+    finally:
+        if REBALANCE_EVENT.is_set():
+            REBALANCE_EVENT.clear()
+
     try:
         await asyncio.gather(*tasks_to_gather, return_exceptions=True)
     except asyncio.CancelledError:
