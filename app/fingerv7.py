@@ -318,10 +318,46 @@ def check_log_table():
             logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
             return False
 
+        # Habilitar autocommit para evitar transações longas em DDL e definir timeouts
+        try:
+            conn.autocommit = True
+            logger.debug("Autocommit habilitado para a verificação/DDL da tabela de logs.")
+        except Exception as e:
+            logger.warning(f"Não foi possível habilitar autocommit: {e}")
+
+        # Definir timeout para as operações SQL
         with conn.cursor() as cursor:
+            # Timeouts de sessão para evitar bloqueios por locks e sessões ociosas
+            try:
+                logger.debug("Configurando lock_timeout para 5s...")
+                cursor.execute("SET lock_timeout = '5s'")
+                logger.debug("lock_timeout configurado com sucesso.")
+            except Exception as e:
+                logger.error(f"Erro ao configurar lock_timeout: {e}")
+            try:
+                logger.debug("Configurando idle_in_transaction_session_timeout para 10s...")
+                cursor.execute("SET idle_in_transaction_session_timeout = '10s'")
+                logger.debug("idle_in_transaction_session_timeout configurado com sucesso.")
+            except Exception as e:
+                logger.error(f"Erro ao configurar idle_in_transaction_session_timeout: {e}")
+
+            # Configurar timeout para statements SQL
+            try:
+                logger.debug("Configurando statement_timeout para 10s...")
+                cursor.execute("SET statement_timeout = '10s'")  # Timeout de 10 segundos para statements SQL
+                logger.debug("statement_timeout configurado com sucesso.")
+            except Exception as e:
+                logger.error(f"Erro ao configurar statement_timeout: {e}")
+                
             # Verificar se a tabela existe
-            cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
-            table_exists = cursor.fetchone()[0]
+            try:
+                logger.debug(f"Verificando existência da tabela '{DB_TABLE_NAME}' no information_schema...")
+                cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
+                table_exists = cursor.fetchone()[0]
+                logger.debug(f"Resultado da verificação: tabela '{DB_TABLE_NAME}' existe = {table_exists}")
+            except Exception as e:
+                logger.error(f"Erro ao verificar existência da tabela: {e}")
+                return False
 
             if not table_exists:
                 logger.error(f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!")
@@ -567,7 +603,31 @@ def fetch_streams_from_db():
             logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
             return None
         
+        # Habilitar autocommit e configurar timeouts de sessão
+        try:
+            conn.autocommit = True
+            logger.debug("Autocommit habilitado para leitura de streams.")
+        except Exception as e:
+            logger.warning(f"Não foi possível habilitar autocommit (streams): {e}")
+
         with conn.cursor() as cursor:
+            # Configurar timeouts de sessão para evitar bloqueios
+            try:
+                logger.debug("[streams] SET lock_timeout=5s")
+                cursor.execute("SET lock_timeout = '5s'")
+            except Exception as e:
+                logger.error(f"[streams] Erro ao configurar lock_timeout: {e}")
+            try:
+                logger.debug("[streams] SET idle_in_transaction_session_timeout=10s")
+                cursor.execute("SET idle_in_transaction_session_timeout = '10s'")
+            except Exception as e:
+                logger.error(f"[streams] Erro ao configurar idle_in_transaction_session_timeout: {e}")
+            try:
+                logger.debug("[streams] SET statement_timeout=10s")
+                cursor.execute("SET statement_timeout = '10s'")
+            except Exception as e:
+                logger.error(f"[streams] Erro ao configurar statement_timeout: {e}")
+
             # Verificar se a tabela streams existe
             cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
             table_exists = cursor.fetchone()[0]
@@ -2249,9 +2309,12 @@ async def main():
     
     # Verificar se a tabela de logs existe e criar se necessário (executar em thread)
     try:
-        table_ok = await asyncio.to_thread(check_log_table)
+        logger.debug("Iniciando verificação da tabela de logs em thread com timeout de 15s...")
+        table_ok = await asyncio.wait_for(asyncio.to_thread(check_log_table), timeout=15)
         if not table_ok:
             logger.warning("A verificação/criação da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros.")
+    except asyncio.TimeoutError:
+        logger.error("Timeout na verificação da tabela de logs após 15s; prosseguindo sem bloquear o início dos streams.")
     except Exception as e_check_table:
          logger.error(f"Erro ao executar check_log_table em thread: {e_check_table}")
          logger.warning("Prosseguindo sem verificação da tabela de logs.")
