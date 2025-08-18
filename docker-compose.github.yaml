@@ -54,6 +54,11 @@ services:
       - SEGMENTS_DIR=/app/segments
       - PYTHONUNBUFFERED=1
       - TZ=${TZ:-America/Sao_Paulo}
+      # --- Redis (Heartbeats em tempo real) ---
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_CHANNEL=${REDIS_CHANNEL:-smf:server_heartbeats}
+      - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-smf:server}
+      - REDIS_HEARTBEAT_TTL_SECS=${REDIS_HEARTBEAT_TTL_SECS:-60}
       # Adicione outras variáveis que seu fingerv7.py precise ler
     restart: unless-stopped
 
