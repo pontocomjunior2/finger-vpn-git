@@ -552,7 +552,26 @@ def calculate_rotation_offset():
     return offset
 
 # Função para carregar os streamings do banco de dados PostgreSQL
-def load_streams():
+async def fetch_streams_from_db():
+    """
+    Busca a configuração dos streams do banco de dados.
+    """
+    conn = await get_db_connection()
+    if conn:
+        try:
+            # Assumindo que a tabela se chama 'streams'
+            rows = await conn.fetch('SELECT id, name, url, metadata FROM streams')
+            streams = [dict(row) for row in rows]
+            logger.info(f"Encontrados {len(streams)} streams no banco de dados.")
+            return streams
+        except asyncpg.exceptions.PostgresError as e:
+            logger.error(f"Erro ao buscar streams do banco de dados: {e}")
+            return None
+        finally:
+            await conn.close()
+    return None
+
+async def load_streams():
     """
     Carrega a configuração dos streams. Prioriza o banco de dados,
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
@@ -1251,7 +1270,7 @@ async def check_rotation_schedule():
             
             # Recarregar streams com a nova rotação
             global STREAMS
-            STREAMS = load_streams()
+            STREAMS = await load_streams()
             logger.info(f"Streams recarregados devido à rotação. Agora processando {len(STREAMS)} streams.")
             
             # Atualizar as tarefas (isso será chamado na função main)
@@ -1675,7 +1694,7 @@ async def main():
     shazam = Shazam()
     
     global STREAMS
-    STREAMS = load_streams()
+    STREAMS = await load_streams()
     
     if not STREAMS:
         logger.error("Não foi possível carregar os streamings. Verifique a configuração do banco de dados ou o arquivo JSON local.")
@@ -1709,9 +1728,9 @@ async def main():
     else:
         logger.info("Modo de distribuição de carga desativado. Processando todos os streams.")
 
-    def reload_streams():
+    async def reload_streams():
         global STREAMS
-        STREAMS = load_streams()
+        STREAMS = await load_streams()
         logger.info("Streams recarregados.")
         if 'update_streams_in_db' in globals():
             update_streams_in_db(STREAMS)  # Atualiza o banco de dados com as rádios do arquivo
