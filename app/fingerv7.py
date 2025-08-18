@@ -551,19 +551,131 @@ def calculate_rotation_offset():
     logger.info(f"Calculado deslocamento de rotação: {offset} (após {rotations} rotações)")
     return offset
 
+# Função para buscar streams do banco de dados PostgreSQL
+def fetch_streams_from_db():
+    """
+    Busca streams do banco de dados PostgreSQL.
+    Retorna lista de streams processados ou None se não conseguir buscar do DB.
+    """
+    logger.debug("Iniciando a função fetch_streams_from_db()")
+    logger.info(f"Configurações de distribuição: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}, DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, ENABLE_ROTATION={ENABLE_ROTATION}")
+    logger.info(f"Conexão BD: HOST={DB_HOST}, DB={DB_NAME}, USER={DB_USER}, PORT={DB_PORT}")
+    
+    try:
+        conn = connect_db()
+        if not conn:
+            logger.error("Não foi possível conectar ao banco de dados.")
+            return None
+        
+        try:
+            with conn.cursor() as cursor:
+                # Testar se a tabela existe antes de consultar
+                cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
+                table_exists = cursor.fetchone()[0]
+                
+                if not table_exists:
+                    logger.error("A tabela 'streams' não existe no banco de dados!")
+                    # Tentar encontrar tabelas disponíveis
+                    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tabelas disponíveis no banco: {tables}")
+                    return None
+                
+                cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
+                rows = cursor.fetchall()
+                
+                streams = []
+                for row in rows:
+                    stream = {
+                        "url": row[0],
+                        "name": row[1],
+                        "sheet": row[2],
+                        "cidade": row[3],
+                        "estado": row[4],
+                        "regiao": row[5],
+                        "segmento": row[6],
+                        "index": str(row[7])
+                    }
+                    streams.append(stream)
+                    
+                logger.info(f"{len(streams)} streams brutos carregados do banco de dados.")
+                
+                # Aplicar distribuição de carga se ativada
+                if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
+                    server_id = SERVER_ID  # Já é um inteiro, não precisa converter
+                    if server_id < 1 or server_id > TOTAL_SERVERS:
+                        logger.warning(f"SERVER_ID inválido ({server_id}). Deve estar entre 1 e {TOTAL_SERVERS}. Usando todos os streams.")
+                    else:
+                        # Calcular o deslocamento de rotação
+                        rotation_offset = calculate_rotation_offset()
+                        
+                        # Aplicar o deslocamento ao SERVER_ID para implementar a rotação
+                        effective_server_id = ((server_id - 1 + rotation_offset) % TOTAL_SERVERS) + 1
+                        
+                        if ENABLE_ROTATION:
+                            logger.info(f"Rotação ativada: SERVER_ID original {server_id}, SERVER_ID efetivo {effective_server_id}")
+                        
+                        # Distribuir streams entre servidores com o SERVER_ID efetivo
+                        distributed_streams = []
+                        
+                        for i, stream in enumerate(streams):
+                            stream_index = int(stream['index'])
+                            # Determinar qual servidor deve processar este stream
+                            target_server = (stream_index % TOTAL_SERVERS) + 1
+                            # Ajustar com base na rotação
+                            target_server = ((target_server - 1 + rotation_offset) % TOTAL_SERVERS) + 1
+                            
+                            if target_server == effective_server_id:
+                                # Este servidor deve processar este stream
+                                stream['processed_by_server'] = True
+                                distributed_streams.append(stream)
+                            else:
+                                stream['processed_by_server'] = False
+                        
+                        logger.info(f"Distribuição de carga ativada: Servidor {server_id}/{TOTAL_SERVERS} " +
+                                   f"(efetivo: {effective_server_id}) - " +
+                                   f"Processando {len(distributed_streams)}/{len(streams)} streams")
+                        streams = distributed_streams
+                
+                conn.close()
+                logger.info(f"{len(streams)} streams carregados e processados com sucesso do banco de dados.")
+                return streams
+                
+        except Exception as e:
+            logger.error(f"Erro ao executar consulta no banco de dados: {e}")
+            conn.close()
+            return None
+            
+    except Exception as e:
+        logger.error(f"Erro ao carregar streams do banco de dados: {e}")
+        return None
+
+# Função para salvar streams no arquivo JSON local
+def save_streams_to_json(streams):
+    """
+    Salva lista de streams no arquivo JSON local.
+    """
+    logger.debug("Iniciando a função save_streams_to_json()")
+    try:
+        with open(STREAMS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(streams, f, ensure_ascii=False, indent=2)
+        logger.info(f"Arquivo JSON local atualizado com {len(streams)} streams.")
+    except Exception as e:
+        logger.error(f"Erro ao salvar arquivo JSON local: {e}")
+
 # Função para carregar os streamings do banco de dados PostgreSQL
 def load_streams():
     """
     Carrega a configuração dos streams. Prioriza o banco de dados,
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
-    Retorna a lista de streams e um booleano indicando se carregou do DB.
+    Retorna apenas a lista de streams (não tupla).
     """
     streams_from_db = fetch_streams_from_db()  # Tenta buscar do DB primeiro
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
         save_streams_to_json(streams_from_db)  # Atualiza o JSON local como backup
-        return streams_from_db, True  # Retorna streams do DB e True
+        return streams_from_db
 
     # Fallback: Tentar carregar do JSON local se o DB falhar
     logger.warning(
@@ -613,37 +725,37 @@ def load_streams():
                     logger.error(
                         f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
                     )
-                    return [], False
+                    return []
 
                 logger.info(
                     f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback."
                 )
-                return valid_streams, False  # Retorna streams do JSON e False
+                return valid_streams
             else:
                 logger.error(
                     f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida."
                 )
-                return [], False  # Retorna lista vazia e False
+                return []
 
         except (IOError, json.JSONDecodeError) as e:
             logger.error(
                 f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}",
                 exc_info=True,
             )
-            return [], False  # Retorna lista vazia e False
+            return []
         except Exception as e:
             logger.error(
                 f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}",
                 exc_info=True,
             )
-            return [], False
+            return []
     else:
         logger.critical(
             f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. "
             f"Não há fonte de streams disponível."
         )
         # send_email_alert("Erro Crítico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} não existe.")
-        return [], False  # Retorna lista vazia e False
+        return []
 
 # Função para carregar o estado das últimas músicas identificadas
 def load_last_songs():
