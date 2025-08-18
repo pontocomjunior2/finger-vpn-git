@@ -554,22 +554,44 @@ def calculate_rotation_offset():
 # Função para carregar os streamings do banco de dados PostgreSQL
 async def fetch_streams_from_db():
     """
-    Busca a configuração dos streams do banco de dados.
+    Busca a configuração dos streams do banco de dados usando psycopg2 de forma
+    assíncrona via threads, evitando bloquear o loop de eventos.
+    Retorna uma lista de dicionários ou None em caso de falha.
     """
-    conn = await get_db_connection()
-    if conn:
+    # Validar configuração do banco
+    if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]):
+        logger.warning(
+            "Configurações de banco de dados ausentes/incompletas; "
+            "pulando carregamento de streams via DB."
+        )
+        return None
+
+    # Obter conexão (função síncrona) em thread
+    conn = await asyncio.to_thread(connect_db)
+    if not conn:
+        return None
+
+    try:
+        def _fetch_streams_sync():
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SELECT id, name, url, metadata FROM streams")
+                return cur.fetchall()
+
+        rows = await asyncio.to_thread(_fetch_streams_sync)
+        streams = [dict(row) for row in rows] if rows else []
+        logger.info(f"Encontrados {len(streams)} streams no banco de dados.")
+        return streams
+    except psycopg2.Error as e:
+        logger.error(f"Erro ao buscar streams do banco de dados (psycopg2): {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Erro inesperado ao buscar streams do banco de dados: {e}")
+        return None
+    finally:
         try:
-            # Assumindo que a tabela se chama 'streams'
-            rows = await conn.fetch('SELECT id, name, url, metadata FROM streams')
-            streams = [dict(row) for row in rows]
-            logger.info(f"Encontrados {len(streams)} streams no banco de dados.")
-            return streams
-        except asyncpg.exceptions.PostgresError as e:
-            logger.error(f"Erro ao buscar streams do banco de dados: {e}")
-            return None
-        finally:
-            await conn.close()
-    return None
+            await asyncio.to_thread(conn.close)
+        except Exception as e:
+            logger.debug(f"Falha ao fechar conexão do banco: {e}")
 
 def save_streams_to_json(streams_data):
     """Salva a lista de streams em um arquivo JSON."""
@@ -1034,7 +1056,7 @@ async def insert_data_to_db(entry_base, now_tz):
             logger.info("Enviando alerta de e-mail por falha na inserção (não duplicata)")
             subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
             body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Verifique os logs.\nDados: {entry_base}"
-            send_email_alert(subject, body)
+            logger.warning(f"[ALERTA SUPRIMIDO] {subject}: {body}")
 
     except Exception as e:
         # Erros na pré-verificação de duplicidade ou ao chamar/esperar o to_thread
@@ -1248,14 +1270,15 @@ async def schedule_json_sync():
         await asyncio.sleep(3600)  # Aguarda 1 hora (3600 segundos) antes da próxima sincronização
 
 # Função para verificar se é hora de recarregar os streams devido à rotação
-async def check_rotation_schedule():
+async def check_rotation_schedule(reload_streams_cb):
     if not (DISTRIBUTE_LOAD and ENABLE_ROTATION):
-        return False  # Não fazer nada se a rotação não estiver ativada
+        logger.info("Rotação desativada. Tarefa de rotação não será executada.")
+        return
     
     logger.info("Iniciando monitoramento de rotação de streams")
     last_rotation_offset = calculate_rotation_offset()
     
-    while True:
+    while not shutdown_event.is_set():
         await asyncio.sleep(60)  # Verificar a cada minuto
         current_rotation_offset = calculate_rotation_offset()
         
@@ -1263,15 +1286,14 @@ async def check_rotation_schedule():
             logger.info(f"Detectada mudança na rotação: {last_rotation_offset} -> {current_rotation_offset}")
             last_rotation_offset = current_rotation_offset
             
-            # Recarregar streams com a nova rotação
-            global STREAMS
-            STREAMS = await load_streams()
-            logger.info(f"Streams recarregados devido à rotação. Agora processando {len(STREAMS)} streams.")
-            
-            # Atualizar as tarefas (isso será chamado na função main)
-            return True
-        
-        return False
+            # Recarregar streams com a nova rotação via callback
+            try:
+                await reload_streams_cb()
+                logger.info("Streams recarregados devido à rotação.")
+            except Exception as e:
+                logger.error(f"Erro ao recarregar streams após rotação: {e}", exc_info=True)
+    
+    logger.info("Monitoramento de rotação encerrado.")
 
 # Função worker para identificar música usando Shazamio (MODIFICADA)
 async def identify_song_shazamio(shazam):
@@ -1638,8 +1660,7 @@ O que fazer:
 
 Este é um alerta automático enviado pelo servidor {SERVER_ID}.
 """
-                send_email_alert(subject, body)
-                logger.info(f"Alerta de servidores offline enviado por e-mail")
+                logger.warning(f"[ALERTA SUPRIMIDO] {subject}: {body}")
             
             if online_servers:
                 logger.info(f"Servidores online: {len(online_servers)} de {TOTAL_SERVERS}")
@@ -1689,7 +1710,7 @@ async def main():
     shazam = Shazam()
     
     global STREAMS
-    STREAMS = await load_streams()
+    STREAMS, _ = await load_streams()
     
     if not STREAMS:
         logger.error("Não foi possível carregar os streamings. Verifique a configuração do banco de dados ou o arquivo JSON local.")
@@ -1725,7 +1746,7 @@ async def main():
 
     async def reload_streams():
         global STREAMS
-        STREAMS = await load_streams()
+        STREAMS, _ = await load_streams()
         logger.info("Streams recarregados.")
         if 'update_streams_in_db' in globals():
             update_streams_in_db(STREAMS)  # Atualiza o banco de dados com as rádios do arquivo
@@ -1766,8 +1787,8 @@ async def main():
     
     # Adicionar tarefa para verificar a rotação de streams
     if DISTRIBUTE_LOAD and ENABLE_ROTATION:
-        rotation_task = register_task(asyncio.create_task(check_rotation_schedule()))
-        tasks.append(rotation_task)
+        rotation_task = register_task(asyncio.create_task(check_rotation_schedule(reload_streams)))
+        tasks_to_gather.append(rotation_task)
     
     # Adicionar tarefas para processar os streams
     for stream in STREAMS:
@@ -1836,7 +1857,7 @@ if __name__ == '__main__':
         try:
             subject = "Erro Crítico no Servidor de Identificação"
             body = f"O servidor {SERVER_ID} encontrou um erro crítico e precisou ser encerrado.\\n\\nErro: {e}\\n\\nPor favor, verifique os logs para mais detalhes."
-            send_email_alert(subject, body)
+            logger.warning(f"[ALERTA SUPRIMIDO] {subject}: {body}")
         except Exception as email_err:
             logger.error(f"Não foi possível enviar e-mail de alerta para erro crítico: {email_err}")
     finally:
