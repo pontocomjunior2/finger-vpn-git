@@ -571,13 +571,22 @@ async def fetch_streams_from_db():
             await conn.close()
     return None
 
+def save_streams_to_json(streams_data):
+    """Salva a lista de streams em um arquivo JSON."""
+    try:
+        with open(STREAMS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(streams_data, f, indent=4)
+        logger.info(f"Streams salvos com sucesso no arquivo de backup: {STREAMS_FILE}")
+    except IOError as e:
+        logger.error(f"Erro ao salvar streams no arquivo JSON {STREAMS_FILE}: {e}")
+
 async def load_streams():
     """
     Carrega a configuração dos streams. Prioriza o banco de dados,
     usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
     Retorna a lista de streams e um booleano indicando se carregou do DB.
     """
-    streams_from_db = fetch_streams_from_db() # Tenta buscar do DB primeiro
+    streams_from_db = await fetch_streams_from_db() # Tenta buscar do DB primeiro
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
@@ -1147,20 +1156,7 @@ async def process_stream(stream, last_songs):
         logger.info(f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})...")
         await asyncio.sleep(60)  # Intervalo de captura de segmentos
 
-def send_email_alert(subject, body):
-    message = MIMEMultipart()
-    message["From"] = ALERT_EMAIL
-    message["To"] = RECIPIENT_EMAIL
-    message["Subject"] = subject
-    message.attach(MIMEText(body, "plain"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(ALERT_EMAIL, ALERT_EMAIL_PASSWORD)
-            server.send_message(message)
-        logger.info("E-mail de alerta enviado com sucesso.")
-    except Exception as e:
-        logger.error(f"Erro ao enviar e-mail de alerta: {e}")
 
 async def check_and_alert_persistent_errors():
     while True:
@@ -1173,8 +1169,7 @@ async def check_and_alert_persistent_errors():
                 body += f"- {stream}\n"
             body += "\nPor favor, verifique esses streams o mais rápido possível."
             
-            send_email_alert(subject, body)
-            logger.warning(f"Alerta enviado para erros persistentes: {persistent_errors}")
+
 
 # Função para sincronizar o arquivo JSON local com o banco de dados
 async def sync_json_with_db():
