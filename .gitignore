@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+
+# Env files
+.env
+.env.*
+
+# Next.js / Node (dashboard-web)
+app/dashboard-web/node_modules/
+app/dashboard-web/.next/
+app/dashboard-web/out/
+app/dashboard-web/.turbo/
+app/dashboard-web/.vercel/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# IDE / Tools
+.idea/
+.vscode/
+.cache/
+
+# Project specifics
+app/streams.json
