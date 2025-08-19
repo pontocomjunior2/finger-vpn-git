@@ -284,5 +284,12 @@ class DatabasePool:
             except Exception as e:
                 logger.error(f"Erro ao fechar pool: {e}")
 
-# Instância global do pool
-db_pool = DatabasePool()
+# Instância global do pool (lazy initialization)
+db_pool = None
+
+def get_db_pool():
+    """Retorna a instância do pool, criando-a se necessário"""
+    global db_pool
+    if db_pool is None:
+        db_pool = DatabasePool()
+    return db_pool

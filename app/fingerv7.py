@@ -34,7 +34,7 @@ except ImportError:
     # sys.exit(1)
 import psycopg2.errors # Para capturar UniqueViolation
 import psycopg2.extras # Para DictCursor
-from db_pool import db_pool
+from db_pool import get_db_pool
 from async_queue import insert_queue
 
 # Definir diretório de segmentos global
@@ -312,7 +312,7 @@ def check_log_table():
     logger.info(f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados...")
     conn = None
     try:
-        conn = db_pool.get_connection_sync()
+        conn = get_db_pool().get_connection_sync()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
             return False
@@ -449,7 +449,7 @@ CREATE TABLE {} (
         return False
     finally:
         if conn:
-            db_pool.putconn(conn)
+            get_db_pool().putconn(conn)
 
 # Fila para enviar ao Shazamio (RESTAURADO)
 shazam_queue = asyncio.Queue()
@@ -498,7 +498,7 @@ connection_tracker = StreamConnectionTracker() # Instanciar o tracker (RESTAURAD
 def connect_db():
     """
     Função de compatibilidade que usa o pool de conexões.
-    DEPRECATED: Use db_pool.get_connection() diretamente para novos códigos.
+    DEPRECATED: Use get_db_pool().get_connection() diretamente para novos códigos.
     """
     try:
         # Validar se as configurações essenciais existem
@@ -517,7 +517,7 @@ def connect_db():
         logger.debug(f"Obtendo conexão do pool para PostgreSQL: {DB_HOST}:{DB_PORT}/{DB_NAME}")
         
         # Retornar uma conexão do pool (sem context manager para compatibilidade)
-        conn = db_pool.pool.getconn()
+        conn = get_db_pool().pool.getconn()
         if conn:
             # Testar se a conexão está válida
             with conn.cursor() as cursor:
@@ -545,7 +545,7 @@ def close_db_connection(conn):
     """
     if conn:
         try:
-            db_pool.pool.putconn(conn)
+            get_db_pool().pool.putconn(conn)
         except Exception as e:
             logger.error(f"Erro ao retornar conexão ao pool: {e}")
 
@@ -572,7 +572,7 @@ def fetch_streams_from_db():
     """
     conn = None
     try:
-        conn = db_pool.get_connection_sync()
+        conn = get_db_pool().get_connection_sync()
         if not conn:
             logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
             return None
@@ -615,7 +615,7 @@ def fetch_streams_from_db():
     finally:
         if conn:
             try:
-                db_pool.putconn(conn)
+                get_db_pool().putconn(conn)
             except Exception as close_err:
                 logger.error(f"Erro ao retornar conexão ao pool: {close_err}")
 
@@ -817,7 +817,7 @@ async def monitor_streams_file(callback):
             if current_time - last_check_time >= check_interval:
                 conn = None
                 try:
-                    conn = db_pool.get_connection_sync()
+                    conn = get_db_pool().get_connection_sync()
                     if conn:
                         with conn.cursor() as cursor:
                             cursor.execute("SELECT COUNT(*) FROM streams")
@@ -830,7 +830,7 @@ async def monitor_streams_file(callback):
                                 callback()
                 finally:
                     if conn:
-                        db_pool.putconn(conn)
+                        get_db_pool().putconn(conn)
                 last_check_time = current_time
             
             await asyncio.sleep(60)  # Verificar a cada minuto se é hora de checar o banco
@@ -1169,7 +1169,7 @@ async def sync_json_with_db():
         def db_operations():
             _conn = None
             try:
-                _conn = db_pool.get_connection_sync()
+                _conn = get_db_pool().get_connection_sync()
                 if not _conn:
                     return None, None # Retorna None para conn e rows se a conexão falhar
                 with _conn.cursor() as _cursor:
@@ -1181,7 +1181,7 @@ async def sync_json_with_db():
                 return None, None # Retorna None para conn e rows em caso de erro
             finally:
                 if _conn:
-                    db_pool.putconn(_conn)
+                    get_db_pool().putconn(_conn)
 
         conn, rows = await asyncio.to_thread(db_operations)
 
@@ -1473,7 +1473,7 @@ async def send_heartbeat():
         def db_heartbeat_operations():
             _conn = None
             try:
-                _conn = db_pool.get_connection_sync()
+                _conn = get_db_pool().get_connection_sync()
                 if not _conn:
                     logger.error("send_heartbeat [thread]: Não foi possível conectar ao DB.")
                     return None # Retorna None se conexão falhar
@@ -1511,7 +1511,7 @@ async def send_heartbeat():
                 return _conn # Retorna a conexão (possivelmente None) para tentar fechar
             finally:
                 if _conn:
-                    db_pool.putconn(_conn)
+                    get_db_pool().putconn(_conn)
 
         # Executar operações DB no thread
         conn = await asyncio.to_thread(db_heartbeat_operations)
@@ -1541,7 +1541,7 @@ async def check_servers_status():
                 _send_alert = False # Flag para indicar se o alerta deve ser enviado
                 
                 try:
-                    _conn = db_pool.get_connection_sync()
+                    _conn = get_db_pool().get_connection_sync()
                     if not _conn:
                         logger.error("check_servers_status [thread]: Não foi possível conectar ao DB.")
                         return _conn, [], [], False # conn, offline, online, send_alert
@@ -1596,7 +1596,7 @@ async def check_servers_status():
                     return _conn, [], [], False
                 finally:
                     if _conn:
-                        db_pool.putconn(_conn) 
+                        get_db_pool().putconn(_conn) 
 
             # Executar operações DB no thread
             conn, offline_servers, online_servers, send_alert = await asyncio.to_thread(db_check_status_operations)
@@ -1657,7 +1657,7 @@ async def main():
     
     # Inicializar a fila assíncrona de inserções
     try:
-        await insert_queue.start()
+        await insert_queue.start_worker()
         logger.info("Fila assíncrona de inserções inicializada com sucesso")
     except Exception as e_queue:
         logger.error(f"Erro ao inicializar fila assíncrona: {e_queue}")
@@ -1832,7 +1832,7 @@ if __name__ == '__main__':
         # Encerrar a fila assíncrona de inserções
         try:
             # Usar asyncio.run() para executar a operação assíncrona no contexto síncrono
-            asyncio.run(insert_queue.stop())
+            asyncio.run(insert_queue.stop_worker())
             logger.info("Fila assíncrona de inserções encerrada com sucesso")
         except Exception as e_queue_stop:
             logger.error(f"Erro ao encerrar fila assíncrona: {e_queue_stop}")

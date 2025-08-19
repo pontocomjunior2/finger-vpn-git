@@ -152,10 +152,10 @@ class AsyncInsertQueue:
         start_time = time.time()
         
         try:
-            from db_pool import db_pool
+            from db_pool import get_db_pool
             
             # Usar pool de conexões para inserção em lote
-            async with db_pool.get_connection() as conn:
+            async with get_db_pool().get_connection() as conn:
                 cursor = conn.cursor()
                 
                 successful_inserts = 0
