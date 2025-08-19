@@ -310,30 +310,25 @@ def _ftp_upload_sync(local_file_path, remote_path):
 # Verificar se a tabela de logs existe (RESTAURADO)
 def check_log_table():
     logger.info(f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados...")
-    conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
-        if not conn:
-            logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
-            return False
+        with get_db_pool().get_connection_sync() as conn:
+            with conn.cursor() as cursor:
+                # Verificar se a tabela existe
+                cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
+                table_exists = cursor.fetchone()[0]
 
-        with conn.cursor() as cursor:
-            # Verificar se a tabela existe
-            cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
-            table_exists = cursor.fetchone()[0]
+                if not table_exists:
+                    logger.error(f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!")
+                    # Listar tabelas disponíveis
+                    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tabelas disponíveis no banco: {tables}")
 
-            if not table_exists:
-                logger.error(f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!")
-                # Listar tabelas disponíveis
-                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
-                tables = [row[0] for row in cursor.fetchall()]
-                logger.info(f"Tabelas disponíveis no banco: {tables}")
-
-                # Criar tabela automaticamente para evitar erros
-                try:
-                    logger.info(f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente...")
-                    # Corrigir a formatação da string SQL multi-linha
-                    create_table_sql = """
+                    # Criar tabela automaticamente para evitar erros
+                    try:
+                        logger.info(f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente...")
+                        # Corrigir a formatação da string SQL multi-linha
+                        create_table_sql = """
 CREATE TABLE {} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
@@ -351,105 +346,102 @@ CREATE TABLE {} (
     identified_by VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                    """.format(DB_TABLE_NAME) # Usar .format() para inserir o nome da tabela
-                    cursor.execute(create_table_sql)
-                    conn.commit()
-                    logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
-                    return True
-                except Exception as e:
-                    logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
-                    logger.info("Considere criar a tabela manualmente com o seguinte comando SQL:")
-                    # logger.info(create_table_sql) # Don't log potentially large SQL
-                    return False
-            else:
-                # Verificar as colunas da tabela (garantir indentação correta aqui)
-                cursor.execute(f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'")
-                columns_info = {row[0].lower(): {'type': row[1], 'default': row[2]} for row in cursor.fetchall()}
-                logger.info(f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}")
-                columns = list(columns_info.keys())
-
-                # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
-                col_identified_by = 'identified_by'
-
-                if col_identified_by in columns:
-                    # (Lógica interna do if permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do if col_identified_by...)
-                    current_info = columns_info[col_identified_by]
-                    needs_alter = False
-                    alter_parts = []
-                    if not current_info['type'].startswith('character varying') or '(10)' not in current_info['type']:
-                        alter_parts.append(f"ALTER COLUMN {col_identified_by} TYPE VARCHAR(10)")
-                        needs_alter = True
-                    if current_info['default'] is not None:
-                         if 'null::' not in str(current_info['default']).lower():
-                             alter_parts.append(f"ALTER COLUMN {col_identified_by} DROP DEFAULT")
-                             needs_alter = True
-
-                    if needs_alter:
-                        try:
-                            alter_sql = f"ALTER TABLE {DB_TABLE_NAME} { ', '.join(alter_parts) };"
-                            logger.info(f"Alterando coluna '{col_identified_by}': {alter_sql}")
-                            cursor.execute(alter_sql)
-                            conn.commit()
-                            logger.info(f"Coluna '{col_identified_by}' alterada com sucesso.")
-                        except Exception as e:
-                            logger.error(f"Erro ao alterar coluna '{col_identified_by}': {e}")
-                            conn.rollback()
+                        """.format(DB_TABLE_NAME) # Usar .format() para inserir o nome da tabela
+                        cursor.execute(create_table_sql)
+                        conn.commit()
+                        logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
+                        logger.info("Considere criar a tabela manualmente com o seguinte comando SQL:")
+                        # logger.info(create_table_sql) # Don't log potentially large SQL
+                        return False
                 else:
-                     # (Lógica interna do else permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do else para adicionar coluna) ...
+                    # Verificar as colunas da tabela (garantir indentação correta aqui)
+                    cursor.execute(f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'")
+                    columns_info = {row[0].lower(): {'type': row[1], 'default': row[2]} for row in cursor.fetchall()}
+                    logger.info(f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}")
+                    columns = list(columns_info.keys())
+
+                    # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
+                    col_identified_by = 'identified_by'
+
+                    if col_identified_by in columns:
+                        # (Lógica interna do if permanece a mesma, verificar indentação)
+                        # ... (código existente dentro do if col_identified_by...)
+                        current_info = columns_info[col_identified_by]
+                        needs_alter = False
+                        alter_parts = []
+                        if not current_info['type'].startswith('character varying') or '(10)' not in current_info['type']:
+                            alter_parts.append(f"ALTER COLUMN {col_identified_by} TYPE VARCHAR(10)")
+                            needs_alter = True
+                        if current_info['default'] is not None:
+                            if 'null::' not in str(current_info['default']).lower():
+                                alter_parts.append(f"ALTER COLUMN {col_identified_by} DROP DEFAULT")
+                                needs_alter = True
+
+                        if needs_alter:
+                            try:
+                                alter_sql = f"ALTER TABLE {DB_TABLE_NAME} { ', '.join(alter_parts) };"
+                                logger.info(f"Alterando coluna '{col_identified_by}': {alter_sql}")
+                                cursor.execute(alter_sql)
+                                conn.commit()
+                                logger.info(f"Coluna '{col_identified_by}' alterada com sucesso.")
+                            except Exception as e:
+                                logger.error(f"Erro ao alterar coluna '{col_identified_by}': {e}")
+                                conn.rollback()
+                    else:
+                        # (Lógica interna do else permanece a mesma, verificar indentação)
+                        # ... (código existente dentro do else para adicionar coluna) ...
+                        try:
+                            logger.info(f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'...")
+                            add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
+                            cursor.execute(add_sql)
+                            conn.commit()
+                            logger.info(f"Coluna '{col_identified_by}' adicionada com sucesso.")
+                            columns.append(col_identified_by) # Adiciona à lista local
+                        except Exception as e:
+                            logger.error(f"Erro ao adicionar coluna '{col_identified_by}': {e}")
+                            conn.rollback()
+
+                    # --- Remoção da coluna 'identified_by_server' --- (garantir indentação correta)
+                    col_to_remove = 'identified_by_server'
+                    if col_to_remove in columns:
+                        # (Lógica interna do if permanece a mesma, verificar indentação)
+                        # ... (código existente dentro do if col_to_remove...) ...
+                        try:
+                            logger.info(f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'...")
+                            drop_sql = f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
+                            cursor.execute(drop_sql)
+                            conn.commit()
+                            logger.info(f"Coluna '{col_to_remove}' removida com sucesso.")
+                            columns.remove(col_to_remove) # Remove da lista local
+                        except Exception as e:
+                            logger.error(f"Erro ao remover coluna '{col_to_remove}': {e}")
+                            conn.rollback()
+
+                    # Verificar colunas essenciais (garantir indentação correta)
+                    required_columns = ['date', 'time', 'name', 'artist', 'song_title']
+                    missing_columns = [col for col in required_columns if col not in columns]
+
+                    if missing_columns:
+                        logger.error(f"A tabela '{DB_TABLE_NAME}' existe, mas não possui as colunas necessárias: {missing_columns}")
+                        return False # Este return está dentro do else, está correto
+
+                    # Mostrar algumas linhas da tabela para diagnóstico (garantir indentação correta)
                     try:
-                        logger.info(f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'...")
-                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
-                        cursor.execute(add_sql)
-                        conn.commit()
-                        logger.info(f"Coluna '{col_identified_by}' adicionada com sucesso.")
-                        columns.append(col_identified_by) # Adiciona à lista local
+                        cursor.execute(f"SELECT COUNT(*) FROM {DB_TABLE_NAME}")
+                        count = cursor.fetchone()[0]
+                        logger.info(f"A tabela '{DB_TABLE_NAME}' contém {count} registros.")
                     except Exception as e:
-                        logger.error(f"Erro ao adicionar coluna '{col_identified_by}': {e}")
-                        conn.rollback()
+                        logger.error(f"Erro ao consultar dados da tabela '{DB_TABLE_NAME}': {e}")
 
-                # --- Remoção da coluna 'identified_by_server' --- (garantir indentação correta)
-                col_to_remove = 'identified_by_server'
-                if col_to_remove in columns:
-                    # (Lógica interna do if permanece a mesma, verificar indentação)
-                    # ... (código existente dentro do if col_to_remove...) ...
-                    try:
-                        logger.info(f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'...")
-                        drop_sql = f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
-                        cursor.execute(drop_sql)
-                        conn.commit()
-                        logger.info(f"Coluna '{col_to_remove}' removida com sucesso.")
-                        columns.remove(col_to_remove) # Remove da lista local
-                    except Exception as e:
-                        logger.error(f"Erro ao remover coluna '{col_to_remove}': {e}")
-                        conn.rollback()
-
-                # Verificar colunas essenciais (garantir indentação correta)
-                required_columns = ['date', 'time', 'name', 'artist', 'song_title']
-                missing_columns = [col for col in required_columns if col not in columns]
-
-                if missing_columns:
-                    logger.error(f"A tabela '{DB_TABLE_NAME}' existe, mas não possui as colunas necessárias: {missing_columns}")
-                    return False # Este return está dentro do else, está correto
-
-                # Mostrar algumas linhas da tabela para diagnóstico (garantir indentação correta)
-                try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {DB_TABLE_NAME}")
-                    count = cursor.fetchone()[0]
-                    logger.info(f"A tabela '{DB_TABLE_NAME}' contém {count} registros.")
-                except Exception as e:
-                    logger.error(f"Erro ao consultar dados da tabela '{DB_TABLE_NAME}': {e}")
-
-                logger.info(f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!")
-                return True # Este return está dentro do else, está correto
+                    logger.info(f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!")
+                    return True # Este return está dentro do else, está correto
 
     except Exception as e:
         logger.error(f"Erro ao verificar tabela de logs: {e}", exc_info=True) # Add exc_info
         return False
-    finally:
-        if conn:
-            get_db_pool().putconn(conn)
 
 # Fila para enviar ao Shazamio (RESTAURADO)
 shazam_queue = asyncio.Queue()
@@ -570,54 +562,43 @@ def fetch_streams_from_db():
     Busca a configuração dos streams do banco de dados PostgreSQL.
     Retorna a lista de streams ou None em caso de erro.
     """
-    conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
-        if not conn:
-            logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
-            return None
-        
-        with conn.cursor() as cursor:
-            # Verificar se a tabela streams existe
-            cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
-            table_exists = cursor.fetchone()[0]
+        with get_db_pool().get_connection_sync() as conn:
+            with conn.cursor() as cursor:
+                # Verificar se a tabela streams existe
+                cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
+                table_exists = cursor.fetchone()[0]
+                
+                if not table_exists:
+                    logger.error("A tabela 'streams' não existe no banco de dados!")
+                    return None
             
-            if not table_exists:
-                logger.error("A tabela 'streams' não existe no banco de dados!")
-                return None
-            
-            # Buscar todos os streams ordenados por index
-            cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
-            rows = cursor.fetchall()
-            
-            streams = []
-            for row in rows:
-                stream = {
-                    "url": row[0],
-                    "name": row[1],
-                    "sheet": row[2],
-                    "cidade": row[3],
-                    "estado": row[4],
-                    "regiao": row[5],
-                    "segmento": row[6],
-                    "index": str(row[7]),
-                    "id": str(row[7]),  # Adicionar campo 'id' baseado no index
-                    "metadata": {}  # Adicionar campo metadata vazio
-                }
-                streams.append(stream)
-            
-            logger.info(f"Carregados {len(streams)} streams do banco de dados.")
-            return streams
+                # Buscar todos os streams ordenados por index
+                cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
+                rows = cursor.fetchall()
+                
+                streams = []
+                for row in rows:
+                    stream = {
+                        "url": row[0],
+                        "name": row[1],
+                        "sheet": row[2],
+                        "cidade": row[3],
+                        "estado": row[4],
+                        "regiao": row[5],
+                        "segmento": row[6],
+                        "index": str(row[7]),
+                        "id": str(row[7]),  # Adicionar campo 'id' baseado no index
+                        "metadata": {}  # Adicionar campo metadata vazio
+                    }
+                    streams.append(stream)
+                
+                logger.info(f"Carregados {len(streams)} streams do banco de dados.")
+                return streams
             
     except Exception as e:
         logger.error(f"Erro ao buscar streams do banco de dados: {e}")
         return None
-    finally:
-        if conn:
-            try:
-                get_db_pool().putconn(conn)
-            except Exception as close_err:
-                logger.error(f"Erro ao retornar conexão ao pool: {close_err}")
 
 # Função para salvar streams no arquivo JSON local
 def save_streams_to_json(streams):
@@ -815,10 +796,8 @@ async def monitor_streams_file(callback):
             current_time = time.time()
             # Verificar apenas a cada intervalo definido
             if current_time - last_check_time >= check_interval:
-                conn = None
                 try:
-                    conn = get_db_pool().get_connection_sync()
-                    if conn:
+                    with get_db_pool().get_connection_sync() as conn:
                         with conn.cursor() as cursor:
                             cursor.execute("SELECT COUNT(*) FROM streams")
                             current_count = cursor.fetchone()[0]
@@ -828,9 +807,8 @@ async def monitor_streams_file(callback):
                                 logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
                                 last_streams_count = current_count
                                 callback()
-                finally:
-                    if conn:
-                        get_db_pool().putconn(conn)
+                except Exception as db_err:
+                    logger.error(f"Erro ao verificar mudanças no banco de dados: {db_err}")
                 last_check_time = current_time
             
             await asyncio.sleep(60)  # Verificar a cada minuto se é hora de checar o banco
@@ -1167,21 +1145,15 @@ async def sync_json_with_db():
     try:
         # Operações de DB em thread separada
         def db_operations():
-            _conn = None
             try:
-                _conn = get_db_pool().get_connection_sync()
-                if not _conn:
-                    return None, None # Retorna None para conn e rows se a conexão falhar
-                with _conn.cursor() as _cursor:
-                    _cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
-                    _rows = _cursor.fetchall()
-                return None, _rows # Retorna None para conn (já foi devolvida ao pool) e as linhas
+                with get_db_pool().get_connection_sync() as _conn:
+                    with _conn.cursor() as _cursor:
+                        _cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
+                        _rows = _cursor.fetchall()
+                    return None, _rows # Retorna None para conn (já foi devolvida ao pool) e as linhas
             except Exception as db_err:
                 logger.error(f"Erro DB em sync_json_with_db (operações cursor): {db_err}")
                 return None, None # Retorna None para conn e rows em caso de erro
-            finally:
-                if _conn:
-                    get_db_pool().putconn(_conn)
 
         conn, rows = await asyncio.to_thread(db_operations)
 
@@ -1471,50 +1443,39 @@ async def send_heartbeat():
         
         # --- Operações de DB em thread separada --- 
         def db_heartbeat_operations():
-            _conn = None
             try:
-                _conn = get_db_pool().get_connection_sync()
-                if not _conn:
-                    logger.error("send_heartbeat [thread]: Não foi possível conectar ao DB.")
-                    return None # Retorna None se conexão falhar
-
-                with _conn.cursor() as cursor:
-                    # Verificar/Criar tabela
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS server_heartbeats (
-                            server_id INTEGER PRIMARY KEY,
-                            last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                            status VARCHAR(20) DEFAULT 'ONLINE',
-                            ip_address VARCHAR(50),
-                            info JSONB
-                        );
-                    """)
-                    
-                    # Atualizar o heartbeat
-                    cursor.execute("""
-                        INSERT INTO server_heartbeats (server_id, last_heartbeat, status, ip_address, info)
-                        VALUES (%s, NOW(), 'ONLINE', %s, %s::jsonb)
-                        ON CONFLICT (server_id) 
-                        DO UPDATE SET 
-                            last_heartbeat = NOW(),
-                            status = 'ONLINE',
-                            ip_address = EXCLUDED.ip_address,
-                            info = EXCLUDED.info;
-                    """, (SERVER_ID, ip_address, info_json)) # Usa a variável info_json
-                    
-                    _conn.commit()
-                    logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID}")
-                return _conn # Retorna a conexão para ser fechada fora
+                with get_db_pool().get_connection_sync() as conn:
+                    with conn.cursor() as cursor:
+                        # Verificar/Criar tabela
+                        cursor.execute("""
+                            CREATE TABLE IF NOT EXISTS server_heartbeats (
+                                server_id INTEGER PRIMARY KEY,
+                                last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                                status VARCHAR(20) DEFAULT 'ONLINE',
+                                ip_address VARCHAR(50),
+                                info JSONB
+                            );
+                        """)
+                        
+                        # Atualizar o heartbeat
+                        cursor.execute("""
+                            INSERT INTO server_heartbeats (server_id, last_heartbeat, status, ip_address, info)
+                            VALUES (%s, NOW(), 'ONLINE', %s, %s::jsonb)
+                            ON CONFLICT (server_id) 
+                            DO UPDATE SET 
+                                last_heartbeat = NOW(),
+                                status = 'ONLINE',
+                                ip_address = EXCLUDED.ip_address,
+                                info = EXCLUDED.info;
+                        """, (SERVER_ID, ip_address, info_json)) # Usa a variável info_json
+                        
+                        conn.commit()
+                        logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID}")
             except Exception as db_err:
                 logger.error(f"Erro DB em send_heartbeat [thread]: {db_err}")
-                if _conn: _conn.rollback() # Tentar rollback
-                return _conn # Retorna a conexão (possivelmente None) para tentar fechar
-            finally:
-                if _conn:
-                    get_db_pool().putconn(_conn)
 
         # Executar operações DB no thread
-        conn = await asyncio.to_thread(db_heartbeat_operations)
+        await asyncio.to_thread(db_heartbeat_operations)
         
     except Exception as e:
         logger.error(f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}")
@@ -1535,71 +1496,62 @@ async def check_servers_status():
             
             # --- Operações DB em thread separada --- 
             def db_check_status_operations():
-                _conn = None
                 _offline_servers_data = []
                 _online_servers_data = []
                 _send_alert = False # Flag para indicar se o alerta deve ser enviado
                 
                 try:
-                    _conn = get_db_pool().get_connection_sync()
-                    if not _conn:
-                        logger.error("check_servers_status [thread]: Não foi possível conectar ao DB.")
-                        return _conn, [], [], False # conn, offline, online, send_alert
-
-                    with _conn.cursor() as cursor:
-                        # Verificar se a tabela existe
-                        cursor.execute("""
-                            SELECT EXISTS (
-                                SELECT FROM information_schema.tables 
-                                WHERE table_name = 'server_heartbeats'
-                            );
-                        """)
+                    with get_db_pool().get_connection_sync() as conn:
+                        with conn.cursor() as cursor:
+                            # Verificar se a tabela existe
+                            cursor.execute("""
+                                SELECT EXISTS (
+                                    SELECT FROM information_schema.tables 
+                                    WHERE table_name = 'server_heartbeats'
+                                );
+                            """)
+                            
+                            if not cursor.fetchone()[0]:
+                                logger.warning("check_servers_status [thread]: Tabela de heartbeats não existe.")
+                                return [], [], False
+                            
+                            # Marcar servidores offline
+                            cursor.execute("""
+                                UPDATE server_heartbeats
+                                SET status = 'OFFLINE'
+                                WHERE last_heartbeat < NOW() - INTERVAL '%s seconds'
+                                AND status = 'ONLINE'
+                                RETURNING server_id, last_heartbeat;
+                            """, (OFFLINE_THRESHOLD_SECS,))
+                            
+                            _offline_servers_data = cursor.fetchall()
+                            conn.commit() # Commit da atualização de status
+                            
+                            if _offline_servers_data:
+                                server_ids = [row[0] for row in _offline_servers_data]
+                                logger.warning(f"check_servers_status [thread]: Servidores marcados como OFFLINE: {server_ids}")
+                                # Definir flag para enviar alerta se este for o servidor 1
+                                if SERVER_ID == 1:
+                                    _send_alert = True
+                            
+                            # Obter estatísticas dos servidores online
+                            cursor.execute("""
+                                SELECT server_id, last_heartbeat, ip_address, info
+                                FROM server_heartbeats
+                                WHERE status = 'ONLINE'
+                                ORDER BY server_id;
+                            """)
+                            _online_servers_data = cursor.fetchall()
                         
-                        if not cursor.fetchone()[0]:
-                            logger.warning("check_servers_status [thread]: Tabela de heartbeats não existe.")
-                            return _conn, [], [], False
-                        
-                        # Marcar servidores offline
-                        cursor.execute("""
-                            UPDATE server_heartbeats
-                            SET status = 'OFFLINE'
-                            WHERE last_heartbeat < NOW() - INTERVAL '%s seconds'
-                            AND status = 'ONLINE'
-                            RETURNING server_id, last_heartbeat;
-                        """, (OFFLINE_THRESHOLD_SECS,))
-                        
-                        _offline_servers_data = cursor.fetchall()
-                        _conn.commit() # Commit da atualização de status
-                        
-                        if _offline_servers_data:
-                            server_ids = [row[0] for row in _offline_servers_data]
-                            logger.warning(f"check_servers_status [thread]: Servidores marcados como OFFLINE: {server_ids}")
-                            # Definir flag para enviar alerta se este for o servidor 1
-                            if SERVER_ID == 1:
-                                _send_alert = True
-                        
-                        # Obter estatísticas dos servidores online
-                        cursor.execute("""
-                            SELECT server_id, last_heartbeat, ip_address, info
-                            FROM server_heartbeats
-                            WHERE status = 'ONLINE'
-                            ORDER BY server_id;
-                        """)
-                        _online_servers_data = cursor.fetchall()
-                    
-                    return _conn, _offline_servers_data, _online_servers_data, _send_alert
+                        return _offline_servers_data, _online_servers_data, _send_alert
                 
                 except Exception as db_err:
                     logger.error(f"Erro DB em check_servers_status [thread]: {db_err}")
-                    if _conn: _conn.rollback()
-                    # Retorna a conexão para fechar, mas listas vazias e sem alerta
-                    return _conn, [], [], False
-                finally:
-                    if _conn:
-                        get_db_pool().putconn(_conn) 
+                    # Retorna listas vazias e sem alerta
+                    return [], [], False 
 
             # Executar operações DB no thread
-            conn, offline_servers, online_servers, send_alert = await asyncio.to_thread(db_check_status_operations)
+            offline_servers, online_servers, send_alert = await asyncio.to_thread(db_check_status_operations)
 
             # Processar resultados fora do thread
             if offline_servers and send_alert:

@@ -275,6 +275,14 @@ class DatabasePool:
             })
         return stats
     
+    def putconn(self, conn):
+        """Retorna uma conexão ao pool"""
+        if self.pool and conn:
+            try:
+                self.pool.putconn(conn)
+            except Exception as e:
+                logger.error(f"Erro ao retornar conexão ao pool: {e}")
+    
     def close_all(self):
         """Fecha todas as conexões do pool"""
         if self.pool:
