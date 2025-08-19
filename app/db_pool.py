@@ -54,11 +54,22 @@ class PoolMetrics:
             }
 
 class DatabasePool:
-    def __init__(self):
+    def __init__(self, minconn=5, maxconn=20):
+        self.minconn = minconn
+        self.maxconn = maxconn
         self.pool = None
         self.metrics = PoolMetrics()
         self.max_retries = 3
         self.base_delay = 1  # Delay base para retry em segundos
+        self._last_pool_check = time.time()
+        self._pool_stats = {
+            'created_connections': 0,
+            'closed_connections': 0,
+            'connection_errors': 0,
+            'pool_resets': 0,
+            'last_error': None,
+            'last_error_time': None
+        }
         self._create_pool()
     
     def _create_pool(self):
@@ -72,7 +83,8 @@ class DatabasePool:
                     'password': os.getenv('POSTGRES_PASSWORD'),
                     'database': os.getenv('POSTGRES_DB'),
                     'port': os.getenv('POSTGRES_PORT', '5432'),
-                    'connect_timeout': 30,  # Aumentado para 30 segundos
+                    'connect_timeout': 60,  # Aumentado para 60 segundos
+                    'options': '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000'
                     'application_name': f'fingerv7_server_{os.getenv("SERVER_ID", "1")}'
                 }
                 
@@ -83,10 +95,10 @@ class DatabasePool:
                 if missing_configs:
                     raise ValueError(f"Configurações obrigatórias do banco de dados não encontradas: {missing_configs}")
                 
-                # Criar pool com configurações otimizadas para PgBouncer
+                # Criar pool com configurações otimizadas
                 self.pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=2,  # Mínimo de 2 conexões
-                    maxconn=8,  # Máximo de 8 conexões por instância (PgBouncer gerenciará o pool real)
+                    minconn=self.minconn,  # Usar valor configurado no construtor
+                    maxconn=self.maxconn,  # Usar valor configurado no construtor
                     **db_config
                 )
                 
@@ -108,9 +120,11 @@ class DatabasePool:
         try:
             with conn.cursor() as cursor:
                 # Configurar timeouts para evitar bloqueios
-                cursor.execute("SET statement_timeout = '2000'")  # 2 segundos
-                cursor.execute("SET lock_timeout = '1000'")       # 1 segundo
-                cursor.execute("SET idle_in_transaction_session_timeout = '5000'")  # 5 segundos
+                cursor.execute("SET statement_timeout = '30000'")  # 30 segundos
+                cursor.execute("SET lock_timeout = '10000'")       # 10 segundos
+                cursor.execute("SET idle_in_transaction_session_timeout = '30000'")  # 30 segundos
+                # Configurar comportamento de transação
+                cursor.execute("SET application_name = 'fingerv7_worker'")  # Identificar conexão
                 conn.commit()
         except Exception as e:
             logger.warning(f"Erro ao configurar parâmetros de sessão: {e}")
@@ -121,13 +135,19 @@ class DatabasePool:
         """Gerenciador de contexto assíncrono para obter conexão do pool"""
         conn = None
         start_time = time.time()
-        max_retries = 3
-        base_delay = 0.1
+        max_retries = 5  # Aumentado para 5 tentativas
+        base_delay = 0.2  # Delay base aumentado
         
         for attempt in range(max_retries):
             try:
                 # Obter conexão do pool de forma assíncrona
                 import asyncio
+                
+                # Verificar se o pool precisa ser recriado
+                if self.pool is None or self.pool.closed:
+                    logger.warning("Pool fechado ou não inicializado. Recriando...")
+                    self._create_pool()
+                
                 conn = await asyncio.to_thread(self.pool.getconn)
                 
                 if conn:
@@ -145,7 +165,10 @@ class DatabasePool:
                     finally:
                         self.metrics.active_connections -= 1
                         try:
-                            await asyncio.to_thread(self.pool.putconn, conn)
+                            if conn and not conn.closed:
+                                await asyncio.to_thread(self.pool.putconn, conn)
+                            else:
+                                logger.warning("Conexão já fechada, não retornando ao pool")
                         except Exception as e:
                             logger.error(f"Erro ao retornar conexão ao pool: {e}")
                     return
@@ -193,12 +216,26 @@ class DatabasePool:
         """Gerenciador de contexto síncrono para obter conexão do pool"""
         conn = None
         start_time = time.time()
-        max_retries = 3
-        base_delay = 0.1
+        max_retries = 5  # Aumentado para 5 tentativas
+        base_delay = 0.2  # Delay base aumentado
+        connection_timeout = 60  # Timeout em segundos para obtenção de conexão
         
         for attempt in range(max_retries):
             try:
+                # Verificar se o timeout foi excedido
+                if time.time() - start_time > connection_timeout:
+                    logger.error(f"Timeout de {connection_timeout}s excedido ao tentar obter conexão")
+                    self._pool_stats['connection_errors'] += 1
+                    raise psycopg2.OperationalError(f"Timeout de {connection_timeout}s excedido ao tentar obter conexão")
+                
+                # Verificar se o pool precisa ser recriado
+                if self.pool is None or self.pool.closed:
+                    logger.warning("Pool fechado ou não inicializado. Recriando...")
+                    self._create_pool()
+                    self._pool_stats['pool_resets'] += 1
+                    
                 conn = self.pool.getconn()
+                self._pool_stats['created_connections'] += 1
                 
                 if conn:
                     # Configurar sessão e testar a conexão
@@ -214,6 +251,14 @@ class DatabasePool:
                         yield conn
                     finally:
                         self.metrics.active_connections -= 1
+                        try:
+                            if conn and not conn.closed:
+                                self.pool.putconn(conn)
+                            else:
+                                logger.warning("Conexão já fechada, não retornando ao pool")
+                                self._pool_stats['closed_connections'] += 1
+                        except Exception as e:
+                            logger.error(f"Erro ao retornar conexão ao pool: {e}")
                     return
                 else:
                     raise psycopg2.OperationalError("Não foi possível obter conexão do pool")
@@ -226,15 +271,26 @@ class DatabasePool:
                         pass
                     conn = None
                 
+                self._pool_stats['connection_errors'] += 1
+                
                 if attempt == max_retries - 1:
                     wait_time_ms = (time.time() - start_time) * 1000
                     self.metrics.record_request(wait_time_ms, success=False)
                     self.metrics.record_pool_exhausted()
                     logger.error(f"Falha ao obter conexão após {max_retries} tentativas: {e}")
+                    self._pool_stats['last_error'] = str(e)
+                    self._pool_stats['last_error_time'] = datetime.now().isoformat()
                     raise
                 
                 # Delay exponencial com jitter
                 delay = base_delay * (2 ** attempt) + random.uniform(0, 0.05)
+                # Limitar o delay máximo a 10 segundos
+                delay = min(delay, 10)
+                
+                # Verificar se o delay não excederá o timeout
+                if time.time() + delay - start_time > connection_timeout:
+                    delay = max(0.1, connection_timeout - (time.time() - start_time) - 0.1)  # Deixar 0.1s para a próxima tentativa
+                
                 logger.warning(f"Tentativa {attempt + 1} falhou, tentando novamente em {delay:.3f}s: {e}")
                 time.sleep(delay)
                 
@@ -242,6 +298,8 @@ class DatabasePool:
                 wait_time_ms = (time.time() - start_time) * 1000
                 self.metrics.record_request(wait_time_ms, success=False)
                 logger.error(f"Erro inesperado ao obter conexão: {e}")
+                self._pool_stats['last_error'] = str(e)
+                self._pool_stats['last_error_time'] = datetime.now().isoformat()
                 if conn:
                     try:
                         self.pool.putconn(conn)
@@ -278,7 +336,35 @@ class DatabasePool:
                 'pool_max_conn': self.pool.maxconn,
                 'pool_closed': self.pool.closed
             })
+            
+            # Verificar se é hora de fazer uma verificação de saúde do pool
+            current_time = time.time()
+            if current_time - self._last_pool_check > 300:  # Verificar a cada 5 minutos
+                self._check_pool_health()
+                self._last_pool_check = current_time
+                
+        stats.update({'pool_stats': self._pool_stats})
         return stats
+        
+    def _check_pool_health(self):
+        """Verifica a saúde do pool de conexões e detecta possíveis vazamentos"""
+        if not self.pool:
+            return
+            
+        try:
+            # Verificar se há muitas conexões em uso por muito tempo
+            if self.metrics.active_connections > (self.maxconn * 0.8):  # Se mais de 80% das conexões estão em uso
+                logger.warning(f"Possível vazamento de conexões detectado: {self.metrics.active_connections}/{self.maxconn} conexões em uso")
+                
+                # Se todas as conexões estiverem em uso, tentar resetar o pool
+                if self.metrics.active_connections >= self.maxconn:
+                    logger.error("Pool de conexões esgotado. Tentando resetar o pool.")
+                    self.recreate_pool()
+                    self._pool_stats['pool_resets'] += 1
+        except Exception as e:
+            logger.error(f"Erro ao verificar saúde do pool: {e}")
+            self._pool_stats['last_error'] = str(e)
+            self._pool_stats['last_error_time'] = datetime.now().isoformat()
     
     def putconn(self, conn):
         """Retorna uma conexão ao pool"""
