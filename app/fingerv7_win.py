@@ -103,8 +103,9 @@ load_dotenv()
 SERVER_ID = int(os.getenv('SERVER_ID', '1'))  # ID único para cada servidor (convertido para inteiro)
 TOTAL_SERVERS = int(os.getenv('TOTAL_SERVERS', '1'))  # Número total de servidores
 DISTRIBUTE_LOAD = os.getenv('DISTRIBUTE_LOAD', 'False').lower() == 'true'  # Ativar distribuição
-ROTATION_HOURS = int(os.getenv('ROTATION_HOURS', '24'))  # Horas para rotação de rádios (padrão: 24h)
-ENABLE_ROTATION = os.getenv('ENABLE_ROTATION', 'False').lower() == 'true'  # Ativar rodízio de rádios
+# Variáveis legadas mantidas para compatibilidade - agora usa hashing consistente
+ENABLE_ROTATION = False  # Sistema legado desabilitado
+ROTATION_HOURS = 0  # Sistema legado desabilitado
 
 # Validar SERVER_ID
 if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
@@ -530,24 +531,12 @@ def connect_db():
         return None
 
 # Função para calcular o deslocamento de rotação com base no tempo
-def calculate_rotation_offset():
-    if not ENABLE_ROTATION:
-        return 0
-    
-    # Calcular quantas rotações já ocorreram desde o início do tempo (1/1/1970)
-    hours_since_epoch = int(time.time() / 3600)  # Converter segundos para horas
-    rotations = hours_since_epoch // ROTATION_HOURS
-    
-    # O deslocamento é o número de rotações módulo o número total de servidores
-    offset = rotations % TOTAL_SERVERS
-    
-    logger.info(f"Calculado deslocamento de rotação: {offset} (após {rotations} rotações)")
-    return offset
+# calculate_rotation_offset - Função depreciada, removida em favor de hashing consistente
 
 # Função para carregar os streamings do banco de dados PostgreSQL
 def load_streams():
     logger.debug("Iniciando a função load_streams() - Buscando do PostgreSQL")
-    logger.info(f"Configurações de distribuição: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}, DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, ENABLE_ROTATION={ENABLE_ROTATION}")
+    logger.info(f"Configurações de distribuição: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}, DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}")
     logger.info(f"Conexão BD: HOST={DB_HOST}, DB={DB_NAME}, USER={DB_USER}, PORT={DB_PORT}")
     streams = []
     conn = None
@@ -558,6 +547,43 @@ def load_streams():
                 # Testar se a tabela existe antes de consultar
                 cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')")
                 table_exists = cursor.fetchone()[0]
+                
+                if not table_exists:
+                    logger.error("A tabela 'streams' não existe no banco de dados!")
+                    # Tentar encontrar tabelas disponíveis
+                    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tabelas disponíveis no banco: {tables}")
+                
+                # Criar tabela de ownership se não existir
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS stream_ownership (
+                        stream_id VARCHAR(255) PRIMARY KEY,
+                        server_id INTEGER NOT NULL,
+                        acquired_at TIMESTAMP NOT NULL,
+                        released_at TIMESTAMP,
+                        active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                
+                # Adicionar constraint única para prevenir duplicatas no music_log
+                cursor.execute("""
+                    ALTER TABLE IF EXISTS "music_log" 
+                    ADD CONSTRAINT IF NOT EXISTS unique_song_per_stream_per_minute 
+                    UNIQUE (name, song_title, artist, date, time)
+                """)
+                
+                # Criar índices para otimizar queries de distribuição
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_music_log_identified_by 
+                    ON music_log(identified_by, date DESC, time DESC)
+                """)
+                
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_music_log_composite 
+                    ON music_log(name, artist, song_title, date, time)
+                """)
                 
                 if not table_exists:
                     logger.error("A tabela 'streams' não existe no banco de dados!")
@@ -603,64 +629,186 @@ def load_streams():
         if conn:
             db_pool.putconn(conn)
     
-    # Aplicar distribuição de carga se ativada
-    if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
-        server_id = SERVER_ID  # Já é um inteiro, não precisa converter
-        if server_id < 1 or server_id > TOTAL_SERVERS:
-            logger.warning(f"SERVER_ID inválido ({server_id}). Deve estar entre 1 e {TOTAL_SERVERS}. Usando todos os streams.")
-        else:
-            # Calcular o deslocamento de rotação
-            rotation_offset = calculate_rotation_offset()
-            
-            # Aplicar o deslocamento ao SERVER_ID para implementar a rotação
-            effective_server_id = ((server_id - 1 + rotation_offset) % TOTAL_SERVERS) + 1
-            
-            if ENABLE_ROTATION:
-                logger.info(f"Rotação ativada: SERVER_ID original {server_id}, SERVER_ID efetivo {effective_server_id}")
-            
-            # Distribuir streams entre servidores com o SERVER_ID efetivo
-            distributed_streams = []
-            
-            # Garantir que a distribuição não falhe mesmo se houver inconsistências
-            conn = None
-            try:
-                # Usar uma tabela de controle no banco de dados para garantir exclusividade
-                conn = db_pool.get_connection_sync()
-                if conn:
-                    # Primeiro, atualizar ou inserir registros de controle para este servidor
-                    with conn.cursor() as cursor:
-                        for i, stream in enumerate(streams):
-                            stream_index = int(stream['index'])
-                            # Determinar qual servidor deve processar este stream
-                            target_server = (stream_index % TOTAL_SERVERS) + 1
-                            # Ajustar com base na rotação
-                            target_server = ((target_server - 1 + rotation_offset) % TOTAL_SERVERS) + 1
-                            
-                            if target_server == effective_server_id:
-                                # Este servidor deve processar este stream
-                                stream['processed_by_server'] = True
-                                distributed_streams.append(stream)
-                            else:
-                                stream['processed_by_server'] = False
-            except Exception as e:
-                logger.error(f"Erro ao aplicar distribuição de carga no banco: {e}")
-                # Fallback para método simples original em caso de erro
-                distributed_streams = []
-                for i, stream in enumerate(streams):
-                    if i % TOTAL_SERVERS == (effective_server_id - 1):
-                        stream['processed_by_server'] = True
-                        distributed_streams.append(stream)
-            finally:
-                if conn:
-                    db_pool.putconn(conn)
-            
-            logger.info(f"Distribuição de carga ativada: Servidor {server_id}/{TOTAL_SERVERS} " +
-                       f"(efetivo: {effective_server_id}) - " +
-                       f"Processando {len(distributed_streams)}/{len(streams)} streams")
-            streams = distributed_streams
+    # Distribuição baseada em hashing consistente - removida a lógica de módulo
+    # Agora a decisão de processamento é feita pelo sistema de bloqueio distribuído
     
     logger.info(f"{len(streams)} streams carregados no total.")
     return streams
+
+# Função para verificar se este servidor deve processar este stream baseado em hashing consistente
+def should_process_stream(stream_id: str, server_id: int, total_servers: int) -> bool:
+    """Determina se este servidor deve processar um stream baseado em hashing consistente."""
+    if total_servers <= 1:
+        return True
+    
+    # Usar hash do stream_id para determinar o servidor responsável
+    import hashlib
+    hash_value = int(hashlib.md5(stream_id.encode()).hexdigest(), 16)
+    responsible_server = (hash_value % total_servers) + 1
+    return responsible_server == server_id
+
+# Função para adquirir lock de stream no PostgreSQL
+async def acquire_stream_lock(stream_id: str, server_id: int, timeout: int = 30) -> bool:
+    """Tenta adquirir um lock exclusivo para processar um stream."""
+    try:
+        conn = await db_pool.get_connection()
+        if not conn:
+            logger.error("Não foi possível conectar ao banco de dados para adquirir lock")
+            return False
+        
+        async with conn.cursor() as cursor:
+            # Usar advisory lock do PostgreSQL baseado no hash do stream_id
+            import hashlib
+            lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
+            
+            # Tentar adquirir o lock
+            await cursor.execute(
+                "SELECT pg_try_advisory_lock(%s, %s)",
+                (lock_id, server_id)
+            )
+            result = await cursor.fetchone()
+            
+            if result and result[0]:
+                # Registrar o lock no banco
+                await cursor.execute(
+                    """
+                    INSERT INTO stream_ownership (stream_id, server_id, acquired_at, active)
+                    VALUES (%s, %s, NOW(), TRUE)
+                    ON CONFLICT (stream_id) DO UPDATE SET
+                    server_id = EXCLUDED.server_id,
+                    acquired_at = EXCLUDED.acquired_at,
+                    active = TRUE
+                    """,
+                    (stream_id, server_id)
+                )
+                await conn.commit()
+                logger.info(f"Lock adquirido para stream {stream_id} pelo servidor {server_id}")
+                return True
+            else:
+                logger.info(f"Stream {stream_id} já está sendo processado por outro servidor")
+                return False
+                
+    except Exception as e:
+        logger.error(f"Erro ao adquirir lock para stream {stream_id}: {e}")
+        return False
+    finally:
+        if 'conn' in locals() and conn:
+            await db_pool.putconn(conn)
+
+# Função para liberar lock de stream
+async def release_stream_lock(stream_id: str, server_id: int) -> bool:
+    """Libera o lock de um stream."""
+    try:
+        conn = await db_pool.get_connection()
+        if not conn:
+            return False
+        
+        async with conn.cursor() as cursor:
+            # Liberar advisory lock
+            import hashlib
+            lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
+            
+            await cursor.execute(
+                "SELECT pg_advisory_unlock(%s, %s)",
+                (lock_id, server_id)
+            )
+            
+            # Atualizar registro no banco
+            await cursor.execute(
+                """
+                UPDATE stream_ownership 
+                SET active = FALSE, released_at = NOW()
+                WHERE stream_id = %s AND server_id = %s
+                """,
+                (stream_id, server_id)
+            )
+            await conn.commit()
+            
+            logger.info(f"Lock liberado para stream {stream_id} pelo servidor {server_id}")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Erro ao liberar lock para stream {stream_id}: {e}")
+        return False
+    finally:
+        if 'conn' in locals() and conn:
+            await db_pool.putconn(conn)
+
+# Função para verificar se este servidor possui o lock de um stream
+async def check_stream_ownership(stream_id: str, server_id: int) -> bool:
+    """Verifica se este servidor possui o lock ativo para um stream."""
+    try:
+        conn = await db_pool.get_connection()
+        if not conn:
+            return False
+        
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT active FROM stream_ownership 
+                WHERE stream_id = %s AND server_id = %s AND active = TRUE
+                """,
+                (stream_id, server_id)
+            )
+            result = await cursor.fetchone()
+            return bool(result and result[0])
+            
+    except Exception as e:
+        logger.error(f"Erro ao verificar ownership do stream {stream_id}: {e}")
+        return False
+    finally:
+        if 'conn' in locals() and conn:
+            await db_pool.putconn(conn)
+
+# Função para detectar mudanças no número de servidores e rebalancear
+async def monitor_server_changes():
+    """Monitora mudanças no número de servidores e dispara rebalanceamento."""
+    global TOTAL_SERVERS
+    last_server_count = TOTAL_SERVERS
+    check_interval = 120  # Verificar a cada 2 minutos
+    
+    while True:
+        try:
+            await asyncio.sleep(check_interval)
+            
+            # Detectar novo número de servidores (pode ser via Redis ou config)
+            new_server_count = int(os.getenv('TOTAL_SERVERS', TOTAL_SERVERS))
+            
+            if new_server_count != last_server_count:
+                logger.info(f"Mudança detectada: {last_server_count} -> {new_server_count} servidores")
+                await rebalance_streams(last_server_count, new_server_count)
+                last_server_count = new_server_count
+                
+        except Exception as e:
+            logger.error(f"Erro ao monitorar mudanças de servidor: {e}")
+            await asyncio.sleep(check_interval)
+
+# Função para rebalancear streams quando o número de servidores muda
+async def rebalance_streams(old_count: int, new_count: int):
+    """Rebalanceia a distribuição de streams quando o número de servidores muda."""
+    logger.info(f"Iniciando rebalanceamento de {old_count} para {new_count} servidores")
+    
+    try:
+        # Liberar todos os locks atuais para permitir redistribuição
+        conn = await db_pool.get_connection()
+        if conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    UPDATE stream_ownership 
+                    SET active = FALSE, released_at = NOW()
+                    WHERE server_id = %s AND active = TRUE
+                    """,
+                    (SERVER_ID,)
+                )
+                await conn.commit()
+                logger.info(f"Todos os locks liberados para rebalanceamento no servidor {SERVER_ID}")
+                
+    except Exception as e:
+        logger.error(f"Erro durante rebalanceamento: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            await db_pool.putconn(conn)
 
 # Função para carregar o estado das últimas músicas identificadas
 def load_last_songs():
@@ -774,11 +922,8 @@ async def monitor_streams_file(callback):
             await asyncio.sleep(60)  # Esperar um minuto antes de tentar novamente
 
 # Função para capturar o áudio do streaming ao vivo e salvar um segmento temporário
-async def capture_stream_segment(name, url, duration=None, processed_by_server=True):
-    # Se o stream não for processado por este servidor, retornar None
-    if not processed_by_server:
-        logger.info(f"Pulando captura do stream {name} pois não é processado por este servidor.")
-        return None
+async def capture_stream_segment(name, url, duration=None):
+    # Agora a decisão de processar ou não é feita pelo sistema de bloqueio distribuído
     
     # Usar configuração global se não especificado
     if duration is None:
@@ -1016,29 +1161,46 @@ async def process_stream(stream, last_songs):
     logger.debug("Iniciando a função process_stream()")
     url = stream['url']
     name = stream['name']
-    processed_by_server = stream.get('processed_by_server', True)
+    stream_id = f"{name}_{url}"  # Identificador único para o stream
     previous_segment = None
 
     while True:
-        logger.info(f"Processando streaming: {name}")
-        # Verificar se este stream está sendo processado por este servidor
-        if not processed_by_server:
-            logger.info(f"Stream {name} não é processado por este servidor. Verificando novamente em 60 segundos.")
-            await asyncio.sleep(60)  # Aguardar antes de verificar novamente
+        logger.info(f"Verificando propriedade do stream: {name}")
+        
+        # Verificar se este servidor deve processar este stream usando hashing consistente
+        if not should_process_stream(stream_id, SERVER_ID, TOTAL_SERVERS):
+            logger.info(f"Stream {name} não pertence a este servidor (SERVER_ID: {SERVER_ID}). Aguardando...")
+            await asyncio.sleep(30)  # Aguardar antes de verificar novamente
             continue
-
-        current_segment_path = await capture_stream_segment(name, url, duration=None, processed_by_server=processed_by_server)
-
-        if current_segment_path is None:
-            logger.error(f"Falha ao capturar segmento do streaming {name}. Tentando novamente...")
-            await asyncio.sleep(10)
+            
+        # Adquirir lock para processar o stream
+        if not acquire_stream_lock(stream_id):
+            logger.info(f"Não foi possível adquirir lock para stream {name}. Outro servidor pode estar processando.")
+            await asyncio.sleep(30)
             continue
+            
+        logger.info(f"Lock adquirido para stream: {name}. Processando...")
+        
+        try:
+            current_segment_path = await capture_stream_segment(name, url, duration=None)
 
-        await shazam_queue.put((current_segment_path, stream, last_songs))
-        await shazam_queue.join()
+            if current_segment_path is None:
+                logger.error(f"Falha ao capturar segmento do streaming {name}. Tentando novamente...")
+                release_stream_lock(stream_id)
+                await asyncio.sleep(10)
+                continue
 
-        logger.info(f"Aguardando 60 segundos para o próximo ciclo do stream {name}...")
-        await asyncio.sleep(60)  # Intervalo de captura de segmentos
+            await shazam_queue.put((current_segment_path, stream, last_songs))
+            await shazam_queue.join()
+
+            logger.info(f"Aguardando 60 segundos para o próximo ciclo do stream {name}...")
+            release_stream_lock(stream_id)
+            await asyncio.sleep(60)  # Intervalo de captura de segmentos
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar stream {name}: {e}")
+            release_stream_lock(stream_id)
+            await asyncio.sleep(60)
 
 def send_email_alert(subject, body):
     message = MIMEMultipart()
@@ -1094,13 +1256,7 @@ async def sync_json_with_db():
                     }
                     streams.append(stream)
                 
-                # Aplicar distribuição de carga se ativada (apenas para visualização no arquivo JSON)
-                if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
-                    server_id = int(SERVER_ID)
-                    if server_id >= 1 and server_id <= TOTAL_SERVERS:
-                        # Marcar quais streams são processados por este servidor
-                        for i, stream in enumerate(streams):
-                            stream['processed_by_server'] = (i % TOTAL_SERVERS == (server_id - 1))
+                # Distribuição baseada em hashing consistente - removida a lógica de módulo
                 
                 # Salvar os streams no arquivo JSON local
                 with open(STREAMS_FILE, 'w', encoding='utf-8') as f:
@@ -1122,31 +1278,11 @@ async def schedule_json_sync():
         await sync_json_with_db()  # Sincroniza imediatamente na inicialização
         await asyncio.sleep(3600)  # Aguarda 1 hora (3600 segundos) antes da próxima sincronização
 
-# Função para verificar se é hora de recarregar os streams devido à rotação
+# Função para verificar se é hora de recarregar os streams - DEPRECATED
+# A rotação agora é gerenciada pelo sistema de hashing consistente
 async def check_rotation_schedule():
-    if not (DISTRIBUTE_LOAD and ENABLE_ROTATION):
-        return False  # Não fazer nada se a rotação não estiver ativada
-    
-    logger.info("Iniciando monitoramento de rotação de streams")
-    last_rotation_offset = calculate_rotation_offset()
-    
-    while True:
-        await asyncio.sleep(60)  # Verificar a cada minuto
-        current_rotation_offset = calculate_rotation_offset()
-        
-        if current_rotation_offset != last_rotation_offset:
-            logger.info(f"Detectada mudança na rotação: {last_rotation_offset} -> {current_rotation_offset}")
-            last_rotation_offset = current_rotation_offset
-            
-            # Recarregar streams com a nova rotação
-            global STREAMS
-            STREAMS = load_streams()
-            logger.info(f"Streams recarregados devido à rotação. Agora processando {len(STREAMS)} streams.")
-            
-            # Atualizar as tarefas (isso será chamado na função main)
-            return True
-        
-        return False
+    logger.info("Sistema de rotação antigo desativado. Usando hashing consistente.")
+    return False
 
 # Função worker para identificar música usando Shazamio (MODIFICADA)
 async def identify_song_shazamio(shazam):
@@ -1551,6 +1687,9 @@ Este é um alerta automático.
             finally:
                 if conn:
                     db_pool.putconn(conn)
+        except Exception as e:
+            logger.error(f"Erro no loop de verificação de servidores: {e}")
+        await asyncio.sleep(10)  # Aguardar um pouco antes de tentar novamente em caso de erro
 
 
 # Variável global para controlar o tempo da última solicitação
@@ -1594,21 +1733,12 @@ async def main():
     # Registrar informações sobre a distribuição de carga
     if DISTRIBUTE_LOAD:
         logger.info(f"Modo de distribuição de carga ativado: Servidor {SERVER_ID} de {TOTAL_SERVERS}")
-        if ENABLE_ROTATION:
-            logger.info(f"Rotação de rádios ativada: a cada {ROTATION_HOURS} horas")
-            rotation_offset = calculate_rotation_offset()
-            logger.info(f"Offset de rotação atual: {rotation_offset}")
+        logger.info("Sistema de hashing consistente ativado - removida a rotação baseada em tempo")
         
-        # Calcular e exibir quantos streams cada servidor está processando
-        streams_per_server = {}
+        # Calcular e exibir quantos streams cada servidor está processando via hashing consistente
         total_streams = len(STREAMS)
-        for i in range(1, TOTAL_SERVERS + 1):
-            streams_for_this_server = len([s for s in STREAMS if s.get('processed_by_server', 
-                                                                      (int(s.get('index', 0)) % TOTAL_SERVERS) == (i - 1))])
-            streams_per_server[i] = streams_for_this_server
-            
-        logger.info(f"Distribuição de streams por servidor: {streams_per_server}")
-        logger.info(f"Este servidor ({SERVER_ID}) processará {streams_per_server.get(SERVER_ID, 0)} de {total_streams} streams")
+        logger.info(f"Total de streams a serem processados: {total_streams}")
+        logger.info(f"Este servidor ({SERVER_ID}) processará streams baseado em hashing consistente")
     else:
         logger.info("Modo de distribuição de carga desativado. Processando todos os streams.")
 
@@ -1640,23 +1770,23 @@ async def main():
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
     
+    # Adicionar tarefa de monitoramento para rebalanceamento
+    rebalancing_task = register_task(asyncio.create_task(monitor_server_changes()))
+    
     if 'send_data_to_db' in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
         tasks_to_gather = [monitor_task, shazam_task, send_data_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task]
+                          heartbeat_task, server_monitor_task, rebalancing_task]
     else:
         tasks_to_gather = [monitor_task, shazam_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task]
+                          heartbeat_task, server_monitor_task, rebalancing_task]
     
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     json_sync_task = register_task(asyncio.create_task(schedule_json_sync()))
     
     tasks_to_gather.extend([alert_task, json_sync_task])
     
-    # Adicionar tarefa para verificar a rotação de streams
-    if DISTRIBUTE_LOAD and ENABLE_ROTATION:
-        rotation_task = register_task(asyncio.create_task(check_rotation_schedule()))
-        tasks.append(rotation_task)
+    # Removido: tarefa de rotação de streams baseada em tempo (agora usa hashing consistente)
     
     # Adicionar tarefas para processar os streams
     for stream in STREAMS:
@@ -1699,12 +1829,12 @@ if __name__ == '__main__':
     # Iniciar thread para verificar o schedule
     def run_schedule():
         while True:
-            try: # try precisa do bloco indentado
+            try:
                 schedule.run_pending()
+                time.sleep(60)  # Verificar a cada minuto
             except Exception as e:
                 logger.error(f"Erro no thread de schedule: {e}")
-            # Mover sleep para fora do try/except para sempre ocorrer
-            time.sleep(60)  # Verificar a cada minuto
+                time.sleep(60)  # Continuar verificando mesmo após erro
         
     schedule_thread = threading.Thread(target=run_schedule)
     schedule_thread.daemon = True  # Thread será encerrada quando o programa principal terminar
