@@ -526,7 +526,7 @@ class AsyncInsertQueue:
             )
 
     async def _insert_single_task(self, cursor, task: InsertTask):
-        """Insere uma única tarefa no banco com verificação de duplicatas em 10 minutos"""
+        """Insere uma única tarefa no banco com verificação atômica de duplicatas"""
         data = task.data
 
         try:
@@ -553,20 +553,24 @@ class AsyncInsertQueue:
             isrc = data.get("isrc", "") or ""
             song_title = data.get("song_title", "") or ""
             artist = data.get("artist", "") or ""
+            current_date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+            current_time = data.get("time", datetime.now().strftime("%H:%M:%S"))
             
-            # Calcular timestamp de 10 minutos atrás
+            # Calcular timestamp de 10 minutos atrás para verificação mais ampla
             now = datetime.now()
             ten_minutes_ago = now - timedelta(minutes=10)
             
-            # Query para verificar duplicatas nas últimas 10 minutos
+            # Verificação atômica com SELECT FOR UPDATE para prevenir condições de corrida
+            # Usando uma transação mais robusta com verificação de duplicatas
             duplicate_check_query = """
-            SELECT COUNT(*) FROM music_log 
+            SELECT id FROM music_log 
             WHERE name = %s 
             AND (
                 (isrc != '' AND isrc = %s) OR
                 (isrc = '' AND song_title = %s AND artist = %s)
             )
             AND (date || ' ' || time)::timestamp >= %s
+            FOR UPDATE SKIP LOCKED
             """
             
             cursor.execute(duplicate_check_query, (
@@ -577,11 +581,42 @@ class AsyncInsertQueue:
                 ten_minutes_ago.strftime("%Y-%m-%d %H:%M:%S")
             ))
             
-            duplicate_count = cursor.fetchone()[0]
+            existing_records = cursor.fetchall()
             
-            if duplicate_count > 0:
+            if existing_records:
                 logger.debug(
-                    f"Duplicata detectada e ignorada: {radio_name} - {song_title} ({artist})"
+                    f"Duplicata detectada e ignorada: {radio_name} - {song_title} ({artist}) - ID: {existing_records[0][0]}"
+                )
+                return
+                
+            # Verificação adicional por tempo exato para garantir que não há duplicatas
+            # mesmo que o servidor esteja processando o mesmo segmento
+            exact_check_query = """
+            SELECT id FROM music_log 
+            WHERE name = %s 
+            AND date = %s 
+            AND time = %s 
+            AND (
+                (isrc != '' AND isrc = %s) OR
+                (isrc = '' AND song_title = %s AND artist = %s)
+            )
+            FOR UPDATE SKIP LOCKED
+            """
+            
+            cursor.execute(exact_check_query, (
+                radio_name,
+                current_date,
+                current_time,
+                isrc,
+                song_title,
+                artist
+            ))
+            
+            exact_records = cursor.fetchall()
+            
+            if exact_records:
+                logger.debug(
+                    f"Duplicata exata detectada e ignorada: {radio_name} - {song_title} ({artist})"
                 )
                 return
 

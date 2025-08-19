@@ -498,6 +498,45 @@ def get_assigned_server(stream_id: str) -> int:
             get_db_pool().pool.putconn(conn)
 
 
+def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
+    """
+    Verifica se já existe uma inserção recente para este stream/música nos últimos 2 minutos
+    """
+    conn = None
+    try:
+        conn = get_db_pool().pool.getconn()
+        with conn.cursor() as cursor:
+            # Verificar inserções nos últimos 2 minutos com comparação case-insensitive
+            cursor.execute(
+                """
+                SELECT id, created_at FROM music_log 
+                WHERE name = %s 
+                AND TRIM(LOWER(song_title)) = TRIM(LOWER(%s)) 
+                AND TRIM(LOWER(artist)) = TRIM(LOWER(%s)) 
+                AND created_at >= NOW() - INTERVAL '2 minutes'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (name, song_title, artist)
+            )
+            
+            result = cursor.fetchone()
+            if result:
+                logger.info(
+                    f"Duplicata detectada: {song_title} - {artist} em {name} "
+                    f"(ID: {result[0]}, criado em: {result[1]} - {SERVER_ID})"
+                )
+                return True
+            return False
+            
+    except Exception as e:
+        logger.error(f"Erro ao verificar inserção recente: {e}")
+        return False
+    finally:
+        if conn:
+            get_db_pool().pool.putconn(conn)
+
+
 # === Fim das Funções de Distribuição ===
 
 # Configurar logging para console e arquivo (REMOVIDO DAQUI)
@@ -1491,6 +1530,17 @@ async def insert_data_to_db(entry_base, now_tz):
     )
 
     try:
+        # Verificar se já existe uma inserção recente para esta música neste stream
+        is_recent_duplicate = await asyncio.to_thread(
+            check_recent_insertion, name, song_title, artist
+        )
+        
+        if is_recent_duplicate:
+            logger.info(
+                f"insert_data_to_db: Inserção ignorada - duplicata recente detectada para {song_title} - {artist} em {name}"
+            )
+            return False
+
         # Formatar dados para inserção
         date_str = now_tz.strftime("%Y-%m-%d")
         time_str = now_tz.strftime("%H:%M:%S")
@@ -1642,7 +1692,7 @@ async def process_stream(stream, last_songs):
 
         # Se a captura foi bem-sucedida, prosseguir com o Shazam
         await shazam_queue.put((current_segment_path, stream, last_songs))
-        await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo? (Verificar necessidade)
+        await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo
 
         # Liberar o lock após processar este ciclo
         await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
