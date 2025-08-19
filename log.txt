@@ -1,50 +1,823 @@
-finger_app-1  | 2025-08-18 19:02:58,063 DEBUG: [asyncio_0] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:03:00,615 INFO: [MainThread] Servidores online: 7 de 7
-finger_app-1  | 2025-08-18 19:03:00,616 DEBUG: [MainThread] Servidor 1 (10.11.1.0): Processando 12 streams, CPU: 46.8%, Mem: 55.7%
-finger_app-1  | 2025-08-18 19:03:00,616 DEBUG: [MainThread] Servidor 2 (172.19.0.2): Processando 12 streams, CPU: 72.4%, Mem: 60.6%
-finger_app-1  | 2025-08-18 19:03:00,616 DEBUG: [MainThread] Servidor 3 (172.24.0.2): Processando 13 streams, CPU: 72.5%, Mem: 56.0%
-finger_app-1  | 2025-08-18 19:03:00,617 DEBUG: [MainThread] Servidor 4 (172.20.0.2): Processando 12 streams, CPU: 15.9%, Mem: 56.3%
-finger_app-1  | 2025-08-18 19:03:00,617 DEBUG: [MainThread] Servidor 5 (172.21.0.2): Processando 12 streams, CPU: 55.8%, Mem: 57.8%
-finger_app-1  | 2025-08-18 19:03:00,617 DEBUG: [MainThread] Servidor 6 (172.22.0.2): Processando 13 streams, CPU: 61.7%, Mem: 55.9%
-finger_app-1  | 2025-08-18 19:03:00,617 DEBUG: [MainThread] Servidor 7 (172.23.0.2): Processando 12 streams, CPU: 16.5%, Mem: 55.9%
-finger_app-1  | 2025-08-18 19:03:59,074 INFO: [asyncio_0] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:04:09,087 ERROR: [asyncio_0] Erro operacional ao conectar ao banco: connection to server at "104.234.173.96", port 5432 failed: timeout expired
-finger_app-1  | 
-finger_app-1  | 2025-08-18 19:04:09,087 ERROR: [asyncio_0] send_heartbeat [thread]: Não foi possível conectar ao DB.
-finger_app-1  | 2025-08-18 19:05:10,136 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:05:12,086 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:05:13,196 DEBUG: [asyncio_2] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:06:14,223 INFO: [asyncio_0] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:06:16,195 DEBUG: [asyncio_0] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:06:17,275 DEBUG: [asyncio_0] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:07:18,328 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:07:20,260 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:07:21,341 DEBUG: [asyncio_2] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:07:34,475 DEBUG: [MainThread] Erros persistentes encontrados (> 10 min): ['Banda B FM - Curitiba/PR', '97']
-finger_app-1  | 2025-08-18 19:07:35,687 ERROR: [MainThread] Erro ao enviar e-mail de alerta: (535, b'5.7.8 Username and Password not accepted. For more information, go to\n5.7.8   98e67ed59e1d1-32330fc986asm12277687a91.14 - gsmtp')
-finger_app-1  | 2025-08-18 19:07:35,688 WARNING: [MainThread] Alerta enviado para erros persistentes: ['Banda B FM - Curitiba/PR', '97']
-finger_app-1  | 2025-08-18 19:07:50,962 INFO: [MainThread] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:07:52,921 DEBUG: [MainThread] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:08:00,653 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:08:02,407 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:08:03,910 INFO: [MainThread] Servidores online: 3 de 7
-finger_app-1  | 2025-08-18 19:08:03,911 DEBUG: [MainThread] Servidor 1 (10.11.1.0): Processando 12 streams, CPU: 49.2%, Mem: 56.5%
-finger_app-1  | 2025-08-18 19:08:03,911 DEBUG: [MainThread] Servidor 3 (172.24.0.2): Processando 13 streams, CPU: 15.5%, Mem: 56.5%
-finger_app-1  | 2025-08-18 19:08:03,911 DEBUG: [MainThread] Servidor 7 (172.23.0.2): Processando 12 streams, CPU: 21.4%, Mem: 56.8%
-finger_app-1  | 2025-08-18 19:08:22,358 INFO: [asyncio_0] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:08:24,301 DEBUG: [asyncio_0] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:08:25,379 DEBUG: [asyncio_0] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:09:26,421 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:09:28,148 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:09:29,233 DEBUG: [asyncio_2] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:10:30,280 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:10:31,692 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:10:32,481 DEBUG: [asyncio_2] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:11:33,542 INFO: [asyncio_0] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:11:35,005 DEBUG: [asyncio_0] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:11:35,780 DEBUG: [asyncio_0] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:12:36,824 INFO: [asyncio_2] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:12:38,231 DEBUG: [asyncio_2] Conexão ao banco de dados estabelecida com sucesso!
-finger_app-1  | 2025-08-18 19:12:38,920 DEBUG: [asyncio_2] Heartbeat enviado para o servidor 7
-finger_app-1  | 2025-08-18 19:12:53,501 INFO: [MainThread] Conectando ao banco PostgreSQL: 104.234.173.96:5432/music_log (usuário: postgres)
-finger_app-1  | 2025-08-18 19:12:54,908 DEBUG: [M
+2025-08-19 02:08:45,399 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:45,400 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:45,400 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:08:45,400 INFO: [Dummy-2] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:08:45,418 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:45,715 WARNING: [MainThread] Pool connection wait time: 1298.42ms
+2025-08-19 02:08:46,019 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500080 - Interativa FM - GO - Can't Stop Lovin' You
+2025-08-19 02:08:46,332 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:46,336 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:46,338 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.922s
+2025-08-19 02:08:46,348 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Equinócio FM Macapá - AP.
+2025-08-19 02:08:46,353 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Light FM Belo Horizonte - MG.
+2025-08-19 02:08:46,596 INFO: [MainThread] Música identificada: One por Passengers, Michael Kamen & Orchestra (ISRC: ISRC não disponível, Gravadora: None, Gênero: Rock)
+2025-08-19 02:08:46,596 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: One - Passengers, Michael Kamen & Orchestra em Mix FM - SP
+2025-08-19 02:08:46,596 DEBUG: [MainThread] Tarefa adicionada à fila: Mix FM - SP
+2025-08-19 02:08:46,597 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: One - Passengers, Michael Kamen & Orchestra (Mix FM - SP)
+2025-08-19 02:08:46,597 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:46,598 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:46,599 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:46,682 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Mix FM - SP_segment.mp3 removido.
+2025-08-19 02:08:46,958 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Rocket FM Vitória - ES.
+2025-08-19 02:08:47,518 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para 105 FM São Paulo - SP.
+2025-08-19 02:08:47,596 INFO: [MainThread] Identificando música no arquivo /app/segments/Transamerica FM 100,1 - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:47,618 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 1, 67, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:47,629 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:47,642 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:47,643 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 241+2 bytes.
+2025-08-19 02:08:47,643 INFO: [Dummy-2] found the format marker [ff, fb] @ 241+2 bytes.
+2025-08-19 02:08:47,643 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:47,770 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Clube FM - BSB.
+2025-08-19 02:08:47,790 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Nambá FM Ponte Serrada - SC.
+2025-08-19 02:08:48,012 WARNING: [MainThread] Pool connection wait time: 1335.99ms
+2025-08-19 02:08:48,326 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500081 - Mix FM - SP - One
+2025-08-19 02:08:48,654 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:48,657 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:48,663 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.987s
+2025-08-19 02:08:48,667 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Circuito das Águas FM Caxambu - MG.
+2025-08-19 02:08:48,667 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Salvador FM 92,3 Salvador - BA.
+2025-08-19 02:08:48,676 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Itapoan FM Salvador - BA.
+2025-08-19 02:08:48,676 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Piatã FM Salvador - BA.
+2025-08-19 02:08:48,715 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Clube FM Rio Claro - SP.
+2025-08-19 02:08:48,856 INFO: [MainThread] Música identificada: I'm Yours por Jason Mraz (ISRC: USEE10800667, Gravadora: Atlantic Records/ATG, Gênero: Pop)
+2025-08-19 02:08:48,858 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: I'm Yours - Jason Mraz em Transamerica FM 100,1 - SP
+2025-08-19 02:08:48,859 DEBUG: [MainThread] Tarefa adicionada à fila: Transamerica FM 100,1 - SP
+2025-08-19 02:08:48,859 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: I'm Yours - Jason Mraz (Transamerica FM 100,1 - SP)
+2025-08-19 02:08:48,859 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:48,862 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:48,862 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:48,867 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Transamerica FM 100,1 - SP_segment.mp3 removido.
+2025-08-19 02:08:48,962 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para 91 FM Leme - SP.
+2025-08-19 02:08:49,145 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Demais FM Itaiópolis - SC.
+2025-08-19 02:08:49,494 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Cidade FM Campinas - SP.
+2025-08-19 02:08:49,857 INFO: [MainThread] Identificando música no arquivo /app/segments/Band FM 96,1 - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:49,863 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:49,863 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:49,864 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:49,864 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:08:49,864 INFO: [Dummy-2] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:08:49,865 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:49,880 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Aratiba FM Aratiba - RS.
+2025-08-19 02:08:50,048 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:50,049 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:50,055 WARNING: [MainThread] Pool connection wait time: 1192.13ms
+2025-08-19 02:08:50,363 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500082 - Transamerica FM 100,1 - SP - I'm Yours
+2025-08-19 02:08:50,671 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.808s
+2025-08-19 02:08:50,674 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Tropical FM São Paulo - SP.
+2025-08-19 02:08:50,675 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Ativa FM Pato Branco - PR.
+2025-08-19 02:08:50,675 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Spacesex FM Vitória - ES.
+2025-08-19 02:08:50,844 INFO: [MainThread] Música identificada: Don't Know Why por Norah Jones (ISRC: USBN20100529, Gravadora: CM BLUE NOTE (A92), Gênero: Pop)
+2025-08-19 02:08:50,844 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Don't Know Why - Norah Jones em Band FM 96,1 - SP
+2025-08-19 02:08:50,845 DEBUG: [MainThread] Tarefa adicionada à fila: Band FM 96,1 - SP
+2025-08-19 02:08:50,845 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Don't Know Why - Norah Jones (Band FM 96,1 - SP)
+2025-08-19 02:08:50,845 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:50,846 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:50,847 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:50,851 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Band FM 96,1 - SP_segment.mp3 removido.
+2025-08-19 02:08:51,572 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Uruaçu FM Uruaçu - GO.
+2025-08-19 02:08:51,611 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Caiobá FM Curitiba - PR.
+2025-08-19 02:08:51,845 INFO: [MainThread] Identificando música no arquivo /app/segments/Educadora FM - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:51,850 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 3, b, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:51,851 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:51,852 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:51,852 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 405+2 bytes.
+2025-08-19 02:08:51,853 INFO: [Dummy-2] found the format marker [ff, fb] @ 405+2 bytes.
+2025-08-19 02:08:51,853 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:51,995 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:51,995 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:52,011 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para 98 FM Belo Horizonte - MG.
+2025-08-19 02:08:52,057 WARNING: [MainThread] Pool connection wait time: 1208.89ms
+2025-08-19 02:08:52,354 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500083 - Band FM 96,1 - SP - Don't Know Why
+2025-08-19 02:08:52,653 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.805s
+2025-08-19 02:08:52,653 DEBUG: [MainThread] Pool de conexões com uso normal: 0.0% (0/30)
+2025-08-19 02:08:52,654 DEBUG: [MainThread] Estatísticas do pool: {'created_connections': 6, 'closed_connections': 0, 'connection_errors': 0, 'pool_resets': 0, 'last_error': None, 'last_error_time': None}
+2025-08-19 02:08:52,765 INFO: [MainThread] Segmento de 15 segundos capturado com sucesso para Liberdade FM Belo Horizonte - MG.
+2025-08-19 02:08:52,773 INFO: [MainThread] Música identificada: Ordinary por Alex Warren (ISRC: USAT22500463, Gravadora: Atlantic Records, Gênero: Pop)
+2025-08-19 02:08:52,775 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Ordinary - Alex Warren em Educadora FM - SP
+2025-08-19 02:08:52,775 DEBUG: [MainThread] Tarefa adicionada à fila: Educadora FM - SP
+2025-08-19 02:08:52,775 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Ordinary - Alex Warren (Educadora FM - SP)
+2025-08-19 02:08:52,775 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:52,776 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:52,777 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:52,779 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Educadora FM - SP_segment.mp3 removido.
+2025-08-19 02:08:53,774 INFO: [MainThread] Identificando música no arquivo /app/segments/Educadora FM Uberlândia - MG_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:53,776 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:53,782 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:53,789 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:53,789 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:08:53,790 INFO: [Dummy-2] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:08:53,790 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:53,917 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:53,919 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:53,962 WARNING: [MainThread] Pool connection wait time: 1185.18ms
+2025-08-19 02:08:54,279 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500086 - Educadora FM - SP - Ordinary
+2025-08-19 02:08:54,629 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.852s
+2025-08-19 02:08:54,770 INFO: [MainThread] Música identificada: Spend My Life With You por Eric Benét (ISRC: USWB19801241, Gravadora: Warner Records, Gênero: R&B/Soul)
+2025-08-19 02:08:54,771 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Spend My Life With You - Eric Benét em Educadora FM Uberlândia - MG
+2025-08-19 02:08:54,772 DEBUG: [MainThread] Tarefa adicionada à fila: Educadora FM Uberlândia - MG
+2025-08-19 02:08:54,772 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Spend My Life With You - Eric Benét (Educadora FM Uberlândia - MG)
+2025-08-19 02:08:54,772 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:54,773 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:54,794 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:54,796 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Educadora FM Uberlândia - MG_segment.mp3 removido.
+2025-08-19 02:08:55,771 INFO: [MainThread] Identificando música no arquivo /app/segments/Jovem Pan - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:55,780 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 5f, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:55,781 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:55,782 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:55,782 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 105+2 bytes.
+2025-08-19 02:08:55,803 INFO: [Dummy-2] found the format marker [ff, fb] @ 105+2 bytes.
+2025-08-19 02:08:55,804 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:55,969 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:55,971 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:56,036 WARNING: [MainThread] Pool connection wait time: 1241.34ms
+2025-08-19 02:08:56,341 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500087 - Educadora FM Uberlândia - MG - Spend My Life With You
+2025-08-19 02:08:56,673 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.878s
+2025-08-19 02:08:56,675 INFO: [MainThread] Música identificada: American Boy (feat. Kanye West) por Estelle (ISRC: USAT20706210, Gravadora: Round Hill Records, Gênero: R&B/Soul)
+2025-08-19 02:08:56,675 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: American Boy (feat. Kanye West) - Estelle em Jovem Pan - SP
+2025-08-19 02:08:56,675 DEBUG: [MainThread] Tarefa adicionada à fila: Jovem Pan - SP
+2025-08-19 02:08:56,676 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: American Boy (feat. Kanye West) - Estelle (Jovem Pan - SP)
+2025-08-19 02:08:56,676 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:56,676 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:56,677 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:56,679 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Jovem Pan - SP_segment.mp3 removido.
+2025-08-19 02:08:57,675 INFO: [MainThread] Identificando música no arquivo /app/segments/Clock FM - ES_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:57,684 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 1, 73, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:57,684 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:57,685 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:57,686 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 253+2 bytes.
+2025-08-19 02:08:57,686 INFO: [Dummy-2] found the format marker [ff, fb] @ 253+2 bytes.
+2025-08-19 02:08:57,686 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:57,851 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:57,853 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:57,897 WARNING: [MainThread] Pool connection wait time: 1218.62ms
+2025-08-19 02:08:58,214 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500089 - Jovem Pan - SP - American Boy (feat. Kanye West)
+2025-08-19 02:08:58,579 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.901s
+2025-08-19 02:08:58,693 INFO: [MainThread] Música identificada: What Do We Mean To Each Other por Sergio Mendes (ISRC: USUM72413559, Gravadora: Verve Reissues, Gênero: Jazz)
+2025-08-19 02:08:58,695 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: What Do We Mean To Each Other - Sergio Mendes em Clock FM - ES
+2025-08-19 02:08:58,696 DEBUG: [MainThread] Tarefa adicionada à fila: Clock FM - ES
+2025-08-19 02:08:58,696 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: What Do We Mean To Each Other - Sergio Mendes (Clock FM - ES)
+2025-08-19 02:08:58,696 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:08:58,697 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:08:58,698 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:08:58,700 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Clock FM - ES_segment.mp3 removido.
+2025-08-19 02:08:59,694 INFO: [MainThread] Identificando música no arquivo /app/segments/Bahia FM - BA_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:08:59,696 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 5f, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:08:59,696 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:08:59,697 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:08:59,697 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 361+2 bytes.
+2025-08-19 02:08:59,697 INFO: [Dummy-2] found the format marker [ff, fb] @ 361+2 bytes.
+2025-08-19 02:08:59,700 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:08:59,841 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:08:59,842 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:08:59,877 WARNING: [MainThread] Pool connection wait time: 1178.63ms
+2025-08-19 02:09:00,178 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500090 - Clock FM - ES - What Do We Mean To Each Other
+2025-08-19 02:09:00,498 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.799s
+2025-08-19 02:09:00,632 INFO: [MainThread] Nenhuma música identificada (resposta vazia do Shazam).
+2025-08-19 02:09:00,655 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Bahia FM - BA_segment.mp3 removido.
+2025-08-19 02:09:01,636 INFO: [MainThread] Identificando música no arquivo /app/segments/FM O Dia - RJ_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:01,640 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:01,640 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:01,640 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:01,640 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:01,641 INFO: [Dummy-2] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:01,641 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:01,898 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:01,901 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:02,066 INFO: [MainThread] Música identificada: Fica com Deus (Ao Vivo) por Yan & Sorriso Maroto (ISRC: BRWMB2500219, Gravadora: WM Brazil, Gênero: Brazilian)
+2025-08-19 02:09:02,067 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Fica com Deus (Ao Vivo) - Yan & Sorriso Maroto em FM O Dia - RJ
+2025-08-19 02:09:02,067 DEBUG: [MainThread] Tarefa adicionada à fila: FM O Dia - RJ
+2025-08-19 02:09:02,067 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Fica com Deus (Ao Vivo) - Yan & Sorriso Maroto (FM O Dia - RJ)
+2025-08-19 02:09:02,067 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:02,071 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:02,072 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:02,077 DEBUG: [MainThread] Arquivo de segmento local /app/segments/FM O Dia - RJ_segment.mp3 removido.
+2025-08-19 02:09:03,069 INFO: [MainThread] Identificando música no arquivo /app/segments/98 FM Curitiba - PR_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:03,073 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:03,074 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:03,074 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:03,075 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:03,109 INFO: [Dummy-2] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:03,110 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:03,347 WARNING: [MainThread] Pool connection wait time: 1273.65ms
+2025-08-19 02:09:03,658 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500092 - FM O Dia - RJ - Fica com Deus (Ao Vivo)
+2025-08-19 02:09:03,972 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:03,973 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:03,981 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.908s
+2025-08-19 02:09:04,228 INFO: [MainThread] Música identificada: Te Assumi Pro Brasil (Ao Vivo) por Matheus & Kauan (ISRC: BKU8M2400042, Gravadora: Universal Music Ltda., Gênero: Sertanejo)
+2025-08-19 02:09:04,229 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Te Assumi Pro Brasil (Ao Vivo) - Matheus & Kauan em 98 FM Curitiba - PR
+2025-08-19 02:09:04,229 DEBUG: [MainThread] Tarefa adicionada à fila: 98 FM Curitiba - PR
+2025-08-19 02:09:04,231 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Te Assumi Pro Brasil (Ao Vivo) - Matheus & Kauan (98 FM Curitiba - PR)
+2025-08-19 02:09:04,231 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:04,232 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:04,243 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:04,248 DEBUG: [MainThread] Arquivo de segmento local /app/segments/98 FM Curitiba - PR_segment.mp3 removido.
+2025-08-19 02:09:05,229 INFO: [MainThread] Identificando música no arquivo /app/segments/Nova Brasil FM - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:05,232 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:05,232 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:05,233 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:05,233 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:05,233 INFO: [Dummy-2] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:05,233 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:05,479 WARNING: [MainThread] Pool connection wait time: 1236.13ms
+2025-08-19 02:09:05,795 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500093 - 98 FM Curitiba - PR - Te Assumi Pro Brasil (Ao Vivo)
+2025-08-19 02:09:06,128 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:06,128 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:06,143 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.899s
+2025-08-19 02:09:06,392 INFO: [MainThread] Música identificada: Meu país por Ivan Lins (ISRC: USRE11600259, Gravadora: Warner Music Group - X5 Music Group, Gênero: Brazilian)
+2025-08-19 02:09:06,393 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Meu país - Ivan Lins em Nova Brasil FM - SP
+2025-08-19 02:09:06,393 DEBUG: [MainThread] Tarefa adicionada à fila: Nova Brasil FM - SP
+2025-08-19 02:09:06,393 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Meu país - Ivan Lins (Nova Brasil FM - SP)
+2025-08-19 02:09:06,393 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:06,395 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:06,395 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:06,402 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Nova Brasil FM - SP_segment.mp3 removido.
+2025-08-19 02:09:07,395 INFO: [MainThread] Identificando música no arquivo /app/segments/Estilo FM São Paulo - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:07,399 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 7e, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:07,400 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:07,400 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:07,400 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 392+2 bytes.
+2025-08-19 02:09:07,401 INFO: [Dummy-2] found the format marker [ff, fb] @ 392+2 bytes.
+2025-08-19 02:09:07,401 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:07,578 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:07,579 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:07,620 WARNING: [MainThread] Pool connection wait time: 1224.54ms
+2025-08-19 02:09:07,923 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500094 - Nova Brasil FM - SP - Meu país
+2025-08-19 02:09:08,233 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.837s
+2025-08-19 02:09:08,404 INFO: [MainThread] Música identificada: Keep Our Love Alive por Stevie Wonder (ISRC: USMO10500349, Gravadora: UNI/MOTOWN, Gênero: R&B/Soul)
+2025-08-19 02:09:08,406 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Keep Our Love Alive - Stevie Wonder em Estilo FM São Paulo - SP
+2025-08-19 02:09:08,406 DEBUG: [MainThread] Tarefa adicionada à fila: Estilo FM São Paulo - SP
+2025-08-19 02:09:08,406 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Keep Our Love Alive - Stevie Wonder (Estilo FM São Paulo - SP)
+2025-08-19 02:09:08,406 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:08,408 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:08,417 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Estilo FM São Paulo - SP_segment.mp3 removido.
+2025-08-19 02:09:08,418 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:09,406 INFO: [MainThread] Identificando música no arquivo /app/segments/Alvorada FM 94,9 - MG_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:09,408 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:09,409 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:09,409 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:09,409 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:09,409 INFO: [Dummy-2] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:09,415 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:09,573 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:09,574 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:09,635 WARNING: [MainThread] Pool connection wait time: 1216.60ms
+2025-08-19 02:09:09,943 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500095 - Estilo FM São Paulo - SP - Keep Our Love Alive
+2025-08-19 02:09:10,245 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.827s
+2025-08-19 02:09:10,354 INFO: [MainThread] Música identificada: Goodbye por Spice Girls (ISRC: GBAAA9820805, Gravadora: Virgin Records, Gênero: Teen Pop)
+2025-08-19 02:09:10,355 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Goodbye - Spice Girls em Alvorada FM 94,9 - MG
+2025-08-19 02:09:10,359 DEBUG: [MainThread] Tarefa adicionada à fila: Alvorada FM 94,9 - MG
+2025-08-19 02:09:10,364 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Goodbye - Spice Girls (Alvorada FM 94,9 - MG)
+2025-08-19 02:09:10,365 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:10,366 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:10,366 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:10,368 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Alvorada FM 94,9 - MG_segment.mp3 removido.
+2025-08-19 02:09:11,355 INFO: [MainThread] Identificando música no arquivo /app/segments/Alpha FM - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:11,357 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:11,363 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:11,363 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:11,364 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:11,364 INFO: [Dummy-2] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:11,364 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:11,526 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:11,527 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:11,560 WARNING: [MainThread] Pool connection wait time: 1193.38ms
+2025-08-19 02:09:11,860 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500096 - Alvorada FM 94,9 - MG - Goodbye
+2025-08-19 02:09:12,175 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.808s
+2025-08-19 02:09:12,315 INFO: [MainThread] Música identificada: Clocks por Coldplay (ISRC: GBAYE1600193, Gravadora: Parlophone UK, Gênero: Alternative)
+2025-08-19 02:09:12,316 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Clocks - Coldplay em Alpha FM - SP
+2025-08-19 02:09:12,316 DEBUG: [MainThread] Tarefa adicionada à fila: Alpha FM - SP
+2025-08-19 02:09:12,317 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Clocks - Coldplay (Alpha FM - SP)
+2025-08-19 02:09:12,317 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:12,319 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:12,319 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:12,321 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Alpha FM - SP_segment.mp3 removido.
+2025-08-19 02:09:13,316 INFO: [MainThread] Identificando música no arquivo /app/segments/Classic Pan - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:13,319 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 7c, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:13,321 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:13,321 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:13,321 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 134+2 bytes.
+2025-08-19 02:09:13,322 INFO: [Dummy-2] found the format marker [ff, fb] @ 134+2 bytes.
+2025-08-19 02:09:13,322 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:13,479 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:13,480 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:13,514 WARNING: [MainThread] Pool connection wait time: 1194.63ms
+2025-08-19 02:09:13,812 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500097 - Alpha FM - SP - Clocks
+2025-08-19 02:09:14,112 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.792s
+2025-08-19 02:09:14,256 INFO: [MainThread] Música identificada: Wall of Silence por October Project (ISRC: USSM10022229, Gravadora: Epic, Gênero: Pop)
+2025-08-19 02:09:14,256 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Wall of Silence - October Project em Classic Pan - SP
+2025-08-19 02:09:14,257 DEBUG: [MainThread] Tarefa adicionada à fila: Classic Pan - SP
+2025-08-19 02:09:14,257 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Wall of Silence - October Project (Classic Pan - SP)
+2025-08-19 02:09:14,258 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:14,259 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:14,259 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:14,261 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Classic Pan - SP_segment.mp3 removido.
+2025-08-19 02:09:15,257 INFO: [MainThread] Identificando música no arquivo /app/segments/93 FM Rádio Show - MG_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:15,268 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:15,282 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:15,282 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:15,283 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:15,283 INFO: [Dummy-2] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:15,287 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:15,506 WARNING: [MainThread] Pool connection wait time: 1247.01ms
+2025-08-19 02:09:15,818 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500098 - Classic Pan - SP - Wall of Silence
+2025-08-19 02:09:16,133 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:16,134 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:16,136 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.877s
+2025-08-19 02:09:16,410 INFO: [MainThread] Música identificada: With or Without You por U2 (ISRC: GBUM70709792, Gravadora: UMC (Universal Music Catalogue), Gênero: Rock)
+2025-08-19 02:09:16,436 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: With or Without You - U2 em 93 FM Rádio Show - MG
+2025-08-19 02:09:16,436 DEBUG: [MainThread] Tarefa adicionada à fila: 93 FM Rádio Show - MG
+2025-08-19 02:09:16,436 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: With or Without You - U2 (93 FM Rádio Show - MG)
+2025-08-19 02:09:16,436 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:16,437 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:16,439 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:16,461 DEBUG: [MainThread] Arquivo de segmento local /app/segments/93 FM Rádio Show - MG_segment.mp3 removido.
+2025-08-19 02:09:17,412 INFO: [MainThread] Identificando música no arquivo /app/segments/Top FM 104,1 - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:17,414 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:17,421 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:17,422 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:17,422 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:17,423 INFO: [Dummy-2] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:17,425 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:17,679 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:17,680 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:17,739 WARNING: [MainThread] Pool connection wait time: 1300.08ms
+2025-08-19 02:09:18,040 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500099 - 93 FM Rádio Show - MG - With or Without You
+2025-08-19 02:09:18,376 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.937s
+2025-08-19 02:09:18,535 INFO: [MainThread] Nenhuma música identificada (resposta vazia do Shazam).
+2025-08-19 02:09:18,548 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Top FM 104,1 - SP_segment.mp3 removido.
+2025-08-19 02:09:19,538 INFO: [MainThread] Identificando música no arquivo /app/segments/Costa Verde FM - RJ_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:19,541 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 3, 7, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:19,542 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:19,542 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:09:19,542 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 401+2 bytes.
+2025-08-19 02:09:19,542 INFO: [Dummy-2] found the format marker [ff, fb] @ 401+2 bytes.
+2025-08-19 02:09:19,543 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:09:19,882 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:19,882 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:20,081 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:20,286 DEBUG: [MainThread] Attempt 2 out of 20
+2025-08-19 02:09:20,287 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:20,452 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:20,855 DEBUG: [MainThread] Attempt 3 out of 20
+2025-08-19 02:09:20,856 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:21,011 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:21,813 DEBUG: [MainThread] Attempt 4 out of 20
+2025-08-19 02:09:21,813 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:21,956 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:23,565 DEBUG: [MainThread] Attempt 5 out of 20
+2025-08-19 02:09:23,565 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:23,730 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:26,934 DEBUG: [MainThread] Attempt 6 out of 20
+2025-08-19 02:09:26,935 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:27,066 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:29,543 ERROR: [MainThread] Erro de conexão/timeout com Shazam (tentativa 1/5): . Esperando 1s...
+2025-08-19 02:09:30,545 INFO: [MainThread] Identificando música no arquivo /app/segments/Costa Verde FM - RJ_segment.mp3 (tentativa 2/5)...
+2025-08-19 02:09:30,547 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 3, 7, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:30,548 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:30,548 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:30,548 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 401+2 bytes.
+2025-08-19 02:09:30,551 INFO: [Dummy-3] found the format marker [ff, fb] @ 401+2 bytes.
+2025-08-19 02:09:30,552 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:30,705 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:30,706 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:30,913 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:31,114 DEBUG: [MainThread] Attempt 2 out of 20
+2025-08-19 02:09:31,115 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:31,244 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:31,645 DEBUG: [MainThread] Attempt 3 out of 20
+2025-08-19 02:09:31,646 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:31,775 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:32,577 DEBUG: [MainThread] Attempt 4 out of 20
+2025-08-19 02:09:32,578 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:32,711 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:34,315 DEBUG: [MainThread] Attempt 5 out of 20
+2025-08-19 02:09:34,315 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:34,445 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:09:35,216 WARNING: [asyncio_1] Pool connection wait time: 1206.05ms
+2025-08-19 02:09:35,673 DEBUG: [asyncio_1] Heartbeat enviado para o servidor 1
+2025-08-19 02:09:37,648 DEBUG: [MainThread] Attempt 6 out of 20
+2025-08-19 02:09:37,649 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:37,752 INFO: [MainThread] Música identificada: Eyes Closed por Ed Sheeran (ISRC: GBAHS2201304, Gravadora: Atlantic Records UK, Gênero: Pop)
+2025-08-19 02:09:37,752 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Eyes Closed - Ed Sheeran em Costa Verde FM - RJ
+2025-08-19 02:09:37,753 DEBUG: [MainThread] Tarefa adicionada à fila: Costa Verde FM - RJ
+2025-08-19 02:09:37,754 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Eyes Closed - Ed Sheeran (Costa Verde FM - RJ)
+2025-08-19 02:09:37,755 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:37,757 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:37,758 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:37,761 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Costa Verde FM - RJ_segment.mp3 removido.
+2025-08-19 02:09:38,753 INFO: [MainThread] Identificando música no arquivo /app/segments/Kiss FM São Paulo - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:38,758 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:38,760 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:38,761 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:38,762 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:38,763 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:38,764 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:38,927 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:38,928 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:38,947 WARNING: [MainThread] Pool connection wait time: 1188.30ms
+2025-08-19 02:09:39,241 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500102 - Costa Verde FM - RJ - Eyes Closed
+2025-08-19 02:09:39,539 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.781s
+2025-08-19 02:09:39,689 INFO: [MainThread] Música identificada: Plush por Stone Temple Pilots (ISRC: USAT29200016, Gravadora: Rhino, Gênero: Alternative)
+2025-08-19 02:09:39,689 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Plush - Stone Temple Pilots em Kiss FM São Paulo - SP
+2025-08-19 02:09:39,690 DEBUG: [MainThread] Tarefa adicionada à fila: Kiss FM São Paulo - SP
+2025-08-19 02:09:39,690 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Plush - Stone Temple Pilots (Kiss FM São Paulo - SP)
+2025-08-19 02:09:39,690 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:39,692 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:39,692 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:39,711 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Kiss FM São Paulo - SP_segment.mp3 removido.
+2025-08-19 02:09:40,691 INFO: [MainThread] Identificando música no arquivo /app/segments/JB FM - RJ_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:40,695 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:40,696 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:40,697 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:40,697 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:40,698 INFO: [Dummy-3] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:40,699 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:40,916 WARNING: [MainThread] Pool connection wait time: 1223.11ms
+2025-08-19 02:09:41,227 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500103 - Kiss FM São Paulo - SP - Plush
+2025-08-19 02:09:41,546 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:41,548 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:41,554 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.862s
+2025-08-19 02:09:41,789 INFO: [MainThread] Música identificada: Your Song por Al Jarreau (ISRC: USWB17600050, Gravadora: Rhino/Warner Records, Gênero: R&B/Soul)
+2025-08-19 02:09:41,789 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Your Song - Al Jarreau em JB FM - RJ
+2025-08-19 02:09:41,791 DEBUG: [MainThread] Tarefa adicionada à fila: JB FM - RJ
+2025-08-19 02:09:41,792 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Your Song - Al Jarreau (JB FM - RJ)
+2025-08-19 02:09:41,793 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:41,797 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:41,800 DEBUG: [MainThread] Arquivo de segmento local /app/segments/JB FM - RJ_segment.mp3 removido.
+2025-08-19 02:09:41,801 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:42,791 INFO: [MainThread] Identificando música no arquivo /app/segments/Metropolitana FM São Paulo - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:42,793 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:42,794 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:42,795 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:42,795 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:09:42,796 INFO: [Dummy-3] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:09:42,796 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:42,961 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:42,962 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:42,993 WARNING: [MainThread] Pool connection wait time: 1191.87ms
+2025-08-19 02:09:43,290 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500105 - JB FM - RJ - Your Song
+2025-08-19 02:09:43,641 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.839s
+2025-08-19 02:09:43,763 INFO: [MainThread] Música identificada: Big Energy por Latto (ISRC: USRC12102454, Gravadora: Streamcut/RCA Records, Gênero: Hip-Hop/Rap)
+2025-08-19 02:09:43,765 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Big Energy - Latto em Metropolitana FM São Paulo - SP
+2025-08-19 02:09:43,766 DEBUG: [MainThread] Tarefa adicionada à fila: Metropolitana FM São Paulo - SP
+2025-08-19 02:09:43,766 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Big Energy - Latto (Metropolitana FM São Paulo - SP)
+2025-08-19 02:09:43,767 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:43,769 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:43,772 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:43,784 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Metropolitana FM São Paulo - SP_segment.mp3 removido.
+2025-08-19 02:09:44,771 INFO: [MainThread] Identificando música no arquivo /app/segments/BH FM 102,1 - MG_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:44,772 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:44,773 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:44,773 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:44,773 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:44,774 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:44,775 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:44,922 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:44,922 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:44,972 WARNING: [MainThread] Pool connection wait time: 1199.22ms
+2025-08-19 02:09:45,268 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500106 - Metropolitana FM São Paulo - SP - Big Energy
+2025-08-19 02:09:45,579 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.806s
+2025-08-19 02:09:45,724 INFO: [MainThread] Música identificada: Apagar (Fundo Raso) por Ferrugem (ISRC: BXG3O2500055, Gravadora: WM Brazil, Gênero: Brazilian)
+2025-08-19 02:09:45,727 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Apagar (Fundo Raso) - Ferrugem em BH FM 102,1 - MG
+2025-08-19 02:09:45,728 DEBUG: [MainThread] Tarefa adicionada à fila: BH FM 102,1 - MG
+2025-08-19 02:09:45,730 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Apagar (Fundo Raso) - Ferrugem (BH FM 102,1 - MG)
+2025-08-19 02:09:45,730 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:45,731 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:45,739 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:45,742 DEBUG: [MainThread] Arquivo de segmento local /app/segments/BH FM 102,1 - MG_segment.mp3 removido.
+2025-08-19 02:09:46,725 INFO: [MainThread] Identificando música no arquivo /app/segments/Massa FM - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:46,736 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 1, 1e, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:46,736 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:46,737 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:46,737 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 168+2 bytes.
+2025-08-19 02:09:46,737 INFO: [Dummy-3] found the format marker [ff, fb] @ 168+2 bytes.
+2025-08-19 02:09:46,737 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:46,889 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:46,890 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:46,928 WARNING: [MainThread] Pool connection wait time: 1187.97ms
+2025-08-19 02:09:47,250 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500107 - BH FM 102,1 - MG - Apagar (Fundo Raso)
+2025-08-19 02:09:47,548 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.808s
+2025-08-19 02:09:47,713 INFO: [MainThread] Música identificada: Azul Da Cor Do Mar por Tim Maia (ISRC: BRMCA7000090, Gravadora: Universal Music Ltda., Gênero: MPB)
+2025-08-19 02:09:47,713 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Azul Da Cor Do Mar - Tim Maia em Massa FM - SP
+2025-08-19 02:09:47,713 DEBUG: [MainThread] Tarefa adicionada à fila: Massa FM - SP
+2025-08-19 02:09:47,713 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Azul Da Cor Do Mar - Tim Maia (Massa FM - SP)
+2025-08-19 02:09:47,714 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:47,715 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:47,715 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:47,719 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Massa FM - SP_segment.mp3 removido.
+2025-08-19 02:09:48,717 INFO: [MainThread] Identificando música no arquivo /app/segments/Tribuna FM - ES_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:48,719 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 7c, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:48,721 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:48,721 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:48,722 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 390+2 bytes.
+2025-08-19 02:09:48,722 INFO: [Dummy-3] found the format marker [ff, fb] @ 390+2 bytes.
+2025-08-19 02:09:48,722 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:48,899 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:48,899 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:48,917 WARNING: [MainThread] Pool connection wait time: 1201.02ms
+2025-08-19 02:09:49,219 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500108 - Massa FM - SP - Azul Da Cor Do Mar
+2025-08-19 02:09:49,527 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.811s
+2025-08-19 02:09:49,668 INFO: [MainThread] Música identificada: Mandy por Barry Manilow (ISRC: USAR17400164, Gravadora: Arista/Legacy, Gênero: Vocal)
+2025-08-19 02:09:49,668 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Mandy - Barry Manilow em Tribuna FM - ES
+2025-08-19 02:09:49,668 DEBUG: [MainThread] Tarefa adicionada à fila: Tribuna FM - ES
+2025-08-19 02:09:49,669 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Mandy - Barry Manilow (Tribuna FM - ES)
+2025-08-19 02:09:49,669 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:49,670 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:49,671 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:49,672 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Tribuna FM - ES_segment.mp3 removido.
+2025-08-19 02:09:50,670 INFO: [MainThread] Identificando música no arquivo /app/segments/Positividade FM Rio de Janeiro - RJ_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:50,673 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:50,675 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:50,675 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:50,675 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:50,675 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:50,677 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:50,857 WARNING: [MainThread] Pool connection wait time: 1186.04ms
+2025-08-19 02:09:51,179 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500109 - Tribuna FM - ES - Mandy
+2025-08-19 02:09:51,512 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:51,513 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:51,522 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.851s
+2025-08-19 02:09:51,801 INFO: [MainThread] Música identificada: Time After Time por Cyndi Lauper (ISRC: USSM18300650, Gravadora: Portrait, Gênero: Pop)
+2025-08-19 02:09:51,802 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Time After Time - Cyndi Lauper em Positividade FM Rio de Janeiro - RJ
+2025-08-19 02:09:51,802 DEBUG: [MainThread] Tarefa adicionada à fila: Positividade FM Rio de Janeiro - RJ
+2025-08-19 02:09:51,802 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Time After Time - Cyndi Lauper (Positividade FM Rio de Janeiro - RJ)
+2025-08-19 02:09:51,803 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:51,805 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:51,807 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:51,808 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Positividade FM Rio de Janeiro - RJ_segment.mp3 removido.
+2025-08-19 02:09:52,802 INFO: [MainThread] Identificando música no arquivo /app/segments/Legal FM - ES_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:52,806 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 3, 74, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:52,806 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:52,806 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:52,807 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 510+2 bytes.
+2025-08-19 02:09:52,807 INFO: [Dummy-3] found the format marker [ff, fb] @ 510+2 bytes.
+2025-08-19 02:09:52,827 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:53,025 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:53,026 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:53,035 WARNING: [MainThread] Pool connection wait time: 1227.38ms
+2025-08-19 02:09:53,331 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500110 - Positividade FM Rio de Janeiro - RJ - Time After Time
+2025-08-19 02:09:53,641 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.834s
+2025-08-19 02:09:53,641 DEBUG: [MainThread] Pool de conexões com uso normal: 0.0% (0/30)
+2025-08-19 02:09:53,641 DEBUG: [MainThread] Estatísticas do pool: {'created_connections': 7, 'closed_connections': 0, 'connection_errors': 0, 'pool_resets': 0, 'last_error': None, 'last_error_time': None}
+2025-08-19 02:09:53,806 INFO: [MainThread] Música identificada: Me Caiu Tão Bem (Ao Vivo) por Murilo Huff & Gustavo Mioto (ISRC: BKMWS2300023, Gravadora: M Show, Gênero: Sertanejo)
+2025-08-19 02:09:53,807 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Me Caiu Tão Bem (Ao Vivo) - Murilo Huff & Gustavo Mioto em Legal FM - ES
+2025-08-19 02:09:53,807 DEBUG: [MainThread] Tarefa adicionada à fila: Legal FM - ES
+2025-08-19 02:09:53,807 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Me Caiu Tão Bem (Ao Vivo) - Murilo Huff & Gustavo Mioto (Legal FM - ES)
+2025-08-19 02:09:53,807 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:53,809 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:53,809 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:53,814 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Legal FM - ES_segment.mp3 removido.
+2025-08-19 02:09:54,807 INFO: [MainThread] Identificando música no arquivo /app/segments/Gazeta FM 97,1 - ES_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:54,809 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:54,809 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:54,810 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:54,810 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:54,810 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:54,811 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:54,939 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:54,941 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:54,982 WARNING: [MainThread] Pool connection wait time: 1172.78ms
+2025-08-19 02:09:55,297 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500111 - Legal FM - ES - Me Caiu Tão Bem (Ao Vivo)
+2025-08-19 02:09:55,599 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.790s
+2025-08-19 02:09:55,725 INFO: [MainThread] Música identificada: Dust in the Wind por Sarah Brightman (ISRC: DENW81900088, Gravadora: Nemo Records, Gênero: Vocal)
+2025-08-19 02:09:55,726 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Dust in the Wind - Sarah Brightman em Gazeta FM 97,1 - ES
+2025-08-19 02:09:55,727 DEBUG: [MainThread] Tarefa adicionada à fila: Gazeta FM 97,1 - ES
+2025-08-19 02:09:55,727 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Dust in the Wind - Sarah Brightman (Gazeta FM 97,1 - ES)
+2025-08-19 02:09:55,727 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:55,728 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:55,729 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:55,735 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Gazeta FM 97,1 - ES_segment.mp3 removido.
+2025-08-19 02:09:56,725 INFO: [MainThread] Identificando música no arquivo /app/segments/Nativa FM - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:56,727 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:56,728 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:56,728 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:56,728 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:09:56,728 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:09:56,729 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:56,875 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:56,876 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:56,935 WARNING: [MainThread] Pool connection wait time: 1206.23ms
+2025-08-19 02:09:57,253 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500112 - Gazeta FM 97,1 - ES - Dust in the Wind
+2025-08-19 02:09:57,565 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.836s
+2025-08-19 02:09:57,567 INFO: [MainThread] Nenhuma música identificada (resposta vazia do Shazam).
+2025-08-19 02:09:57,568 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Nativa FM - SP_segment.mp3 removido.
+2025-08-19 02:09:58,568 INFO: [MainThread] Identificando música no arquivo /app/segments/FM Super - ES_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:58,572 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 26, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:58,572 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:58,572 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:58,573 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 304+2 bytes.
+2025-08-19 02:09:58,573 INFO: [Dummy-3] found the format marker [ff, fb] @ 304+2 bytes.
+2025-08-19 02:09:58,573 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:09:58,753 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:09:58,754 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:09:58,978 INFO: [MainThread] Música identificada: Chuva por João Bosco & Vinicius (ISRC: BRSME1000868, Gravadora: Sony Music Entertainment, Gênero: Brazilian)
+2025-08-19 02:09:58,981 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Chuva - João Bosco & Vinicius em FM Super - ES
+2025-08-19 02:09:58,982 DEBUG: [MainThread] Tarefa adicionada à fila: FM Super - ES
+2025-08-19 02:09:58,982 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Chuva - João Bosco & Vinicius (FM Super - ES)
+2025-08-19 02:09:58,982 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:09:58,985 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:09:58,986 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:09:58,991 DEBUG: [MainThread] Arquivo de segmento local /app/segments/FM Super - ES_segment.mp3 removido.
+2025-08-19 02:09:59,978 INFO: [MainThread] Identificando música no arquivo /app/segments/JK FM 102,7 - BSB_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:09:59,981 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 77, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:09:59,981 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:09:59,981 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:09:59,982 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 385+2 bytes.
+2025-08-19 02:09:59,982 INFO: [Dummy-3] found the format marker [ff, fb] @ 385+2 bytes.
+2025-08-19 02:09:59,985 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:00,247 WARNING: [MainThread] Pool connection wait time: 1259.27ms
+2025-08-19 02:10:00,584 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500113 - FM Super - ES - Chuva
+2025-08-19 02:10:00,883 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:00,884 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:00,885 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.898s
+2025-08-19 02:10:01,105 INFO: [MainThread] Música identificada: Domingo de Manhã por Marcos & Belutti (ISRC: BR3T81400037, Gravadora: Sony Music Entertainment, Gênero: Sertanejo)
+2025-08-19 02:10:01,105 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Domingo de Manhã - Marcos & Belutti em JK FM 102,7 - BSB
+2025-08-19 02:10:01,105 DEBUG: [MainThread] Tarefa adicionada à fila: JK FM 102,7 - BSB
+2025-08-19 02:10:01,105 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Domingo de Manhã - Marcos & Belutti (JK FM 102,7 - BSB)
+2025-08-19 02:10:01,106 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:01,107 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:01,107 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:01,126 DEBUG: [MainThread] Arquivo de segmento local /app/segments/JK FM 102,7 - BSB_segment.mp3 removido.
+2025-08-19 02:10:02,105 INFO: [MainThread] Identificando música no arquivo /app/segments/Music FM Recife - PE_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:02,108 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 25, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:02,109 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:02,112 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:02,112 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 303+2 bytes.
+2025-08-19 02:10:02,113 INFO: [Dummy-3] found the format marker [ff, fb] @ 303+2 bytes.
+2025-08-19 02:10:02,115 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:02,355 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:02,358 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:02,377 WARNING: [MainThread] Pool connection wait time: 1269.21ms
+2025-08-19 02:10:02,699 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500114 - JK FM 102,7 - BSB - Domingo de Manhã
+2025-08-19 02:10:03,013 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.906s
+2025-08-19 02:10:03,197 INFO: [MainThread] Música identificada: Reggae Night por Jimmy Cliff (ISRC: USSM19917309, Gravadora: Columbia, Gênero: Reggae)
+2025-08-19 02:10:03,199 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Reggae Night - Jimmy Cliff em Music FM Recife - PE
+2025-08-19 02:10:03,199 DEBUG: [MainThread] Tarefa adicionada à fila: Music FM Recife - PE
+2025-08-19 02:10:03,199 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Reggae Night - Jimmy Cliff (Music FM Recife - PE)
+2025-08-19 02:10:03,200 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:03,201 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:03,201 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:03,204 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Music FM Recife - PE_segment.mp3 removido.
+2025-08-19 02:10:04,198 INFO: [MainThread] Identificando música no arquivo /app/segments/Diário FM Ribeirão Preto - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:04,205 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:04,210 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:04,210 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:04,211 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:10:04,211 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:10:04,211 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:04,420 WARNING: [MainThread] Pool connection wait time: 1218.10ms
+2025-08-19 02:10:04,756 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500115 - Music FM Recife - PE - Reggae Night
+2025-08-19 02:10:05,061 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:05,063 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:05,107 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.906s
+2025-08-19 02:10:05,288 INFO: [MainThread] Música identificada: I Believe (Remastered) por Marcella Detroit (ISRC: GBAAP9400027, Gravadora: London Music Stream/Because Music, Gênero: Pop)
+2025-08-19 02:10:05,289 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: I Believe (Remastered) - Marcella Detroit em Diário FM Ribeirão Preto - SP
+2025-08-19 02:10:05,289 DEBUG: [MainThread] Tarefa adicionada à fila: Diário FM Ribeirão Preto - SP
+2025-08-19 02:10:05,289 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: I Believe (Remastered) - Marcella Detroit (Diário FM Ribeirão Preto - SP)
+2025-08-19 02:10:05,290 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:05,291 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:05,291 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:05,316 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Diário FM Ribeirão Preto - SP_segment.mp3 removido.
+2025-08-19 02:10:06,290 INFO: [MainThread] Identificando música no arquivo /app/segments/GFM Salvador - BA_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:06,306 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:06,306 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:06,324 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:06,324 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:10:06,324 INFO: [Dummy-3] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:10:06,325 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:06,596 WARNING: [MainThread] Pool connection wait time: 1304.47ms
+2025-08-19 02:10:06,911 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500116 - Diário FM Ribeirão Preto - SP - I Believe (Remastered)
+2025-08-19 02:10:07,229 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:07,229 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:07,231 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.940s
+2025-08-19 02:10:07,448 INFO: [MainThread] Música identificada: Stephanie por George Benson (ISRC: USWB10200434, Gravadora: Warner Records, Gênero: Pop)
+2025-08-19 02:10:07,449 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Stephanie - George Benson em GFM Salvador - BA
+2025-08-19 02:10:07,449 DEBUG: [MainThread] Tarefa adicionada à fila: GFM Salvador - BA
+2025-08-19 02:10:07,449 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Stephanie - George Benson (GFM Salvador - BA)
+2025-08-19 02:10:07,449 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:07,450 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:07,451 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:07,457 DEBUG: [MainThread] Arquivo de segmento local /app/segments/GFM Salvador - BA_segment.mp3 removido.
+2025-08-19 02:10:08,449 INFO: [MainThread] Identificando música no arquivo /app/segments/Transcontinental FM São Paulo - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:08,466 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 52, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:08,466 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:08,466 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:08,467 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 92+2 bytes.
+2025-08-19 02:10:08,467 INFO: [Dummy-3] found the format marker [ff, fb] @ 92+2 bytes.
+2025-08-19 02:10:08,467 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:08,645 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:08,646 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:08,708 WARNING: [MainThread] Pool connection wait time: 1250.74ms
+2025-08-19 02:10:09,014 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500117 - GFM Salvador - BA - Stephanie
+2025-08-19 02:10:09,344 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.887s
+2025-08-19 02:10:09,474 INFO: [MainThread] Música identificada: Concentrate on You por L.T.D. (ISRC: USAM17823383, Gravadora: A&M, Gênero: R&B/Soul)
+2025-08-19 02:10:09,475 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Concentrate on You - L.T.D. em Transcontinental FM São Paulo - SP
+2025-08-19 02:10:09,475 DEBUG: [MainThread] Tarefa adicionada à fila: Transcontinental FM São Paulo - SP
+2025-08-19 02:10:09,475 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Concentrate on You - L.T.D. (Transcontinental FM São Paulo - SP)
+2025-08-19 02:10:09,476 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:09,477 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:09,477 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:09,482 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Transcontinental FM São Paulo - SP_segment.mp3 removido.
+2025-08-19 02:10:10,475 INFO: [MainThread] Identificando música no arquivo /app/segments/Gazeta FM 88,1 - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:10,484 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:10,489 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:10,489 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:10,490 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:10:10,490 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:10:10,491 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:10,663 WARNING: [MainThread] Pool connection wait time: 1182.21ms
+2025-08-19 02:10:10,966 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500118 - Transcontinental FM São Paulo - SP - Concentrate on You
+2025-08-19 02:10:11,268 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:11,268 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:11,272 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.792s
+2025-08-19 02:10:11,477 INFO: [MainThread] Música identificada: Notificação Preferida (Ao Vivo) por Zé Neto & Cristiano (ISRC: BRWNV1800144, Gravadora: Som Livre, Gênero: Sertanejo)
+2025-08-19 02:10:11,478 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Notificação Preferida (Ao Vivo) - Zé Neto & Cristiano em Gazeta FM 88,1 - SP
+2025-08-19 02:10:11,478 DEBUG: [MainThread] Tarefa adicionada à fila: Gazeta FM 88,1 - SP
+2025-08-19 02:10:11,478 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Notificação Preferida (Ao Vivo) - Zé Neto & Cristiano (Gazeta FM 88,1 - SP)
+2025-08-19 02:10:11,478 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:11,479 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:11,480 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:11,491 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Gazeta FM 88,1 - SP_segment.mp3 removido.
+2025-08-19 02:10:12,479 INFO: [MainThread] Identificando música no arquivo /app/segments/Atlantida FM - RS_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:12,482 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 0, 6a, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:12,482 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:12,485 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:12,486 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 116+2 bytes.
+2025-08-19 02:10:12,486 INFO: [Dummy-3] found the format marker [ff, fb] @ 116+2 bytes.
+2025-08-19 02:10:12,487 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:12,693 WARNING: [MainThread] Pool connection wait time: 1212.82ms
+2025-08-19 02:10:12,990 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500119 - Gazeta FM 88,1 - SP - Notificação Preferida (Ao Vivo)
+2025-08-19 02:10:13,287 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:13,288 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:13,290 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.810s
+2025-08-19 02:10:13,504 INFO: [MainThread] Nenhuma música identificada (resposta vazia do Shazam).
+2025-08-19 02:10:13,505 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Atlantida FM - RS_segment.mp3 removido.
+2025-08-19 02:10:14,506 INFO: [MainThread] Identificando música no arquivo /app/segments/Antena Um - SP_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:14,508 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 6f, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:14,508 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:14,508 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:14,508 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 377+2 bytes.
+2025-08-19 02:10:14,509 INFO: [Dummy-3] found the format marker [ff, fb] @ 377+2 bytes.
+2025-08-19 02:10:14,509 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:14,709 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:14,710 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:14,885 INFO: [MainThread] Música identificada: Breathe Again por Toni Braxton (ISRC: USLF29300109, Gravadora: Arista/LaFace Records, Gênero: R&B/Soul)
+2025-08-19 02:10:14,886 DEBUG: [MainThread] insert_data_to_db: Adicionando à fila: Breathe Again - Toni Braxton em Antena Um - SP
+2025-08-19 02:10:14,887 DEBUG: [MainThread] Tarefa adicionada à fila: Antena Um - SP
+2025-08-19 02:10:14,887 INFO: [MainThread] insert_data_to_db: Tarefa adicionada à fila com sucesso: Breathe Again - Toni Braxton (Antena Um - SP)
+2025-08-19 02:10:14,887 DEBUG: [MainThread] Iniciando a função save_last_songs()
+2025-08-19 02:10:14,888 INFO: [MainThread] Arquivo de estado last_songs.json salvo.
+2025-08-19 02:10:14,889 DEBUG: [MainThread] Coletado lote de 1 tarefas (tamanho adaptativo: 200)
+2025-08-19 02:10:14,891 DEBUG: [MainThread] Arquivo de segmento local /app/segments/Antena Um - SP_segment.mp3 removido.
+2025-08-19 02:10:15,886 INFO: [MainThread] Identificando música no arquivo /app/segments/Sucesso FM Serra do Ramalho - BA_segment.mp3 (tentativa 1/5)...
+2025-08-19 02:10:15,888 DEBUG: [Dummy-3] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 35, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:15,888 INFO: [Dummy-3] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:15,888 DEBUG: [Dummy-3] chaining a metadata element.
+2025-08-19 02:10:15,889 DEBUG: [Dummy-3] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 319+2 bytes.
+2025-08-19 02:10:15,889 INFO: [Dummy-3] found the format marker [ff, fb] @ 319+2 bytes.
+2025-08-19 02:10:15,890 INFO: [Dummy-3] using xing header for duration
+2025-08-19 02:10:16,068 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:16,068 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:16,111 WARNING: [MainThread] Pool connection wait time: 1222.04ms
+2025-08-19 02:10:16,409 DEBUG: [MainThread] Inserção bem-sucedida: ID=4500121 - Antena Um - SP - Breathe Again
+2025-08-19 02:10:16,734 INFO: [MainThread] Lote processado: 1 sucessos, 0 falhas em 1.843s
+2025-08-19 02:10:16,887 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:17,091 DEBUG: [MainThread] Attempt 2 out of 20
+2025-08-19 02:10:17,092 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:17,222 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:17,626 DEBUG: [MainThread] Attempt 3 out of 20
+2025-08-19 02:10:17,627 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:17,773 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:18,574 DEBUG: [MainThread] Attempt 4 out of 20
+2025-08-19 02:10:18,575 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:18,710 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:20,314 DEBUG: [MainThread] Attempt 5 out of 20
+2025-08-19 02:10:20,315 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:20,450 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:23,653 DEBUG: [MainThread] Attempt 6 out of 20
+2025-08-19 02:10:23,653 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:23,789 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:25,904 ERROR: [MainThread] Erro de conexão/timeout com Shazam (tentativa 1/5): . Esperando 1s...
+2025-08-19 02:10:26,906 INFO: [MainThread] Identificando música no arquivo /app/segments/Sucesso FM Serra do Ramalho - BA_segment.mp3 (tentativa 2/5)...
+2025-08-19 02:10:26,911 DEBUG: [Dummy-2] found a possible format marker within [49, 44, 33, 4, 0, 0, 0, 0, 2, 35, 54, 58, 58, 58, 0, 0] @ 0+2 bytes.
+2025-08-19 02:10:26,914 INFO: [Dummy-2] found the format marker [49, 44, 33] @ 0+2 bytes.
+2025-08-19 02:10:26,916 DEBUG: [Dummy-2] chaining a metadata element.
+2025-08-19 02:10:26,917 DEBUG: [Dummy-2] found a possible format marker within [ff, fb, b0, c0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] @ 319+2 bytes.
+2025-08-19 02:10:26,918 INFO: [Dummy-2] found the format marker [ff, fb] @ 319+2 bytes.
+2025-08-19 02:10:26,919 INFO: [Dummy-2] using xing header for duration
+2025-08-19 02:10:27,120 DEBUG: [MainThread] Attempt 1 out of 20
+2025-08-19 02:10:27,121 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:27,331 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:27,536 DEBUG: [MainThread] Attempt 2 out of 20
+2025-08-19 02:10:27,536 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:27,672 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:28,081 DEBUG: [MainThread] Attempt 3 out of 20
+2025-08-19 02:10:28,082 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:28,220 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:29,022 DEBUG: [MainThread] Attempt 4 out of 20
+2025-08-19 02:10:29,054 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:29,189 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:30,790 DEBUG: [MainThread] Attempt 5 out of 20
+2025-08-19 02:10:30,791 DEBUG: [MainThread] Sending HTTP request
+2025-08-19 02:10:30,931 DEBUG: [MainThread] Retrying after response code: 429
+2025-08-19 02:10:32,171 INFO: [MainThread] Sinal de finalização recebido (15). Iniciando o encerramento controlado...

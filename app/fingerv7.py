@@ -1528,9 +1528,75 @@ async def check_rotation_schedule():
         return False
 
 
+# Classe para gerenciar rate limiting do Shazam
+class ShazamRateLimiter:
+    def __init__(self, max_requests_per_minute=20, pause_duration=120):
+        self.max_requests_per_minute = max_requests_per_minute
+        self.pause_duration = pause_duration  # em segundos
+        self.request_timestamps = []
+        self.pause_until_timestamp = 0.0
+        self.consecutive_429_count = 0
+        self.lock = asyncio.Lock()
+
+    async def wait_if_needed(self):
+        async with self.lock:
+            current_time = time.time()
+
+            # Verificar se está em pausa
+            if current_time < self.pause_until_timestamp:
+                remaining_pause = self.pause_until_timestamp - current_time
+                return False, dt.datetime.fromtimestamp(
+                    self.pause_until_timestamp
+                ).strftime("%H:%M:%S")
+
+            # Limpar timestamps antigos (mais de 60 segundos)
+            self.request_timestamps = [
+                ts for ts in self.request_timestamps if current_time - ts < 60
+            ]
+
+            # Verificar se excedeu o limite de requisições por minuto
+            if len(self.request_timestamps) >= self.max_requests_per_minute:
+                # Calcular tempo até que uma requisição saia da janela de 1 minuto
+                oldest_timestamp = min(self.request_timestamps)
+                wait_time = (
+                    60 - (current_time - oldest_timestamp) + 0.1
+                )  # +0.1s de margem
+
+                if wait_time > 0:
+                    logger.info(
+                        f"Rate limit preventivo: aguardando {wait_time:.2f}s antes da próxima requisição Shazam"
+                    )
+                    await asyncio.sleep(wait_time)
+
+            # Registrar nova requisição
+            self.request_timestamps.append(time.time())
+            return True, None
+
+    def record_success(self):
+        self.consecutive_429_count = 0  # Resetar contador de erros 429 consecutivos
+
+    def record_429_error(self):
+        self.consecutive_429_count += 1
+        current_time = time.time()
+
+        # Aumentar o tempo de pausa exponencialmente com base no número de erros 429 consecutivos
+        pause_time = min(
+            self.pause_duration * (2 ** (self.consecutive_429_count - 1)), 1800
+        )  # Máximo de 30 minutos
+        self.pause_until_timestamp = current_time + pause_time
+
+        logger.warning(
+            f"Erro 429 consecutivo #{self.consecutive_429_count}. Pausando Shazam por {pause_time}s (até {dt.datetime.fromtimestamp(self.pause_until_timestamp).strftime('%H:%M:%S')})"
+        )
+        return pause_time
+
+
 # Função worker para identificar música usando Shazamio (MODIFICADA)
 async def identify_song_shazamio(shazam):
-    global last_request_time, shazam_pause_until_timestamp
+    global last_request_time
+    # Criar instância do rate limiter
+    rate_limiter = ShazamRateLimiter(max_requests_per_minute=15, pause_duration=120)
+
     # Definir o fuso horário uma vez fora do loop usando pytz
     target_tz = None
     if HAS_PYTZ:
@@ -1571,27 +1637,20 @@ async def identify_song_shazamio(shazam):
         identification_attempted = False
         out = None  # Inicializar fora do loop de retentativa
 
-        # --- Verificar se o Shazam está em pausa ---
-        current_time_check = time.time()
-        if current_time_check < shazam_pause_until_timestamp:
+        # --- Verificar com o rate limiter se podemos prosseguir ---
+        can_proceed, pause_until = await rate_limiter.wait_if_needed()
+        if not can_proceed:
             logger.info(
-                f"Shazam em pausa devido a erro 429 anterior (até {dt.datetime.fromtimestamp(shazam_pause_until_timestamp).strftime('%H:%M:%S')}). Enviando {os.path.basename(file_path)} diretamente para failover."
+                f"Shazam em pausa devido a erro 429 anterior (até {pause_until}). Enviando {os.path.basename(file_path)} diretamente para failover."
             )
             if ENABLE_FAILOVER_SEND:
                 asyncio.create_task(send_file_via_failover(file_path, stream_index))
         else:
             # --- Tentar identificação se não estiver em pausa ---
             identification_attempted = True
-            # ... (loop de retentativas com tratamento de erro 429 e failover) ...
             max_retries = 5
             for attempt in range(max_retries):
                 try:
-                    # ... (código do try existente: esperar, logar, shazam.recognize) ...
-                    current_time = time.time()
-                    time_since_last_request = current_time - last_request_time
-                    if time_since_last_request < 1:
-                        await asyncio.sleep(1 - time_since_last_request)
-
                     logger.info(
                         f"Identificando música no arquivo {file_path} (tentativa {attempt + 1}/{max_retries})..."
                     )
@@ -1599,6 +1658,7 @@ async def identify_song_shazamio(shazam):
                         shazam.recognize(file_path), timeout=10
                     )
                     last_request_time = time.time()
+                    rate_limiter.record_success()  # Registrar sucesso para o rate limiter
 
                     if "track" in out:
                         break
@@ -1609,12 +1669,9 @@ async def identify_song_shazamio(shazam):
                         break
 
                 except ClientResponseError as e_resp:
-                    # ... (tratamento erro 429 com pausa e failover) ...
                     if e_resp.status == 429:
-                        logger.warning(
-                            f"Erro 429 (Too Many Requests) do Shazam detectado. Pausando Shazam por 2 minutos."
-                        )
-                        shazam_pause_until_timestamp = time.time() + 120
+                        # Usar o rate limiter para gerenciar a pausa
+                        rate_limiter.record_429_error()
                         if ENABLE_FAILOVER_SEND:
                             asyncio.create_task(
                                 send_file_via_failover(file_path, stream_index)
@@ -1627,14 +1684,12 @@ async def identify_song_shazamio(shazam):
                         )
                         await asyncio.sleep(wait_time)
                 except (ClientConnectorError, asyncio.TimeoutError) as e_conn:
-                    # ... (tratamento erro conexão/timeout) ...
                     wait_time = 2**attempt
                     logger.error(
                         f"Erro de conexão/timeout com Shazam (tentativa {attempt + 1}/{max_retries}): {e_conn}. Esperando {wait_time}s..."
                     )
                     await asyncio.sleep(wait_time)
                 except Exception as e_gen:
-                    # ... (tratamento erro genérico) ...
                     logger.error(
                         f"Erro inesperado ao identificar a música (tentativa {attempt + 1}/{max_retries}): {e_gen}",
                         exc_info=True,

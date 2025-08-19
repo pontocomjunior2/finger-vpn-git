@@ -8,6 +8,7 @@ import time
 import random
 import logging
 import threading
+import traceback
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2 import pool
@@ -26,6 +27,13 @@ class PoolMetrics:
         self.wait_times = []
         self.pool_exhausted_count = 0
         self._lock = threading.Lock()
+        self.connection_tracking = {}  # Para rastrear conexões ativas
+        self.long_lived_connections = {}  # Para rastrear conexões de longa duração
+        self.connection_threshold = 60  # Tempo em segundos para considerar uma conexão como suspeita
+        self.last_leak_check = time.time()
+        self.leak_check_interval = 120  # 2 minutos
+        self.last_metrics_log = time.time()
+        self.metrics_log_interval = 300  # 5 minutos
 
     def record_request(self, wait_time_ms, success=True):
         with self._lock:
@@ -43,6 +51,54 @@ class PoolMetrics:
         with self._lock:
             self.pool_exhausted_count += 1
             logger.error("Pool de conexões esgotado!")
+            
+    def track_connection_acquired(self, conn_id):
+        """Registra quando uma conexão é adquirida"""
+        with self._lock:
+            self.connection_tracking[conn_id] = {
+                'acquired_at': time.time(),
+                'stack_trace': ''.join(traceback.format_stack())
+            }
+    
+    def track_connection_released(self, conn_id):
+        """Registra quando uma conexão é liberada"""
+        with self._lock:
+            if conn_id in self.connection_tracking:
+                acquired_time = self.connection_tracking[conn_id]['acquired_at']
+                duration = time.time() - acquired_time
+                
+                # Se a conexão foi mantida por muito tempo, registrar como suspeita
+                if duration > self.connection_threshold:
+                    self.long_lived_connections[conn_id] = {
+                        'duration': duration,
+                        'stack_trace': self.connection_tracking[conn_id]['stack_trace']
+                    }
+                    logger.warning(f"Conexão {conn_id} mantida por {duration:.2f}s (acima do limite de {self.connection_threshold}s)")
+                
+                # Remover do rastreamento
+                del self.connection_tracking[conn_id]
+    
+    def check_for_connection_leaks(self):
+        """Verifica conexões que podem estar vazando (não foram liberadas)"""
+        with self._lock:
+            current_time = time.time()
+            leaked_connections = []
+            
+            for conn_id, data in list(self.connection_tracking.items()):
+                duration = current_time - data['acquired_at']
+                if duration > self.connection_threshold * 2:  # Tempo dobrado para considerar vazamento
+                    leaked_connections.append((conn_id, duration, data['stack_trace']))
+            
+            if leaked_connections:
+                logger.warning(f"Possíveis vazamentos de conexão detectados: {len(leaked_connections)} conexões")
+                for conn_id, duration, stack_trace in leaked_connections:
+                    logger.warning(f"Conexão {conn_id} em uso por {duration:.2f}s. Stack trace de aquisição:\n{stack_trace}")
+                    
+            # Limpar conexões muito antigas do rastreamento (podem ser conexões perdidas)
+            for conn_id, data in list(self.connection_tracking.items()):
+                if current_time - data['acquired_at'] > 3600:  # 1 hora
+                    logger.error(f"Removendo conexão {conn_id} do rastreamento após 1 hora (provável vazamento)")
+                    del self.connection_tracking[conn_id]
 
     def get_stats(self):
         with self._lock:
@@ -58,11 +114,13 @@ class PoolMetrics:
                 * 100,
                 "avg_wait_time_ms": avg_wait,
                 "pool_exhausted_count": self.pool_exhausted_count,
+                "tracked_connections": len(self.connection_tracking),
+                "long_lived_connections": len(self.long_lived_connections)
             }
 
 
 class DatabasePool:
-    def __init__(self, minconn=10, maxconn=30):
+    def __init__(self, minconn=20, maxconn=50):
         self.minconn = minconn
         self.maxconn = maxconn
         self.pool = None
@@ -78,6 +136,11 @@ class DatabasePool:
             "last_error": None,
             "last_error_time": None,
         }
+        # Inicializar monitoramento de conexões
+        self._connection_ids = {}
+        self._connection_tracking = {}
+        self._long_lived_connections = {}
+        self._last_leak_check = time.time()
         self._create_pool()
 
     def _create_pool(self):
@@ -91,7 +154,7 @@ class DatabasePool:
                     "password": os.getenv("POSTGRES_PASSWORD"),
                     "database": os.getenv("POSTGRES_DB"),
                     "port": os.getenv("POSTGRES_PORT", "5432"),
-                    "connect_timeout": 60,  # Aumentado para 60 segundos
+                    "connect_timeout": 90,  # Aumentado para 90 segundos
                     "options": "-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000",
                     "application_name": f'fingerv7_server_{os.getenv("SERVER_ID", "1")}',
                 }
@@ -159,7 +222,7 @@ class DatabasePool:
         start_time = time.time()
         max_retries = 5  # Aumentado para 5 tentativas
         base_delay = 0.2  # Delay base aumentado
-        connection_timeout = 120  # Timeout em segundos para obtenção de conexão
+        connection_timeout = 180  # Timeout em segundos para obtenção de conexão (aumentado para 3 minutos)
 
         for attempt in range(max_retries):
             try:
@@ -178,10 +241,14 @@ class DatabasePool:
                     await asyncio.to_thread(self._configure_session, conn)
                     await asyncio.to_thread(self._test_connection, conn)
 
+                    # Gerar um ID único para esta conexão para rastreamento
+                    conn_id = id(conn)
+                    
                     # Registrar métricas
                     wait_time_ms = (time.time() - start_time) * 1000
                     self.metrics.record_request(wait_time_ms, success=True)
                     self.metrics.active_connections += 1
+                    self.metrics.track_connection_acquired(conn_id)
 
                     try:
                         yield conn
@@ -189,6 +256,8 @@ class DatabasePool:
                         self.metrics.active_connections -= 1
                         try:
                             if conn and not conn.closed:
+                                # Registrar liberação da conexão
+                                self.metrics.track_connection_released(conn_id)
                                 await asyncio.to_thread(self.pool.putconn, conn)
                             else:
                                 logger.warning(
@@ -249,7 +318,7 @@ class DatabasePool:
         start_time = time.time()
         max_retries = 5  # Aumentado para 5 tentativas
         base_delay = 0.2  # Delay base aumentado
-        connection_timeout = 60  # Timeout em segundos para obtenção de conexão
+        connection_timeout = 180  # Timeout em segundos para obtenção de conexão (aumentado para 3 minutos)
 
         for attempt in range(max_retries):
             try:
@@ -376,24 +445,94 @@ class DatabasePool:
         logger.info("Pool de conexões recriado com sucesso")
 
     def handle_connection_failure(self, error):
-        """Gerencia falhas de conexão com estratégia de retry"""
+        """Gerencia falhas de conexão com estratégia de retry avançada"""
         self._pool_stats["connection_errors"] += 1
         self._pool_stats["last_error"] = str(error)
         self._pool_stats["last_error_time"] = datetime.now().isoformat()
-
+        error_str = str(error).lower()
+        
+        # Inicializar contador de falhas se não existir
+        if not hasattr(self, "_consecutive_failures"):
+            self._consecutive_failures = 0
+            self._last_failure_time = None
+            self._failure_types = {}
+        
+        # Incrementar contador de falhas consecutivas
+        self._consecutive_failures += 1
+        self._last_failure_time = datetime.now()
+        
+        # Registrar tipo de falha para análise de padrões
+        error_type = "unknown"
+        if "connection refused" in error_str:
+            error_type = "connection_refused"
+        elif "too many connections" in error_str:
+            error_type = "too_many_connections"
+        elif "connection timed out" in error_str:
+            error_type = "connection_timeout"
+        elif "idle in transaction" in error_str:
+            error_type = "idle_transaction"
+        elif "deadlock detected" in error_str:
+            error_type = "deadlock"
+        
+        # Incrementar contador para este tipo de erro
+        self._failure_types[error_type] = self._failure_types.get(error_type, 0) + 1
+        
         # Verificar se é necessário recriar o pool
-        if (
-            "connection refused" in str(error).lower()
-            or "too many connections" in str(error).lower()
-            or "connection timed out" in str(error).lower()
-        ):
+        critical_error = (
+            "connection refused" in error_str
+            or "too many connections" in error_str
+            or "connection timed out" in error_str
+            or "cannot connect now" in error_str
+            or "no connection to the server" in error_str
+        )
+        
+        # Estratégia de recuperação baseada na gravidade e frequência
+        if critical_error or self._consecutive_failures >= 5:
             logger.warning(
-                f"Detectado erro crítico de conexão: {error}. Recriando pool."
+                f"Detectado erro crítico de conexão: {error}. Recriando pool. "
+                f"Falhas consecutivas: {self._consecutive_failures}"
             )
             self.recreate_pool()
+            
+            # Se muitas falhas consecutivas, aguardar um pouco antes de continuar
+            if self._consecutive_failures >= 10:
+                logger.error(f"Muitas falhas consecutivas ({self._consecutive_failures}). Pausando operações.")
+                time.sleep(5)  # Pausa mais longa para permitir recuperação do sistema
+            
             return True
-
+        
+        # Resetar contador se última falha foi há mais de 5 minutos
+        if self._last_failure_time and (datetime.now() - self._last_failure_time) > timedelta(minutes=5):
+            self._consecutive_failures = 1
+            self._failure_types = {error_type: 1}
+            
         return False
+        
+    def _force_release_idle_connections(self):
+        """Tenta liberar conexões que possam estar inativas por muito tempo"""
+        if not self.pool or self.pool.closed:
+            return
+            
+        try:
+            released = 0
+            
+            # Forçar coleta de lixo para liberar conexões não utilizadas
+            import gc
+            gc.collect()
+            
+            # Tentar recriar o pool em caso de uso muito elevado
+            if self.metrics.active_connections > self.maxconn * 0.9:
+                logger.warning("Uso crítico do pool. Recriando pool para liberar conexões.")
+                self.recreate_pool()
+                released = self.metrics.active_connections
+                logger.info(f"Pool recriado. Liberadas aproximadamente {released} conexões.")
+            
+            if released > 0:
+                logger.info(f"Liberadas {released} conexões potencialmente inativas")
+                
+        except Exception as e:
+            logger.error(f"Erro ao tentar liberar conexões inativas: {e}")
+            # Não propagar o erro, pois esta é uma operação de recuperação
 
     def get_pool_stats(self):
         """Retorna estatísticas do pool"""
@@ -416,6 +555,36 @@ class DatabasePool:
 
         stats.update({"pool_stats": self._pool_stats})
         return stats
+        
+    def get_detailed_stats(self):
+        """Retorna estatísticas detalhadas do pool para análise de vazamentos"""
+        stats = self.get_pool_stats()
+        
+        # Adicionar informações de tendência se disponível
+        if hasattr(self, "_usage_history") and self._usage_history:
+            # Calcular média de uso nas últimas horas
+            hour_ago = time.time() - 3600
+            recent_points = [p for p in self._usage_history if p[0] >= hour_ago]
+            if recent_points:
+                avg_usage = sum(p[2] for p in recent_points) / len(recent_points)
+                stats["avg_usage_last_hour"] = avg_usage
+                
+                # Calcular taxa de crescimento
+                if len(recent_points) >= 2:
+                    start_usage = recent_points[0][2]
+                    end_usage = recent_points[-1][2]
+                    stats["usage_growth_last_hour"] = end_usage - start_usage
+                    
+                    # Detectar padrão de crescimento constante
+                    is_growing = all(p[2] >= p_prev[2] for p_prev, p in zip(recent_points, recent_points[1:]))
+                    stats["constant_growth_pattern"] = is_growing
+        
+        # Adicionar informações sobre falhas de conexão
+        if hasattr(self, "_consecutive_failures"):
+            stats["consecutive_failures"] = self._consecutive_failures
+            stats["failure_types"] = self._failure_types
+            
+        return stats
 
     def _check_pool_health(self):
         """Verifica a saúde do pool de conexões e detecta possíveis vazamentos"""
@@ -423,6 +592,13 @@ class DatabasePool:
             return
 
         try:
+            # Inicializar histórico de uso se não existir
+            if not hasattr(self, "_usage_history"):
+                self._usage_history = []
+                self._connection_tracking = {}
+                self._last_leak_check = time.time()
+                self._last_connection_dump = 0
+
             # Verificar se há muitas conexões em uso por muito tempo
             usage_ratio = (
                 self.metrics.active_connections / self.maxconn
@@ -430,6 +606,31 @@ class DatabasePool:
                 else 0
             )
             usage_percent = usage_ratio * 100
+            
+            # Manter histórico de uso para análise de tendências
+            current_time = time.time()
+            self._usage_history.append((current_time, usage_ratio, self.metrics.active_connections))
+            # Limitar o histórico a 24 horas (288 pontos com intervalo de 5 minutos)
+            if len(self._usage_history) > 288:
+                self._usage_history.pop(0)
+            
+            # Calcular tendência de uso nas últimas horas
+            if len(self._usage_history) >= 12:  # Pelo menos 1 hora de dados
+                # Calcular taxa de crescimento do uso do pool
+                hour_ago = current_time - 3600
+                recent_points = [p for p in self._usage_history if p[0] >= hour_ago]
+                if recent_points:
+                    start_usage = recent_points[0][2]  # Conexões em uso 1 hora atrás
+                    current_usage = self.metrics.active_connections
+                    growth_rate = current_usage - start_usage
+                    self._pool_stats["hourly_growth_rate"] = growth_rate
+                    
+                    # Alertar se houver crescimento constante (possível vazamento)
+                    if growth_rate > 5 and all(p[2] >= p_prev[2] for p_prev, p in zip(recent_points, recent_points[1:])):
+                        logger.warning(
+                            f"Possível vazamento de conexões detectado: crescimento constante de {growth_rate} "
+                            f"conexões na última hora. Uso atual: {current_usage}/{self.maxconn}"
+                        )
 
             # Registrar estatísticas de uso do pool
             if usage_percent > 80:
@@ -438,7 +639,6 @@ class DatabasePool:
                 )
 
                 # Verificar duração do problema
-                current_time = time.time()
                 if not hasattr(self, "_high_usage_start_time"):
                     self._high_usage_start_time = current_time
                 elif (
@@ -449,8 +649,10 @@ class DatabasePool:
                     )
                     # Forçar coleta de lixo para liberar conexões não utilizadas
                     import gc
-
                     gc.collect()
+                    
+                    # Tentar liberar conexões inativas
+                    self._force_release_idle_connections()
 
             elif usage_percent > 60:
                 logger.info(
@@ -473,6 +675,11 @@ class DatabasePool:
                 avg_wait = sum(self.metrics.wait_times) / len(self.metrics.wait_times)
                 if avg_wait > 500:  # Tempo médio de espera > 500ms
                     logger.warning(f"Tempo médio de espera elevado: {avg_wait:.2f}ms")
+                    
+            # Registrar estatísticas detalhadas periodicamente
+            if current_time - self._last_leak_check > 1800:  # A cada 30 minutos
+                self._last_leak_check = current_time
+                logger.info(f"Estatísticas detalhadas do pool: {self.get_detailed_stats()}")
 
         except Exception as e:
             logger.error(f"Erro ao verificar saúde do pool: {e}")
@@ -483,6 +690,12 @@ class DatabasePool:
         """Retorna uma conexão ao pool"""
         if self.pool and conn:
             try:
+                # Recuperar o ID da conexão para rastreamento
+                conn_id = id(conn)
+                
+                # Registrar liberação da conexão
+                self.metrics.track_connection_released(conn_id)
+                
                 self.pool.putconn(conn)
             except Exception as e:
                 logger.error(f"Erro ao retornar conexão ao pool: {e}")
