@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copiar o resto do código da aplicação para o diretório de trabalho
 COPY fingerv7.py .
+COPY db_pool.py .
+COPY async_queue.py .
+COPY __init__.py .
 # Se você usa o streams.json como fallback inicial, copie-o também:
 # COPY streams.json .
 

@@ -179,12 +179,6 @@ class DatabasePool:
                     except:
                         pass
                 raise
-        finally:
-            if conn:
-                try:
-                    await asyncio.to_thread(self.pool.putconn, conn)
-                except Exception as e:
-                    logger.error(f"Erro ao retornar conexão ao pool: {e}")
     
     def get_connection_sync(self):
         """Versão síncrona do gerenciador de contexto"""
@@ -250,12 +244,6 @@ class DatabasePool:
                     except:
                         pass
                 raise
-        finally:
-            if conn:
-                try:
-                    self.pool.putconn(conn)
-                except Exception as e:
-                    logger.error(f"Erro ao retornar conexão ao pool: {e}")
     
     def _test_connection(self, conn):
         """Testa se a conexão está válida"""
