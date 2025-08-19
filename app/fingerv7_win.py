@@ -33,6 +33,7 @@ except ImportError:
     # Considerar sair se pytz for essencial
     # sys.exit(1)
 import psycopg2.errors # Para capturar UniqueViolation
+from db_pool import db_pool
 
 # Definir diretório de segmentos global
 SEGMENTS_DIR = os.getenv('SEGMENTS_DIR', 'C:/DATARADIO/segments')
@@ -301,7 +302,7 @@ def check_log_table():
     logger.info(f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados...")
     conn = None # Initialize conn to None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
             return False
@@ -438,7 +439,7 @@ CREATE TABLE {} (
         return False
     finally:
         if conn:
-            conn.close()
+            db_pool.putconn(conn)
 
 # Fila para enviar ao Shazamio (RESTAURADO)
 shazam_queue = asyncio.Queue()
@@ -548,8 +549,9 @@ def load_streams():
     logger.info(f"Configurações de distribuição: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}, DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, ENABLE_ROTATION={ENABLE_ROTATION}")
     logger.info(f"Conexão BD: HOST={DB_HOST}, DB={DB_NAME}, USER={DB_USER}, PORT={DB_PORT}")
     streams = []
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if conn:
             with conn.cursor() as cursor:
                 # Testar se a tabela existe antes de consultar
@@ -578,7 +580,6 @@ def load_streams():
                         "index": str(row[7])
                     }
                     streams.append(stream)
-            conn.close()
         else:
             logger.error("Não foi possível conectar ao banco de dados. Tentando carregar do arquivo local.")
             # Fallback para o arquivo JSON local se não conseguir conectar ao banco
@@ -597,6 +598,9 @@ def load_streams():
             logger.info(f"Streams carregados do arquivo local como fallback após erro no banco.")
         except Exception as e:
             logger.error(f"Erro ao carregar o arquivo JSON local: {e}")
+    finally:
+        if conn:
+            db_pool.putconn(conn)
     
     # Aplicar distribuição de carga se ativada
     if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
@@ -617,9 +621,10 @@ def load_streams():
             distributed_streams = []
             
             # Garantir que a distribuição não falhe mesmo se houver inconsistências
+            conn = None
             try:
                 # Usar uma tabela de controle no banco de dados para garantir exclusividade
-                conn = connect_db()
+                conn = db_pool.get_connection_sync()
                 if conn:
                     # Primeiro, atualizar ou inserir registros de controle para este servidor
                     with conn.cursor() as cursor:
@@ -636,7 +641,9 @@ def load_streams():
                                 distributed_streams.append(stream)
                             else:
                                 stream['processed_by_server'] = False
-                    conn.close()
+            finally:
+                if conn:
+                    db_pool.putconn(conn)
             except Exception as e:
                 logger.error(f"Erro ao aplicar distribuição de carga no banco: {e}")
                 # Fallback para método simples original em caso de erro
@@ -744,18 +751,22 @@ async def monitor_streams_file(callback):
             current_time = time.time()
             # Verificar apenas a cada intervalo definido
             if current_time - last_check_time >= check_interval:
-                conn = connect_db()
-                if conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM streams")
-                        current_count = cursor.fetchone()[0]
-                        
-                        # Se o número de streams mudou, recarregar
-                        if current_count != last_streams_count:
-                            logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
-                            last_streams_count = current_count
-                            callback()
-                    conn.close()
+                conn = None
+                try:
+                    conn = db_pool.get_connection_sync()
+                    if conn:
+                        with conn.cursor() as cursor:
+                            cursor.execute("SELECT COUNT(*) FROM streams")
+                            current_count = cursor.fetchone()[0]
+                            
+                            # Se o número de streams mudou, recarregar
+                            if current_count != last_streams_count:
+                                logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
+                                last_streams_count = current_count
+                                callback()
+                finally:
+                    if conn:
+                        db_pool.putconn(conn)
                 last_check_time = current_time
             
             await asyncio.sleep(60)  # Verificar a cada minuto se é hora de checar o banco
@@ -904,7 +915,7 @@ async def insert_data_to_db(entry_base, now_tz):
 
     conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if not conn:
             logger.error("insert_data_to_db: Não foi possível conectar ao DB.")
             return False # Falha na inserção
@@ -1005,8 +1016,8 @@ async def insert_data_to_db(entry_base, now_tz):
         return False # Indica falha na inserção
     finally:
         if conn:
-            try: conn.close()
-            except Exception as cl_err: logger.error(f"Erro ao fechar conexão: {cl_err}")
+            try: db_pool.putconn(conn)
+            except Exception as cl_err: logger.error(f"Erro ao retornar conexão ao pool: {cl_err}")
 
 # Função para atualizar o log local e chamar a inserção no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
@@ -1135,8 +1146,9 @@ async def check_and_alert_persistent_errors():
 # Função para sincronizar o arquivo JSON local com o banco de dados
 async def sync_json_with_db():
     logger.debug("Iniciando a função sync_json_with_db()")
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
@@ -1169,11 +1181,13 @@ async def sync_json_with_db():
                     json.dump(streams, f, ensure_ascii=False, indent=2)
                 
                 logger.info(f"Arquivo JSON local sincronizado com sucesso. {len(streams)} streams salvos.")
-            conn.close()
         else:
             logger.error("Não foi possível conectar ao banco de dados para sincronizar o arquivo JSON local.")
     except Exception as e:
         logger.error(f"Erro ao sincronizar o arquivo JSON local com o banco de dados: {e}")
+    finally:
+        if conn:
+            db_pool.putconn(conn)
 
 # Função para agendar a sincronização periódica do arquivo JSON
 async def schedule_json_sync():
@@ -1445,7 +1459,7 @@ async def send_heartbeat():
         logger.info(f"DEBUG HEARTBEAT - processing_stream_names count: {len(processing_stream_names)}")
         logger.info(f"DEBUG HEARTBEAT - processing_stream_names: {processing_stream_names}")
         
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para enviar heartbeat.")
             return
@@ -1508,7 +1522,7 @@ async def send_heartbeat():
         logger.error(f"DEBUG - SERVER_ID durante erro: {SERVER_ID}")
     finally:
         if conn:
-            conn.close()
+            db_pool.putconn(conn)
 
 # Função para verificar status de outros servidores
 async def check_servers_status():
@@ -1521,10 +1535,12 @@ async def check_servers_status():
         try:
             await asyncio.sleep(CHECK_INTERVAL_SECS)
             
-            conn = connect_db()
-            if not conn:
-                logger.error("Não foi possível conectar ao banco de dados para verificar status dos servidores.")
-                continue
+            conn = None
+            try:
+                conn = db_pool.get_connection_sync()
+                if not conn:
+                    logger.error("Não foi possível conectar ao banco de dados para verificar status dos servidores.")
+                    continue
                 
             with conn.cursor() as cursor:
                 # Verificar se a tabela existe
@@ -1607,8 +1623,8 @@ Este é um alerta automático.
         except Exception as e:
             logger.error(f"Erro ao verificar status dos servidores: {e}")
         finally:
-            if 'conn' in locals() and conn:
-                conn.close()
+            if conn:
+                db_pool.putconn(conn)
 
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0

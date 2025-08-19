@@ -10,6 +10,7 @@ import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from db_pool import db_pool
 
 # Novo: suporte a Redis para leitura em tempo real
 try:
@@ -244,8 +245,9 @@ async def list_instances() -> List[Dict[str, Any]]:
             pass
     
     # Fallback: usar DB (comportamento original)
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute("""
                 SELECT server_id, last_heartbeat, status, ip_address, info
@@ -257,18 +259,17 @@ async def list_instances() -> List[Dict[str, Any]]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn:
+            db_pool.putconn(conn)
 
 @app.get("/api/instances/{server_id}/last-records")
 def last_records(server_id: int, limit: int = Query(5, ge=1, le=50)) -> List[Dict[str, Any]]:
     """
     Retorna os últimos registros gravados no DB pela instância (identified_by = server_id).
     """
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             # IMPORTANTE: respeitar tabela configurada via DB_TABLE_NAME
             query = f"""
@@ -284,18 +285,17 @@ def last_records(server_id: int, limit: int = Query(5, ge=1, le=50)) -> List[Dic
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn:
+            db_pool.putconn(conn)
 
 @app.get("/api/instances/{server_id}/errors")
 def last_errors(server_id: int) -> Dict[str, Any]:
     """
     Retorna os últimos erros reportados pela instância no último heartbeat (se presentes no info.recent_errors).
     """
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute("""
                 SELECT info
@@ -318,7 +318,5 @@ def last_errors(server_id: int) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn:
+            db_pool.putconn(conn)

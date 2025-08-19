@@ -34,6 +34,8 @@ except ImportError:
     # sys.exit(1)
 import psycopg2.errors # Para capturar UniqueViolation
 import psycopg2.extras # Para DictCursor
+from db_pool import db_pool
+from async_queue import insert_queue
 
 # Definir diretório de segmentos global
 SEGMENTS_DIR = os.getenv('SEGMENTS_DIR', 'C:/DATARADIO/segments')
@@ -308,9 +310,9 @@ def _ftp_upload_sync(local_file_path, remote_path):
 # Verificar se a tabela de logs existe (RESTAURADO)
 def check_log_table():
     logger.info(f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados...")
-    conn = None # Initialize conn to None
+    conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if not conn:
             logger.error("Não foi possível conectar ao banco de dados para verificar a tabela de logs.")
             return False
@@ -447,7 +449,7 @@ CREATE TABLE {} (
         return False
     finally:
         if conn:
-            conn.close()
+            db_pool.putconn(conn)
 
 # Fila para enviar ao Shazamio (RESTAURADO)
 shazam_queue = asyncio.Queue()
@@ -492,8 +494,12 @@ class StreamConnectionTracker:
 
 connection_tracker = StreamConnectionTracker() # Instanciar o tracker (RESTAURADO)
 
-# Função para conectar ao banco de dados PostgreSQL
+# Função para conectar ao banco de dados PostgreSQL usando pool
 def connect_db():
+    """
+    Função de compatibilidade que usa o pool de conexões.
+    DEPRECATED: Use db_pool.get_connection() diretamente para novos códigos.
+    """
     try:
         # Validar se as configurações essenciais existem
         if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]):
@@ -505,36 +511,43 @@ def connect_db():
             
             error_msg = f"Configurações de banco de dados incompletas. Faltando: {', '.join(missing)}"
             logger.error(error_msg)
-            # send_email_alert("Erro: Configurações de Banco de Dados Incompletas", error_msg)
             return None
             
-        # Mostrar informações de conexão (sem a senha)
-        logger.info(f"Conectando ao banco PostgreSQL: {DB_HOST}:{DB_PORT}/{DB_NAME} (usuário: {DB_USER})")
+        # Usar o pool de conexões em vez de criar conexão direta
+        logger.debug(f"Obtendo conexão do pool para PostgreSQL: {DB_HOST}:{DB_PORT}/{DB_NAME}")
         
-        conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            connect_timeout=10  # Timeout de 10 segundos para a conexão
-        )
-        logger.debug("Conexão ao banco de dados estabelecida com sucesso!")
-        return conn
+        # Retornar uma conexão do pool (sem context manager para compatibilidade)
+        conn = db_pool.pool.getconn()
+        if conn:
+            # Testar se a conexão está válida
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            logger.debug("Conexão do pool obtida com sucesso!")
+            return conn
+        else:
+            logger.error("Não foi possível obter conexão do pool")
+            return None
+            
     except psycopg2.OperationalError as e:
-        # Erro operacional (servidor inacessível, credenciais incorretas, etc.)
         error_msg = f"Erro operacional ao conectar ao banco: {e}"
         logger.error(error_msg)
-        # send_email_alert("Alerta: Falha na Conexão com o Banco de Dados", 
-        #                  f"O servidor {SERVER_ID} não conseguiu se conectar ao banco de dados PostgreSQL em {DB_HOST}:{DB_PORT}.\\n\\nErro: {e}")
         return None
     except Exception as e:
-        # Outros erros
         error_msg = f"Erro ao conectar ao banco de dados: {e}"
         logger.error(error_msg)
-        # send_email_alert("Alerta: Falha na Conexão com o Banco de Dados", 
-        #                  f"O servidor {SERVER_ID} não conseguiu se conectar ao banco de dados PostgreSQL em {DB_HOST}:{DB_PORT}.\\n\\nErro: {e}")
         return None
+
+# Função para retornar conexão ao pool
+def close_db_connection(conn):
+    """
+    Retorna a conexão ao pool em vez de fechá-la.
+    Use esta função em vez de conn.close() quando usar connect_db().
+    """
+    if conn:
+        try:
+            db_pool.pool.putconn(conn)
+        except Exception as e:
+            logger.error(f"Erro ao retornar conexão ao pool: {e}")
 
 # Função para calcular o deslocamento de rotação com base no tempo
 def calculate_rotation_offset():
@@ -559,7 +572,7 @@ def fetch_streams_from_db():
     """
     conn = None
     try:
-        conn = connect_db()
+        conn = db_pool.get_connection_sync()
         if not conn:
             logger.warning("Não foi possível conectar ao banco de dados para buscar streams.")
             return None
@@ -602,9 +615,9 @@ def fetch_streams_from_db():
     finally:
         if conn:
             try:
-                conn.close()
+                db_pool.putconn(conn)
             except Exception as close_err:
-                logger.error(f"Erro ao fechar conexão do banco de dados: {close_err}")
+                logger.error(f"Erro ao retornar conexão ao pool: {close_err}")
 
 # Função para salvar streams no arquivo JSON local
 def save_streams_to_json(streams):
@@ -802,18 +815,22 @@ async def monitor_streams_file(callback):
             current_time = time.time()
             # Verificar apenas a cada intervalo definido
             if current_time - last_check_time >= check_interval:
-                conn = connect_db()
-                if conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM streams")
-                        current_count = cursor.fetchone()[0]
-                        
-                        # Se o número de streams mudou, recarregar
-                        if current_count != last_streams_count:
-                            logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
-                            last_streams_count = current_count
-                            callback()
-                    conn.close()
+                conn = None
+                try:
+                    conn = db_pool.get_connection_sync()
+                    if conn:
+                        with conn.cursor() as cursor:
+                            cursor.execute("SELECT COUNT(*) FROM streams")
+                            current_count = cursor.fetchone()[0]
+                            
+                            # Se o número de streams mudou, recarregar
+                            if current_count != last_streams_count:
+                                logger.info(f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}")
+                                last_streams_count = current_count
+                                callback()
+                finally:
+                    if conn:
+                        db_pool.putconn(conn)
                 last_check_time = current_time
             
             await asyncio.sleep(60)  # Verificar a cada minuto se é hora de checar o banco
@@ -963,161 +980,46 @@ async def _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
         # --- Fim Log Detalhado ---
         return False # Assume não duplicata em caso de erro na verificação
 
-# Função para inserir dados no banco de dados (MODIFICADA)
+# Função para inserir dados no banco de dados usando fila assíncrona
 async def insert_data_to_db(entry_base, now_tz):
-    # Recebe dicionário base e timestamp TZ-aware
+    """
+    Adiciona uma tarefa de inserção à fila assíncrona.
+    Retorna True se a tarefa foi adicionada com sucesso à fila.
+    """
     song_title = entry_base['song_title']
     artist = entry_base['artist']
     name = entry_base['name']
-    logger.debug(f"insert_data_to_db: Iniciando processo para {song_title} - {artist} em {name}")
-
-    conn = None
-    success = False # Flag para indicar sucesso da inserção
+    
+    logger.debug(f"insert_data_to_db: Adicionando à fila: {song_title} - {artist} em {name}")
+    
     try:
-        # --- Operações de DB movidas para uma função síncrona --- 
-        def db_insert_operations():
-            _conn = None
-            _success = False
-            try:
-                _conn = connect_db()
-                if not _conn:
-                    logger.error("insert_data_to_db [thread]: Não foi possível conectar ao DB.")
-                    return _conn, False # Retorna conexão (None) e falha
-
-                with _conn.cursor() as cursor:
-                    # PASSO 1: Verificar duplicidade
-                    # AVISO: _internal_is_duplicate_in_db agora é async
-                    # NÃO PODE ser chamada diretamente aqui. A lógica de duplicidade
-                    # precisa ser refeita ou chamada ANTES de entrar neste thread.
-                    # ----> SOLUÇÃO TEMPORÁRIA: Movendo a verificação para fora do to_thread <----
-                    # ----> Verificação será feita antes de chamar esta função síncrona. <----
-                    
-                    # PASSO 2: Formatar date/time strings e Inserir
-                    date_str = now_tz.strftime('%Y-%m-%d')
-                    time_str = now_tz.strftime('%H:%M:%S')
-                    logger.debug(f"  [thread] Formatado para INSERT: date='{date_str}', time='{time_str}'")
-
-                    entry = entry_base.copy()
-                    entry["date"] = date_str
-                    entry["time"] = time_str
-
-                    # Verificar tabela
-                    cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
-                    if not cursor.fetchone()[0]:
-                        logger.error(f"insert_data_to_db [thread]: A tabela '{DB_TABLE_NAME}' não existe! Inserção falhou.")
-                        return _conn, False
-
-                    # Preparar valores
-                    values = (
-                        entry["date"], entry["time"], entry["name"], entry["artist"], entry["song_title"],
-                        entry.get("isrc", ""), entry.get("cidade", ""), entry.get("estado", ""),
-                        entry.get("regiao", ""), entry.get("segmento", ""), entry.get("label", ""),
-                        entry.get("genre", ""),
-                        entry.get("identified_by", str(SERVER_ID))
-                    )
-                    logger.debug(f"insert_data_to_db [thread]: Valores para inserção: {values}")
-
-                    query = f'''
-                        INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                    '''
-                    try:
-                        cursor.execute(query, values)
-                        inserted_id = cursor.fetchone()
-
-                        if inserted_id:
-                            _conn.commit()
-                            logger.info(f"insert_data_to_db [thread]: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})")
-                            _success = True
-                        else:
-                            logger.error(f"insert_data_to_db [thread]: Inserção falhou ou não retornou ID para {song_title} - {artist}.")
-                            _conn.rollback()
-                            _success = False
-
-                    except psycopg2.errors.UniqueViolation as e_unique:
-                        _conn.rollback()
-                        logger.warning(f"insert_data_to_db [thread]: Inserção falhou devido a violação UNIQUE: {e_unique}")
-                        _success = False
-                    except Exception as e_insert:
-                        _conn.rollback()
-                        logger.error(f"insert_data_to_db [thread]: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}")
-                        # O alerta de e-mail foi movido para fora do thread
-                        _success = False
-                        # Re-lançar para capturar fora e enviar e-mail
-                        raise e_insert 
-
-            except Exception as e_cursor:
-                 logger.error(f"insert_data_to_db [thread]: Erro dentro do bloco with cursor: {e_cursor}")
-                 if _conn: _conn.rollback()
-                 _success = False
-                 raise e_cursor # Re-lançar
-                 
-            # Retorna a conexão (para fechar fora) e o status de sucesso
-            return _conn, _success
-            
-        # --- Fim da função síncrona db_insert_operations ---
+        # Formatar dados para inserção
+        date_str = now_tz.strftime('%Y-%m-%d')
+        time_str = now_tz.strftime('%H:%M:%S')
         
-        # PASSO 1 (NOVO): Verificar duplicidade ANTES de chamar o thread de inserção
-        # Precisamos de uma conexão e cursor temporários aqui no contexto async
-        temp_conn = None
-        is_duplicate = False
-        try:
-            # Obter conexão temporária no thread
-            temp_conn = await asyncio.to_thread(connect_db)
-            if not temp_conn:
-                logger.error("insert_data_to_db: Não foi possível conectar ao DB para verificar duplicidade.")
-                return False # Falha
-            
-            # Obter cursor e verificar duplicidade (usando a função async já modificada)
-            # A função _internal_is_duplicate_in_db já usa asyncio.to_thread internamente
-            with temp_conn.cursor() as temp_cursor:
-                 is_duplicate = await _internal_is_duplicate_in_db(temp_cursor, now_tz, name, artist, song_title)
-            
-            # Fechar conexão temporária no thread
-            await asyncio.to_thread(temp_conn.close)
-            temp_conn = None # Resetar para evitar fechamento duplo no finally
-        except Exception as e_dup_check:
-             logger.error(f"insert_data_to_db: Erro ao verificar duplicidade antes da inserção: {e_dup_check}", exc_info=True)
-             if temp_conn:
-                 try: await asyncio.to_thread(temp_conn.close)
-                 except: pass # Ignorar erros ao fechar conexão temporária
-             return False # Falha
-
-        if is_duplicate:
-            logger.info(f"insert_data_to_db: Inserção ignorada, duplicata encontrada (pré-verificação) para {song_title} - {artist} em {name}.")
-            return False # Indica que não inseriu (duplicata)
-
-        # PASSO 2 (NOVO): Executar a inserção real no thread se não for duplicata
-        conn, success = await asyncio.to_thread(db_insert_operations)
-
-        # Se houve um erro geral de inserção dentro do thread (relançado), enviar e-mail
-        if not success and conn: # Verificar conn para saber se a falha foi após conectar
-            # (O erro já foi logado dentro do thread ou no except abaixo)
-            # Verificar se o erro foi do tipo que queremos alertar (não UniqueViolation)
-            # Idealmente, db_insert_operations poderia retornar o tipo de erro
-            logger.info("Enviando alerta de e-mail por falha na inserção (não duplicata)")
-            subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
-            body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Verifique os logs.\nDados: {entry_base}"
-            send_email_alert(subject, body)
-
+        entry = entry_base.copy()
+        entry["date"] = date_str
+        entry["time"] = time_str
+        entry["identified_by"] = str(SERVER_ID)
+        
+        # Adicionar à fila assíncrona
+        await insert_queue.add_task(entry)
+        
+        logger.info(f"insert_data_to_db: Tarefa adicionada à fila com sucesso: {song_title} - {artist} ({name})")
+        return True
+        
     except Exception as e:
-        # Erros na pré-verificação de duplicidade ou ao chamar/esperar o to_thread
-        logger.error(f"insert_data_to_db: Erro INESPERADO ({song_title} - {artist}): {e}", exc_info=True)
-        success = False # Garante que o status é de falha
-        # Se a conexão principal (não a temporária) foi estabelecida no thread e um erro ocorreu
-        # fora dele, precisamos tentar fechar.
-        # No entanto, 'conn' pode não estar definido ou ser None aqui.
-        # O fechamento principal está no finally.
-
-    finally:
-        if conn: # Se a conexão foi retornada do thread db_insert_operations
-            try:
-                await asyncio.to_thread(conn.close)
-            except Exception as cl_err:
-                logger.error(f"Erro ao fechar conexão principal: {cl_err}")
-                
-    return success # Retorna True se inseriu, False caso contrário
+        logger.error(f"insert_data_to_db: Erro ao adicionar tarefa à fila ({song_title} - {artist}): {e}", exc_info=True)
+        
+        # Enviar alerta por e-mail em caso de erro crítico
+        try:
+            subject = "Alerta: Erro ao Adicionar Tarefa à Fila de Inserção"
+            body = f"O servidor {SERVER_ID} encontrou um erro ao adicionar uma tarefa à fila de inserção.\n\nErro: {e}\nDados: {entry_base}"
+            send_email_alert(subject, body)
+        except Exception as email_err:
+            logger.error(f"Erro ao enviar e-mail de alerta: {email_err}")
+        
+        return False
 
 # Função para atualizar o log local e chamar a inserção no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
@@ -1265,22 +1167,25 @@ async def sync_json_with_db():
     try:
         # Operações de DB em thread separada
         def db_operations():
-            _conn = connect_db()
-            if not _conn:
-                return None, None # Retorna None para conn e rows se a conexão falhar
+            _conn = None
             try:
+                _conn = db_pool.get_connection_sync()
+                if not _conn:
+                    return None, None # Retorna None para conn e rows se a conexão falhar
                 with _conn.cursor() as _cursor:
                     _cursor.execute("SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index")
                     _rows = _cursor.fetchall()
-                return _conn, _rows # Retorna a conexão e as linhas
+                return None, _rows # Retorna None para conn (já foi devolvida ao pool) e as linhas
             except Exception as db_err:
                 logger.error(f"Erro DB em sync_json_with_db (operações cursor): {db_err}")
-                return _conn, None # Retorna a conexão (para fechar) e None para rows
-            # O finally não é necessário aqui, pois o close será chamado fora
+                return None, None # Retorna None para conn e rows em caso de erro
+            finally:
+                if _conn:
+                    db_pool.putconn(_conn)
 
         conn, rows = await asyncio.to_thread(db_operations)
 
-        if conn and rows is not None: # Checar se rows não é None
+        if rows is not None: # Checar se rows não é None
             streams = []
             for row in rows:
                 stream = {
@@ -1311,20 +1216,11 @@ async def sync_json_with_db():
             except Exception as file_err:
                 logger.error(f"Erro ao salvar arquivo JSON local em sync_json_with_db: {file_err}")
 
-        elif conn is None:
-             logger.error("Não foi possível conectar ao banco de dados para sincronizar o arquivo JSON local.")
-        else: # conn existe, mas rows é None (erro no cursor)
+        else:
              logger.error("Erro ao buscar dados do banco para sincronizar o arquivo JSON local.")
              
     except Exception as e:
         logger.error(f"Erro geral ao sincronizar o arquivo JSON local com o banco de dados: {e}")
-    finally:
-        if conn:
-            try:
-                # Fechar conexão em thread separada
-                await asyncio.to_thread(conn.close)
-            except Exception as close_err:
-                logger.error(f"Erro ao fechar conexão DB em sync_json_with_db: {close_err}")
 
 # Função para agendar a sincronização periódica do arquivo JSON
 async def schedule_json_sync():
@@ -1577,7 +1473,7 @@ async def send_heartbeat():
         def db_heartbeat_operations():
             _conn = None
             try:
-                _conn = connect_db()
+                _conn = db_pool.get_connection_sync()
                 if not _conn:
                     logger.error("send_heartbeat [thread]: Não foi possível conectar ao DB.")
                     return None # Retorna None se conexão falhar
@@ -1613,6 +1509,9 @@ async def send_heartbeat():
                 logger.error(f"Erro DB em send_heartbeat [thread]: {db_err}")
                 if _conn: _conn.rollback() # Tentar rollback
                 return _conn # Retorna a conexão (possivelmente None) para tentar fechar
+            finally:
+                if _conn:
+                    db_pool.putconn(_conn)
 
         # Executar operações DB no thread
         conn = await asyncio.to_thread(db_heartbeat_operations)
@@ -1620,11 +1519,8 @@ async def send_heartbeat():
     except Exception as e:
         logger.error(f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}")
     finally:
-        if conn:
-            try:
-                await asyncio.to_thread(conn.close)
-            except Exception as close_err:
-                 logger.error(f"Erro ao fechar conexão DB em send_heartbeat: {close_err}")
+        # Conexão já é retornada ao pool na função db_heartbeat_operations
+        pass
 
 # Função para verificar status de outros servidores
 async def check_servers_status():
@@ -1645,7 +1541,7 @@ async def check_servers_status():
                 _send_alert = False # Flag para indicar se o alerta deve ser enviado
                 
                 try:
-                    _conn = connect_db()
+                    _conn = db_pool.get_connection_sync()
                     if not _conn:
                         logger.error("check_servers_status [thread]: Não foi possível conectar ao DB.")
                         return _conn, [], [], False # conn, offline, online, send_alert
@@ -1697,7 +1593,10 @@ async def check_servers_status():
                     logger.error(f"Erro DB em check_servers_status [thread]: {db_err}")
                     if _conn: _conn.rollback()
                     # Retorna a conexão para fechar, mas listas vazias e sem alerta
-                    return _conn, [], [], False 
+                    return _conn, [], [], False
+                finally:
+                    if _conn:
+                        db_pool.putconn(_conn) 
 
             # Executar operações DB no thread
             conn, offline_servers, online_servers, send_alert = await asyncio.to_thread(db_check_status_operations)
@@ -1745,13 +1644,7 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
                 
         except Exception as e:
             logger.error(f"Erro no loop principal de check_servers_status: {e}")
-        finally:
-            if conn:
-                try:
-                    await asyncio.to_thread(conn.close)
-                    conn = None # Garantir que não tentará fechar novamente
-                except Exception as close_err:
-                     logger.error(f"Erro ao fechar conexão DB em check_servers_status: {close_err}")
+        # Conexão é retornada ao pool na função db_check_status_operations
 
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0
@@ -1761,6 +1654,14 @@ async def main():
     logger.debug("Iniciando a função main()")
     logger.info(f"Configurações de distribuição carregadas do .env: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}")
     logger.info(f"Distribuição de carga: {DISTRIBUTE_LOAD}, Rotação: {ENABLE_ROTATION}, Horas de rotação: {ROTATION_HOURS}")
+    
+    # Inicializar a fila assíncrona de inserções
+    try:
+        await insert_queue.start()
+        logger.info("Fila assíncrona de inserções inicializada com sucesso")
+    except Exception as e_queue:
+        logger.error(f"Erro ao inicializar fila assíncrona: {e_queue}")
+        sys.exit(1)
     
     # Verificar se a tabela de logs existe e criar se necessário (executar em thread)
     try:
@@ -1927,6 +1828,14 @@ if __name__ == '__main__':
             logger.error(f"Não foi possível enviar e-mail de alerta para erro crítico: {email_err}")
     finally:
         logger.info("Aplicação encerrando...")
+        
+        # Encerrar a fila assíncrona de inserções
+        try:
+            await insert_queue.stop()
+            logger.info("Fila assíncrona de inserções encerrada com sucesso")
+        except Exception as e_queue_stop:
+            logger.error(f"Erro ao encerrar fila assíncrona: {e_queue_stop}")
+        
         # Garantir que todas as tarefas sejam canceladas no encerramento
         if 'active_tasks' in globals() and active_tasks:
             logger.info(f"Tentando cancelar {len(active_tasks)} tarefas ativas...")
