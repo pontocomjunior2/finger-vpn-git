@@ -1831,7 +1831,8 @@ if __name__ == '__main__':
         
         # Encerrar a fila assíncrona de inserções
         try:
-            await insert_queue.stop()
+            # Usar asyncio.run() para executar a operação assíncrona no contexto síncrono
+            asyncio.run(insert_queue.stop())
             logger.info("Fila assíncrona de inserções encerrada com sucesso")
         except Exception as e_queue_stop:
             logger.error(f"Erro ao encerrar fila assíncrona: {e_queue_stop}")
