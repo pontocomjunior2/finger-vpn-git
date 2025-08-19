@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2 import pool
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class DatabasePool:
             logger.warning(f"Erro ao configurar parâmetros de sessão: {e}")
             conn.rollback()
     
-    @contextmanager
+    @asynccontextmanager
     async def get_connection(self):
         """Gerenciador de contexto assíncrono para obter conexão do pool"""
         conn = None
@@ -144,6 +144,10 @@ class DatabasePool:
                         yield conn
                     finally:
                         self.metrics.active_connections -= 1
+                        try:
+                            await asyncio.to_thread(self.pool.putconn, conn)
+                        except Exception as e:
+                            logger.error(f"Erro ao retornar conexão ao pool: {e}")
                     return
                 else:
                     raise psycopg2.OperationalError("Não foi possível obter conexão do pool")
@@ -176,8 +180,8 @@ class DatabasePool:
                 if conn:
                     try:
                         await asyncio.to_thread(self.pool.putconn, conn)
-                    except:
-                        pass
+                    except Exception as put_err:
+                        logger.error(f"Erro ao retornar conexão ao pool: {put_err}")
                 raise
     
     def get_connection_sync(self):
@@ -252,6 +256,7 @@ class DatabasePool:
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
         except Exception as e:
+            logger.error(f"Teste de conexão falhou: {e}")
             raise psycopg2.OperationalError(f"Conexão inválida: {e}")
     
     def recreate_pool(self):

@@ -155,29 +155,39 @@ class AsyncInsertQueue:
             from db_pool import get_db_pool
             
             # Usar pool de conexões para inserção em lote
-            async with get_db_pool().get_connection() as conn:
-                cursor = conn.cursor()
-                
-                successful_inserts = 0
-                failed_inserts = 0
-                
+            try:
+                async with get_db_pool().get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    successful_inserts = 0
+                    failed_inserts = 0
+                    
+                    for task in batch:
+                        try:
+                            await self._insert_single_task(cursor, task)
+                            successful_inserts += 1
+                            
+                        except Exception as e:
+                            failed_inserts += 1
+                            
+                            # Tentar novamente se não excedeu limite
+                            if task.retry_count < task.max_retries:
+                                task.retry_count += 1
+                                await self.queue.put(task)
+                                logger.warning(f"Recolocando tarefa na fila (tentativa {task.retry_count}): {e}")
+                            else:
+                                logger.error(f"Tarefa falhou após {task.max_retries} tentativas: {e}")
+                                self.stats['total_failed'] += 1
+            except Exception as e:
+                logger.error(f"Erro ao processar lote: {e}")
+                # Recolocar todas as tarefas na fila
                 for task in batch:
-                    try:
-                        await self._insert_single_task(cursor, task)
-                        successful_inserts += 1
-                        
-                    except Exception as e:
-                        failed_inserts += 1
-                        
-                        # Tentar novamente se não excedeu limite
-                        if task.retry_count < task.max_retries:
-                            task.retry_count += 1
-                            await self.queue.put(task)
-                            logger.warning(f"Recolocando tarefa na fila (tentativa {task.retry_count}): {e}")
-                        else:
-                            logger.error(f"Tarefa falhou após {task.max_retries} tentativas: {e}")
-                            self.stats['total_failed'] += 1
-                
+                    if task.retry_count < task.max_retries:
+                        task.retry_count += 1
+                        await self.queue.put(task)
+                    else:
+                        self.stats['total_failed'] += 1
+            else:
                 # Commit das inserções bem-sucedidas
                 if successful_inserts > 0:
                     conn.commit()
@@ -196,6 +206,12 @@ class AsyncInsertQueue:
                 if task.retry_count < task.max_retries:
                     task.retry_count += 1
                     await self.queue.put(task)
+                else:
+                    self.stats['total_failed'] += 1
+            
+            # Atualizar estatísticas mesmo em caso de erro
+            processing_time = time.time() - start_time
+            self._update_processing_stats(processing_time)
                     
     async def _insert_single_task(self, cursor, task: InsertTask):
         """Insere uma única tarefa no banco"""
