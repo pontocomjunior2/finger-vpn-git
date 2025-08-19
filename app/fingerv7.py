@@ -142,7 +142,10 @@ TOTAL_SERVERS = int(os.getenv("TOTAL_SERVERS", "1"))  # Número total de servido
 DISTRIBUTE_LOAD = (
     os.getenv("DISTRIBUTE_LOAD", "False").lower() == "true"
 )  # Ativar distribuição
-# ROTATION_HOURS e ENABLE_ROTATION foram removidos - agora usa hashing consistente
+
+# Variáveis legadas para compatibilidade - agora usam hashing consistente
+ENABLE_ROTATION = False  # Sempre False, pois usa hashing consistente
+ROTATION_HOURS = 0       # Sempre 0, pois não há rotação por tempo
 
 # Validar SERVER_ID
 if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
