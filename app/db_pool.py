@@ -62,7 +62,7 @@ class PoolMetrics:
 
 
 class DatabasePool:
-    def __init__(self, minconn=5, maxconn=20):
+    def __init__(self, minconn=10, maxconn=30):
         self.minconn = minconn
         self.maxconn = maxconn
         self.pool = None
@@ -159,6 +159,7 @@ class DatabasePool:
         start_time = time.time()
         max_retries = 5  # Aumentado para 5 tentativas
         base_delay = 0.2  # Delay base aumentado
+        connection_timeout = 120  # Timeout em segundos para obtenção de conexão
 
         for attempt in range(max_retries):
             try:
@@ -366,9 +367,33 @@ class DatabasePool:
         try:
             if self.pool:
                 self.pool.closeall()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Erro ao fechar pool existente: {e}")
+
+        # Adicionar delay antes de recriar para evitar sobrecarga
+        time.sleep(1)
         self._create_pool()
+        logger.info("Pool de conexões recriado com sucesso")
+
+    def handle_connection_failure(self, error):
+        """Gerencia falhas de conexão com estratégia de retry"""
+        self._pool_stats["connection_errors"] += 1
+        self._pool_stats["last_error"] = str(error)
+        self._pool_stats["last_error_time"] = datetime.now().isoformat()
+
+        # Verificar se é necessário recriar o pool
+        if (
+            "connection refused" in str(error).lower()
+            or "too many connections" in str(error).lower()
+            or "connection timed out" in str(error).lower()
+        ):
+            logger.warning(
+                f"Detectado erro crítico de conexão: {error}. Recriando pool."
+            )
+            self.recreate_pool()
+            return True
+
+        return False
 
     def get_pool_stats(self):
         """Retorna estatísticas do pool"""
@@ -399,18 +424,56 @@ class DatabasePool:
 
         try:
             # Verificar se há muitas conexões em uso por muito tempo
-            if self.metrics.active_connections > (
-                self.maxconn * 0.8
-            ):  # Se mais de 80% das conexões estão em uso
+            usage_ratio = (
+                self.metrics.active_connections / self.maxconn
+                if self.maxconn > 0
+                else 0
+            )
+            usage_percent = usage_ratio * 100
+
+            # Registrar estatísticas de uso do pool
+            if usage_percent > 80:
                 logger.warning(
-                    f"Possível vazamento de conexões detectado: {self.metrics.active_connections}/{self.maxconn} conexões em uso"
+                    f"Possível vazamento de conexões detectado: {self.metrics.active_connections}/{self.maxconn} conexões em uso ({usage_percent:.1f}%)"
                 )
 
-                # Se todas as conexões estiverem em uso, tentar resetar o pool
-                if self.metrics.active_connections >= self.maxconn:
-                    logger.error("Pool de conexões esgotado. Tentando resetar o pool.")
-                    self.recreate_pool()
-                    self._pool_stats["pool_resets"] += 1
+                # Verificar duração do problema
+                current_time = time.time()
+                if not hasattr(self, "_high_usage_start_time"):
+                    self._high_usage_start_time = current_time
+                elif (
+                    current_time - self._high_usage_start_time > 300
+                ):  # 5 minutos de uso alto
+                    logger.error(
+                        f"Uso elevado persistente do pool por mais de 5 minutos: {usage_percent:.1f}%"
+                    )
+                    # Forçar coleta de lixo para liberar conexões não utilizadas
+                    import gc
+
+                    gc.collect()
+
+            elif usage_percent > 60:
+                logger.info(
+                    f"Uso elevado do pool: {usage_percent:.1f}% ({self.metrics.active_connections}/{self.maxconn})"
+                )
+                if hasattr(self, "_high_usage_start_time"):
+                    delattr(self, "_high_usage_start_time")
+            else:
+                if hasattr(self, "_high_usage_start_time"):
+                    delattr(self, "_high_usage_start_time")
+
+            # Se todas as conexões estiverem em uso, tentar resetar o pool
+            if self.metrics.active_connections >= self.maxconn:
+                logger.error("Pool de conexões esgotado. Tentando resetar o pool.")
+                self.recreate_pool()
+                self._pool_stats["pool_resets"] += 1
+
+            # Verificar tempos de espera elevados
+            if hasattr(self.metrics, "wait_times") and self.metrics.wait_times:
+                avg_wait = sum(self.metrics.wait_times) / len(self.metrics.wait_times)
+                if avg_wait > 500:  # Tempo médio de espera > 500ms
+                    logger.warning(f"Tempo médio de espera elevado: {avg_wait:.2f}ms")
+
         except Exception as e:
             logger.error(f"Erro ao verificar saúde do pool: {e}")
             self._pool_stats["last_error"] = str(e)

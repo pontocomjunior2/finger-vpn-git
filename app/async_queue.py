@@ -192,13 +192,13 @@ class AsyncInsertQueue:
             from db_pool import get_db_pool
 
             # Obter estatísticas do pool
-            pool_stats = get_db_pool().get_stats()
+            pool_stats = get_db_pool().get_pool_stats()
 
             # Registrar métricas no log
-            if "used_connections" in pool_stats and "free_connections" in pool_stats:
-                used = pool_stats["used_connections"]
-                free = pool_stats["free_connections"]
-                max_conn = pool_stats["max_connections"]
+            if "active_connections" in pool_stats and "pool_max_conn" in pool_stats:
+                used = pool_stats["active_connections"]
+                free = pool_stats.get("pool_max_conn", 0) - used
+                max_conn = pool_stats.get("pool_max_conn", 0)
 
                 # Calcular porcentagem de uso
                 usage_percent = (used / max_conn) * 100 if max_conn > 0 else 0
@@ -281,12 +281,12 @@ class AsyncInsertQueue:
             from db_pool import get_db_pool
 
             # Tentar obter estatísticas do pool
-            pool_stats = get_db_pool().get_stats()
+            pool_stats = get_db_pool().get_pool_stats()
 
             # Se o pool estiver com uso elevado, reduzir o tamanho do lote
-            if "used_connections" in pool_stats and "max_connections" in pool_stats:
-                used = pool_stats.get("used_connections", 0)
-                max_conn = pool_stats.get("max_connections", 1)
+            if "active_connections" in pool_stats and "pool_max_conn" in pool_stats:
+                used = pool_stats.get("active_connections", 0)
+                max_conn = pool_stats.get("pool_max_conn", 1)
                 usage_ratio = used / max_conn if max_conn > 0 else 0
 
                 if usage_ratio > 0.8:  # Mais de 80% do pool em uso
@@ -327,8 +327,10 @@ class AsyncInsertQueue:
                 async with get_db_pool().get_connection() as conn:
                     cursor = conn.cursor()
 
-                    # Processar em grupos menores para evitar transações muito longas
-                    chunk_size = 20  # Processar em chunks de 20 para transações menores
+                    # Processar em grupos maiores para reduzir o número de transações
+                    chunk_size = (
+                        50  # Aumentado para 50 para reduzir número de transações
+                    )
 
                     for i in range(0, len(batch), chunk_size):
                         chunk = batch[i : i + chunk_size]

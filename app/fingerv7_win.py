@@ -1553,10 +1553,10 @@ Este é um alerta automático.
                     db_pool.putconn(conn)
 
 
-
-
+# fmt: off
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0
+# fmt: on
 
 # Função principal para processar todos os streams
 async def main():

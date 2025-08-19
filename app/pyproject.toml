@@ -1,0 +1,8 @@
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '''
+(async_queue\.py)
+|(db_pool\.py)
+|(dashboard_api\.py)
+'''
