@@ -25,6 +25,8 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import signal
 import socket
+import hashlib
+from bisect import bisect_left
 import platform
 from ftplib import FTP, error_perm
 import datetime as dt  # Usar alias para evitar conflito com variável datetime
@@ -589,6 +591,8 @@ CREATE TABLE {} (
 
 # Fila para enviar ao Shazamio (RESTAURADO)
 shazam_queue = asyncio.Queue()
+
+ACTIVE_SERVERS = []  # Lista de IDs de servidores ativos
 
 # Variável para controlar o último heartbeat enviado (RESTAURADO)
 last_heartbeat_time = 0
@@ -1992,6 +1996,13 @@ async def check_servers_status():
                 db_check_status_operations
             )
 
+            # ATUALIZA A LISTA GLOBAL DE SERVIDORES ATIVOS
+            global ACTIVE_SERVERS
+            if online_servers:
+                ACTIVE_SERVERS = sorted([row[0] for row in online_servers])
+            else:
+                ACTIVE_SERVERS = []
+
             # Processar resultados fora do thread
             if offline_servers and send_alert:
                 # Servidores detectados como offline E este servidor deve alertar
@@ -2054,6 +2065,32 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
         except Exception as e:
             logger.error(f"Erro no loop principal de check_servers_status: {e}")
         # Conexão é retornada ao pool na função db_check_status_operations
+
+
+def assign_stream_to_server(stream_url):
+    """Atribui um stream a um servidor usando hashing consistente."""
+    if not ACTIVE_SERVERS:
+        return None
+
+    # Ordena os servidores para garantir consistência
+    sorted_servers = sorted(ACTIVE_SERVERS)
+
+    # Cria um anel de hash para os servidores
+    hash_ring = {
+        int(hashlib.sha256(server_id.encode()).hexdigest(), 16): server_id
+        for server_id in sorted_servers
+    }
+    sorted_hashes = sorted(hash_ring.keys())
+
+    # Calcula o hash do stream
+    stream_hash = int(hashlib.sha256(stream_url.encode()).hexdigest(), 16)
+
+    # Encontra o servidor responsável pelo stream
+    index = bisect_left(sorted_hashes, stream_hash)
+    if index == len(sorted_hashes):
+        index = 0
+
+    return hash_ring[sorted_hashes[index]]
 
 
 # Variável global para controlar o tempo da última solicitação
@@ -2159,9 +2196,11 @@ async def main():
         tasks.clear()
         # Apenas adicionar tarefas para streams que devem ser processados por este servidor
         for stream in STREAMS:
-            task = asyncio.create_task(process_stream(stream, last_songs))
-            register_task(task)  # Registrar para controle de finalização
-            tasks.append(task)
+            assigned_server = assign_stream_to_server(stream["url"])
+            if assigned_server == SERVER_ID:
+                task = asyncio.create_task(process_stream(stream, last_songs))
+                register_task(task)  # Registrar para controle de finalização
+                tasks.append(task)
         logger.info(f"{len(tasks)} tasks criadas para os novos streams.")
 
     # Criar e registrar todas as tarefas necessárias
@@ -2206,10 +2245,12 @@ async def main():
 
     # Adicionar tarefas para processar os streams
     for stream in STREAMS:
-        stream_task = register_task(
-            asyncio.create_task(process_stream(stream, last_songs))
-        )
-        tasks.append(stream_task)
+        assigned_server = assign_stream_to_server(stream["url"])
+        if assigned_server == SERVER_ID:
+            stream_task = register_task(
+                asyncio.create_task(process_stream(stream, last_songs))
+            )
+            tasks.append(stream_task)
 
     tasks_to_gather.extend(tasks)
 

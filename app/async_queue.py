@@ -548,6 +548,25 @@ class AsyncInsertQueue:
                     f"_insert_single_task: Usando identified_by padrão '0' para: {data.get('name')}"
                 )
 
+            # Verificar se a música já foi inserida recentemente
+            check_query = """
+            SELECT id FROM music_log 
+            WHERE name = %s AND artist = %s AND song_title = %s 
+            AND (to_timestamp(date || ' ' || time, 'YYYY-MM-DD HH24:MI:SS') > (NOW() - INTERVAL '60 seconds'))
+            LIMIT 1
+            """
+            check_values = (
+                data.get("name", ""),
+                data.get("artist", ""),
+                data.get("song_title", ""),
+            )
+            cursor.execute(check_query, check_values)
+            if cursor.fetchone():
+                logger.debug(
+                    f"Registro recente já existe, ignorando: {data.get('name')} - {data.get('song_title')}"
+                )
+                return
+
             # Query de inserção com todas as colunas da tabela
             insert_query = """
             INSERT INTO music_log (
