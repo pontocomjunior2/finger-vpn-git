@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 logger = logging.getLogger(__name__)
@@ -526,7 +526,7 @@ class AsyncInsertQueue:
             )
 
     async def _insert_single_task(self, cursor, task: InsertTask):
-        """Insere uma única tarefa no banco"""
+        """Insere uma única tarefa no banco com verificação de duplicatas em 10 minutos"""
         data = task.data
 
         try:
@@ -548,6 +548,43 @@ class AsyncInsertQueue:
                     f"_insert_single_task: Usando identified_by padrão '0' para: {data.get('name')}"
                 )
 
+            # Preparar valores para verificação de duplicatas
+            radio_name = data.get("name", "") or ""
+            isrc = data.get("isrc", "") or ""
+            song_title = data.get("song_title", "") or ""
+            artist = data.get("artist", "") or ""
+            
+            # Calcular timestamp de 10 minutos atrás
+            now = datetime.now()
+            ten_minutes_ago = now - timedelta(minutes=10)
+            
+            # Query para verificar duplicatas nas últimas 10 minutos
+            duplicate_check_query = """
+            SELECT COUNT(*) FROM music_log 
+            WHERE name = %s 
+            AND (
+                (isrc != '' AND isrc = %s) OR
+                (isrc = '' AND song_title = %s AND artist = %s)
+            )
+            AND (date || ' ' || time)::timestamp >= %s
+            """
+            
+            cursor.execute(duplicate_check_query, (
+                radio_name,
+                isrc,
+                song_title,
+                artist,
+                ten_minutes_ago.strftime("%Y-%m-%d %H:%M:%S")
+            ))
+            
+            duplicate_count = cursor.fetchone()[0]
+            
+            if duplicate_count > 0:
+                logger.debug(
+                    f"Duplicata detectada e ignorada: {radio_name} - {song_title} ({artist})"
+                )
+                return
+
             # Query de inserção com todas as colunas da tabela
             insert_query = """
             INSERT INTO music_log (
@@ -561,13 +598,13 @@ class AsyncInsertQueue:
 
             # Preparar valores com tratamento para nulos
             values = (
-                data.get("name", "") or "",
-                data.get("artist", "") or "",
-                data.get("song_title", "") or "",
-                data.get("date", "") or datetime.now().strftime("%Y-%m-%d"),
-                data.get("time", "") or datetime.now().strftime("%H:%M:%S"),
+                radio_name,
+                artist,
+                song_title,
+                data.get("date", "") or now.strftime("%Y-%m-%d"),
+                data.get("time", "") or now.strftime("%H:%M:%S"),
                 data.get("identified_by", 0) or 0,
-                data.get("isrc", "") or "",
+                isrc,
                 data.get("cidade", "") or "",
                 data.get("estado", "") or "",
                 data.get("regiao", "") or "",
@@ -583,11 +620,11 @@ class AsyncInsertQueue:
             result = cursor.fetchone()
             if result and result[0]:
                 logger.debug(
-                    f"Inserção bem-sucedida: ID={result[0]} - {data.get('name')} - {data.get('song_title')}"
+                    f"Inserção bem-sucedida: ID={result[0]} - {radio_name} - {song_title}"
                 )
             else:
                 logger.debug(
-                    f"Registro já existente (ignorado): {data.get('name')} - {data.get('song_title')}"
+                    f"Registro já existente (ignorado): {radio_name} - {song_title}"
                 )
 
         except Exception as e:

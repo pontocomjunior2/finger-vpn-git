@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import json
 import time
-from datetime import datetime, timezone
+import asyncio
+import hashlib
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -11,6 +13,11 @@ import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from db_pool import db_pool
+import logging
+
+# Configuração de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Novo: suporte a Redis para leitura em tempo real
 try:
@@ -281,6 +288,119 @@ async def list_instances() -> List[Dict[str, Any]]:
             return [_row_to_instance(dict(r)) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+                db_pool.putconn(conn)
+
+
+@app.get("/api/health")
+async def health_check():
+    """Endpoint de health check simples"""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/server/{server_id}/health")
+async def server_health_check(server_id: int):
+    """Verifica a saúde de uma instância específica"""
+    try:
+        conn = db_pool.get_connection_sync()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # Verifica se o servidor está processando streams corretamente
+            query = """
+                SELECT 
+                    COUNT(*) as total_streams,
+                    COUNT(CASE WHEN last_check > NOW() - INTERVAL '5 minutes' THEN 1 END) as active_streams,
+                    MAX(last_check) as last_activity
+                FROM stream_ownership 
+                WHERE server_id = %s
+            """
+            cur.execute(query, (server_id,))
+            result = cur.fetchone()
+            
+            # Verifica se há músicas recentes processadas por este servidor
+            cur.execute("""
+                SELECT COUNT(*) as recent_songs
+                FROM music_log 
+                WHERE identified_by = %s 
+                AND created_at > NOW() - INTERVAL '5 minutes'
+            """, (str(server_id),))
+            recent_music = cur.fetchone()
+            
+            is_healthy = (
+                result['active_streams'] > 0 or 
+                recent_music['recent_songs'] > 0 or
+                (result['last_activity'] and result['last_activity'] > datetime.now() - timedelta(minutes=5))
+            )
+            
+            return {
+                "server_id": server_id,
+                "healthy": is_healthy,
+                "total_streams": result['total_streams'],
+                "active_streams": result['active_streams'],
+                "recent_songs": recent_music['recent_songs'],
+                "last_activity": result['last_activity'],
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Erro ao verificar saúde do servidor {server_id}: {e}")
+        return {"server_id": server_id, "healthy": False, "error": str(e)}
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+
+@app.get("/api/stream-verification")
+async def verify_stream_processing():
+    """Verifica se todos os streams estão sendo processados corretamente"""
+    try:
+        conn = db_pool.get_connection_sync()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # Total de streams
+            cur.execute("SELECT COUNT(*) FROM streams")
+            total_streams = cur.fetchone()[0]
+            
+            # Streams com lock ativo
+            cur.execute("""
+                SELECT s.id, s.name, so.server_id, so.last_check
+                FROM streams s
+                LEFT JOIN stream_ownership so ON s.id = so.stream_id
+                WHERE so.last_check > NOW() - INTERVAL '2 minutes'
+            """)
+            active_locks = cur.fetchall()
+            
+            # Streams sem processamento recente
+            cur.execute("""
+                SELECT s.id, s.name, 
+                       CASE WHEN so.server_id IS NULL THEN 'no_lock' ELSE 'inactive' END as status,
+                       so.server_id, so.last_check
+                FROM streams s
+                LEFT JOIN stream_ownership so ON s.id = so.stream_id
+                WHERE so.last_check IS NULL OR so.last_check < NOW() - INTERVAL '2 minutes'
+            """)
+            inactive_streams = cur.fetchall()
+            
+            # Verifica duplicatas
+            cur.execute("""
+                SELECT stream_id, server_id, COUNT(*) as count
+                FROM stream_ownership
+                WHERE last_check > NOW() - INTERVAL '1 hour'
+                GROUP BY stream_id, server_id
+                HAVING COUNT(*) > 1
+            """)
+            duplicates = cur.fetchall()
+            
+            return {
+                "total_streams": total_streams,
+                "active_locks": len(active_locks),
+                "inactive_streams": len(inactive_streams),
+                "duplicates": len(duplicates),
+                "inactive_details": [dict(row) for row in inactive_streams],
+                "duplicate_details": [dict(row) for row in duplicates],
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Erro na verificação de streams: {e}")
+        return {"error": str(e)}
     finally:
         if conn:
             db_pool.putconn(conn)

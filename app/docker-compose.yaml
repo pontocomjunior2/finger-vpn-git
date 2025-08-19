@@ -1,4 +1,4 @@
-    services:
+services:
       gluetun:
         image: qmcgaw/gluetun:latest
         cap_add:
@@ -55,8 +55,7 @@
           - SERVER_ID=${SERVER_ID:-1}
           - TOTAL_SERVERS=${TOTAL_SERVERS:-1}
           - DISTRIBUTE_LOAD=${DISTRIBUTE_LOAD:-False}
-          - ENABLE_ROTATION=${ENABLE_ROTATION:-False}
-          - ROTATION_HOURS=${ROTATION_HOURS:-24}
+          # ENABLE_ROTATION e ROTATION_HOURS removidos - agora usa sistema de hashing consistente
           - IDENTIFICATION_DURATION=${IDENTIFICATION_DURATION:-15}
           - DUPLICATE_PREVENTION_WINDOW_SECONDS=${DUPLICATE_PREVENTION_WINDOW_SECONDS:-900}
           - SEGMENTS_DIR=/app/segments
