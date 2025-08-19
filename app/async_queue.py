@@ -92,6 +92,11 @@ class AsyncInsertQueue:
             bool: True se adicionado com sucesso, False se fila cheia
         """
         try:
+            # Garantir compatibilidade: mapear server_id para identified_by se necessário
+            if "server_id" in data and "identified_by" not in data:
+                data["identified_by"] = data["server_id"]
+                logger.debug(f"Mapeando server_id para identified_by: {data['server_id']}")
+                
             task = InsertTask(data=data, timestamp=time.time())
 
             # Tentar adicionar à fila sem bloquear
@@ -407,10 +412,20 @@ class AsyncInsertQueue:
             if not data.get("name"):
                 logger.warning(f"Tarefa ignorada: nome ausente - {data}")
                 return
+                
+            # Garantir que identified_by esteja presente
+            if "identified_by" not in data and "server_id" in data:
+                data["identified_by"] = data["server_id"]
+                logger.debug(f"_insert_single_task: Mapeando server_id para identified_by: {data['server_id']}")
+            elif "identified_by" not in data:
+                # Se não tiver nem identified_by nem server_id, usar 0 como padrão
+                data["identified_by"] = "0"
+                logger.warning(f"_insert_single_task: Usando identified_by padrão '0' para: {data.get('name')}")
+
 
             # Query de inserção
             insert_query = """
-            INSERT INTO music_log (name, artist, song_title, date, time, server_id, ip_address, port)
+            INSERT INTO music_log (name, artist, song_title, date, time, identified_by, ip_address, port)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name, artist, song_title, date, time) DO NOTHING
             RETURNING id
@@ -423,7 +438,7 @@ class AsyncInsertQueue:
                 data.get("song_title", "") or "",
                 data.get("date", "") or datetime.now().strftime("%Y-%m-%d"),
                 data.get("time", "") or datetime.now().strftime("%H:%M:%S"),
-                data.get("server_id", 0) or 0,
+                data.get("identified_by", 0) or 0,
                 data.get("ip_address", "") or "",
                 data.get("port", "") or "",
             )
@@ -456,6 +471,13 @@ class AsyncInsertQueue:
             elif "timeout" in error_msg:
                 logger.error(f"Timeout ao inserir tarefa: {e}")
                 raise  # Propagar erro de timeout para retry
+            elif "column" in error_msg and "does not exist" in error_msg:
+                # Erro específico para coluna inexistente
+                logger.error(f"Erro de esquema ao inserir tarefa: {e} - Dados: {data}")
+                # Registrar detalhes adicionais para ajudar na depuração
+                logger.error(f"Colunas esperadas: name, artist, song_title, date, time, identified_by, ip_address, port")
+                logger.error(f"Colunas fornecidas: {', '.join(data.keys())}")
+                raise  # Propagar erro de esquema para retry
             else:
                 logger.error(f"Erro ao inserir tarefa: {e} - Dados: {data}")
                 raise  # Propagar outros erros para retry
