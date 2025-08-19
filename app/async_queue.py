@@ -425,8 +425,8 @@ class AsyncInsertQueue:
 
             # Query de inserção
             insert_query = """
-            INSERT INTO music_log (name, artist, song_title, date, time, identified_by, ip_address, port)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO music_log (name, artist, song_title, date, time, identified_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (name, artist, song_title, date, time) DO NOTHING
             RETURNING id
             """
@@ -439,8 +439,6 @@ class AsyncInsertQueue:
                 data.get("date", "") or datetime.now().strftime("%Y-%m-%d"),
                 data.get("time", "") or datetime.now().strftime("%H:%M:%S"),
                 data.get("identified_by", 0) or 0,
-                data.get("ip_address", "") or "",
-                data.get("port", "") or "",
             )
 
             # Executar a query
@@ -475,7 +473,7 @@ class AsyncInsertQueue:
                 # Erro específico para coluna inexistente
                 logger.error(f"Erro de esquema ao inserir tarefa: {e} - Dados: {data}")
                 # Registrar detalhes adicionais para ajudar na depuração
-                logger.error(f"Colunas esperadas: name, artist, song_title, date, time, identified_by, ip_address, port")
+                logger.error(f"Colunas esperadas: name, artist, song_title, date, time, identified_by")
                 logger.error(f"Colunas fornecidas: {', '.join(data.keys())}")
                 raise  # Propagar erro de esquema para retry
             else:
