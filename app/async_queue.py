@@ -39,7 +39,7 @@ class AsyncInsertQueue:
     Implementa um worker único para evitar concorrência
     """
 
-    def __init__(self, max_queue_size: int = 10000, batch_size: int = 100):
+    def __init__(self, max_queue_size: int = 10000, batch_size: int = 200):
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.batch_size = (
             batch_size  # Aumentado para 100 para reduzir número de conexões
@@ -95,8 +95,10 @@ class AsyncInsertQueue:
             # Garantir compatibilidade: mapear server_id para identified_by se necessário
             if "server_id" in data and "identified_by" not in data:
                 data["identified_by"] = data["server_id"]
-                logger.debug(f"Mapeando server_id para identified_by: {data['server_id']}")
-                
+                logger.debug(
+                    f"Mapeando server_id para identified_by: {data['server_id']}"
+                )
+
             task = InsertTask(data=data, timestamp=time.time())
 
             # Tentar adicionar à fila sem bloquear
@@ -156,15 +158,29 @@ class AsyncInsertQueue:
                 consecutive_errors += 1
 
                 # Verificar se é um erro de pool de conexões
+                error_str = str(e).lower()
                 if (
-                    "connection pool exhausted" in str(e).lower()
-                    or "timeout" in str(e).lower()
+                    "connection pool exhausted" in error_str
+                    or "timeout" in error_str
+                    or "too many connections" in error_str
+                    or "connection refused" in error_str
+                    or "operational error" in error_str
                 ):
                     logger.error(f"Erro de pool de conexões: {e}")
                     # Aumentar o delay para dar tempo ao pool se recuperar
                     current_delay = min(current_delay * 2, max_delay)
                     # Forçar verificação do pool na próxima iteração
                     last_pool_check = 0
+
+                    # Tentar recuperar o pool de conexões
+                    try:
+                        from db_pool import get_db_pool
+
+                        # Verificar se o pool precisa ser recriado
+                        if get_db_pool().handle_connection_failure(e):
+                            logger.info("Pool de conexões recriado após falha")
+                    except Exception as pool_error:
+                        logger.error(f"Erro ao tentar recuperar pool: {pool_error}")
                 else:
                     logger.error(f"Erro no worker loop: {e}")
 
@@ -252,17 +268,17 @@ class AsyncInsertQueue:
 
             # Se o lote for muito pequeno e houver muitas tarefas na fila, aguardar um pouco
             # para permitir que mais tarefas cheguem e possam ser processadas em conjunto
-            if len(batch) < 5 and self.queue.qsize() > 100:
+            if len(batch) < 10 and self.queue.qsize() > 50:
                 logger.debug(
                     f"Aguardando mais tarefas chegarem (lote atual: {len(batch)}, fila: {self.queue.qsize()})"
                 )
-                await asyncio.sleep(0.1)  # Pequena pausa para acumular mais tarefas
+                await asyncio.sleep(0.2)  # Pausa maior para acumular mais tarefas
 
                 # Tentar pegar mais algumas tarefas após a pausa
                 try:
                     remaining = min(
-                        current_batch_size - len(batch), 10
-                    )  # Limitar a 10 tarefas adicionais
+                        current_batch_size - len(batch), 30
+                    )  # Aumentado para 30 tarefas adicionais
                     for _ in range(remaining):
                         task = self.queue.get_nowait()
                         batch.append(task)
@@ -294,21 +310,24 @@ class AsyncInsertQueue:
                 max_conn = pool_stats.get("pool_max_conn", 1)
                 usage_ratio = used / max_conn if max_conn > 0 else 0
 
-                if usage_ratio > 0.8:  # Mais de 80% do pool em uso
+                if usage_ratio > 0.9:  # Mais de 90% do pool em uso
                     # Reduzir drasticamente o tamanho do lote
-                    return max(10, int(self.batch_size * 0.3))
-                elif usage_ratio > 0.6:  # Mais de 60% do pool em uso
+                    return max(20, int(self.batch_size * 0.2))
+                elif usage_ratio > 0.7:  # Mais de 70% do pool em uso
                     # Reduzir moderadamente o tamanho do lote
-                    return max(20, int(self.batch_size * 0.5))
-                elif usage_ratio > 0.4:  # Mais de 40% do pool em uso
+                    return max(40, int(self.batch_size * 0.4))
+                elif usage_ratio > 0.5:  # Mais de 50% do pool em uso
                     # Reduzir levemente o tamanho do lote
-                    return max(30, int(self.batch_size * 0.7))
+                    return max(60, int(self.batch_size * 0.6))
 
             # Verificar o tamanho da fila
             queue_size = self.queue.qsize()
-            if queue_size > 1000:  # Fila muito grande
+            if queue_size > 2000:  # Fila extremamente grande
+                # Aumentar significativamente o tamanho do lote para processar mais rapidamente
+                return min(int(self.batch_size * 1.5), 300)
+            elif queue_size > 1000:  # Fila muito grande
                 # Aumentar o tamanho do lote para processar mais rapidamente
-                return min(int(self.batch_size * 1.2), 150)
+                return min(int(self.batch_size * 1.3), 250)
 
         except Exception as e:
             logger.warning(f"Erro ao calcular tamanho adaptativo do lote: {e}")
@@ -317,7 +336,7 @@ class AsyncInsertQueue:
         return self.batch_size
 
     async def _process_batch(self, batch: list[InsertTask]):
-        """Processa um lote de tarefas"""
+        """Processa um lote de tarefas com mecanismo de retry robusto"""
         start_time = time.time()
         successful_inserts = 0
         failed_inserts = 0
@@ -326,65 +345,168 @@ class AsyncInsertQueue:
         async with self.processing_lock:
             try:
                 from db_pool import get_db_pool
+                import random
 
                 # Usar pool de conexões para inserção em lote
                 # Obter conexão com timeout mais longo
-                async with get_db_pool().get_connection() as conn:
-                    cursor = conn.cursor()
+                max_conn_retries = 3
+                conn_retry_count = 0
+                conn_retry_delay = 1  # segundos inicial
 
-                    # Processar em grupos maiores para reduzir o número de transações
-                    chunk_size = (
-                        50  # Aumentado para 50 para reduzir número de transações
-                    )
+                while conn_retry_count <= max_conn_retries:
+                    try:
+                        async with get_db_pool().get_connection() as conn:
+                            cursor = conn.cursor()
 
-                    for i in range(0, len(batch), chunk_size):
-                        chunk = batch[i : i + chunk_size]
+                            # Processar em grupos maiores para reduzir o número de transações
+                            chunk_size = 100  # Aumentado para 100 para reduzir número de transações
 
-                        try:
-                            # Iniciar transação para o chunk
-                            cursor.execute("BEGIN")
+                            for i in range(0, len(batch), chunk_size):
+                                chunk = batch[i : i + chunk_size]
+                                chunk_retry_count = 0
+                                max_chunk_retries = 2
 
-                            for task in chunk:
-                                try:
-                                    await self._insert_single_task(cursor, task)
-                                    successful_inserts += 1
+                                while chunk_retry_count <= max_chunk_retries:
+                                    try:
+                                        # Iniciar transação para o chunk
+                                        cursor.execute("BEGIN")
 
-                                except Exception as e:
-                                    failed_inserts += 1
+                                        for task in chunk:
+                                            try:
+                                                await self._insert_single_task(
+                                                    cursor, task
+                                                )
+                                                successful_inserts += 1
 
-                                    # Tentar novamente se não excedeu limite
-                                    if task.retry_count < task.max_retries:
-                                        task.retry_count += 1
-                                        await self.queue.put(task)
-                                        logger.warning(
-                                            f"Recolocando tarefa na fila (tentativa {task.retry_count}): {e}"
+                                            except Exception as e:
+                                                failed_inserts += 1
+
+                                                # Tentar novamente se não excedeu limite
+                                                if task.retry_count < task.max_retries:
+                                                    task.retry_count += 1
+                                                    await self.queue.put(task)
+                                                    logger.warning(
+                                                        f"Recolocando tarefa na fila (tentativa {task.retry_count}): {e}"
+                                                    )
+                                                else:
+                                                    logger.error(
+                                                        f"Tarefa falhou após {task.max_retries} tentativas: {e}"
+                                                    )
+                                                    self.stats["total_failed"] += 1
+
+                                        # Commit da transação do chunk
+                                        cursor.execute("COMMIT")
+                                        # Se chegou aqui, processamento foi bem-sucedido
+                                        break
+
+                                    except Exception as chunk_error:
+                                        # Rollback em caso de erro no chunk
+                                        cursor.execute("ROLLBACK")
+                                        chunk_retry_count += 1
+                                        error_str = str(chunk_error).lower()
+
+                                        # Verificar se é um erro de conexão ou de banco de dados
+                                        db_error = any(
+                                            err in error_str
+                                            for err in [
+                                                "connection",
+                                                "timeout",
+                                                "deadlock",
+                                                "serialization",
+                                                "operational error",
+                                                "database is locked",
+                                            ]
                                         )
-                                    else:
-                                        logger.error(
-                                            f"Tarefa falhou após {task.max_retries} tentativas: {e}"
-                                        )
-                                        self.stats["total_failed"] += 1
 
-                            # Commit da transação do chunk
-                            cursor.execute("COMMIT")
+                                        if (
+                                            chunk_retry_count <= max_chunk_retries
+                                            and db_error
+                                        ):
+                                            # Calcular delay com jitter para evitar thundering herd
+                                            jitter = random.uniform(0.1, 0.5)
+                                            current_delay = (
+                                                conn_retry_delay
+                                                * (2 ** (chunk_retry_count - 1))
+                                                + jitter
+                                            )
 
-                        except Exception as chunk_error:
-                            # Rollback em caso de erro no chunk
-                            cursor.execute("ROLLBACK")
-                            logger.error(f"Erro ao processar chunk: {chunk_error}")
+                                            logger.warning(
+                                                f"Erro de banco ao processar chunk: {chunk_error}. "
+                                                f"Tentativa {chunk_retry_count}/{max_chunk_retries}. "
+                                                f"Aguardando {current_delay:.2f}s antes de retry."
+                                            )
+                                            await asyncio.sleep(current_delay)
+                                        else:
+                                            logger.error(
+                                                f"Erro ao processar chunk após {chunk_retry_count} tentativas: {chunk_error}"
+                                            )
+                                            # Recolocar tarefas do chunk na fila
+                                            for task in chunk:
+                                                if task.retry_count < task.max_retries:
+                                                    task.retry_count += 1
+                                                    await self.queue.put(task)
+                                                else:
+                                                    self.stats["total_failed"] += 1
+                                            break
 
-                            # Recolocar tarefas do chunk na fila
-                            for task in chunk:
+                            # Commit das inserções bem-sucedidas
+                            if successful_inserts > 0:
+                                conn.commit()
+                                self.stats["total_processed"] += successful_inserts
+                        # Se chegou aqui, conexão foi bem-sucedida
+                        break
+
+                    except Exception as conn_error:
+                        conn_retry_count += 1
+                        error_str = str(conn_error).lower()
+
+                        # Verificar se é um erro de conexão
+                        conn_error_detected = any(
+                            err in error_str
+                            for err in [
+                                "connection",
+                                "timeout",
+                                "too many connections",
+                                "connection refused",
+                            ]
+                        )
+
+                        if conn_retry_count <= max_conn_retries and conn_error_detected:
+                            # Calcular delay com jitter para evitar thundering herd
+                            jitter = random.uniform(0.1, 0.5)
+                            current_delay = (
+                                conn_retry_delay * (2 ** (conn_retry_count - 1))
+                                + jitter
+                            )
+
+                            logger.warning(
+                                f"Erro de conexão: {conn_error}. "
+                                f"Tentativa {conn_retry_count}/{max_conn_retries}. "
+                                f"Aguardando {current_delay:.2f}s antes de retry."
+                            )
+
+                            # Tentar recuperar o pool se necessário
+                            try:
+                                get_db_pool().handle_connection_failure(conn_error)
+                            except Exception as pool_error:
+                                logger.error(
+                                    f"Erro ao tentar recuperar pool: {pool_error}"
+                                )
+
+                            await asyncio.sleep(current_delay)
+                        else:
+                            logger.error(
+                                f"Erro de conexão após {conn_retry_count} tentativas: {conn_error}"
+                            )
+                            # Recolocar todas as tarefas na fila
+                            for task in batch:
                                 if task.retry_count < task.max_retries:
                                     task.retry_count += 1
                                     await self.queue.put(task)
                                 else:
                                     self.stats["total_failed"] += 1
+                            break
 
-                    # Commit das inserções bem-sucedidas
-                    if successful_inserts > 0:
-                        conn.commit()
-                        self.stats["total_processed"] += successful_inserts
             except Exception as e:
                 logger.error(f"Erro ao processar lote: {e}")
                 # Recolocar todas as tarefas na fila
@@ -412,21 +534,27 @@ class AsyncInsertQueue:
             if not data.get("name"):
                 logger.warning(f"Tarefa ignorada: nome ausente - {data}")
                 return
-                
+
             # Garantir que identified_by esteja presente
             if "identified_by" not in data and "server_id" in data:
                 data["identified_by"] = data["server_id"]
-                logger.debug(f"_insert_single_task: Mapeando server_id para identified_by: {data['server_id']}")
+                logger.debug(
+                    f"_insert_single_task: Mapeando server_id para identified_by: {data['server_id']}"
+                )
             elif "identified_by" not in data:
                 # Se não tiver nem identified_by nem server_id, usar 0 como padrão
                 data["identified_by"] = "0"
-                logger.warning(f"_insert_single_task: Usando identified_by padrão '0' para: {data.get('name')}")
+                logger.warning(
+                    f"_insert_single_task: Usando identified_by padrão '0' para: {data.get('name')}"
+                )
 
-
-            # Query de inserção
+            # Query de inserção com todas as colunas da tabela
             insert_query = """
-            INSERT INTO music_log (name, artist, song_title, date, time, identified_by)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO music_log (
+                name, artist, song_title, date, time, identified_by,
+                isrc, cidade, estado, regiao, segmento, label, genre
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name, artist, song_title, date, time) DO NOTHING
             RETURNING id
             """
@@ -439,6 +567,13 @@ class AsyncInsertQueue:
                 data.get("date", "") or datetime.now().strftime("%Y-%m-%d"),
                 data.get("time", "") or datetime.now().strftime("%H:%M:%S"),
                 data.get("identified_by", 0) or 0,
+                data.get("isrc", "") or "",
+                data.get("cidade", "") or "",
+                data.get("estado", "") or "",
+                data.get("regiao", "") or "",
+                data.get("segmento", "") or "",
+                data.get("label", "") or "",
+                data.get("genre", "") or "",
             )
 
             # Executar a query
@@ -473,7 +608,9 @@ class AsyncInsertQueue:
                 # Erro específico para coluna inexistente
                 logger.error(f"Erro de esquema ao inserir tarefa: {e} - Dados: {data}")
                 # Registrar detalhes adicionais para ajudar na depuração
-                logger.error(f"Colunas esperadas: name, artist, song_title, date, time, identified_by")
+                logger.error(
+                    f"Colunas esperadas: name, artist, song_title, date, time, identified_by"
+                )
                 logger.error(f"Colunas fornecidas: {', '.join(data.keys())}")
                 raise  # Propagar erro de esquema para retry
             else:
