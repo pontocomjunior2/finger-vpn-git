@@ -642,9 +642,6 @@ def load_streams():
                                 distributed_streams.append(stream)
                             else:
                                 stream['processed_by_server'] = False
-            finally:
-                if conn:
-                    db_pool.putconn(conn)
             except Exception as e:
                 logger.error(f"Erro ao aplicar distribuição de carga no banco: {e}")
                 # Fallback para método simples original em caso de erro
@@ -653,8 +650,9 @@ def load_streams():
                     if i % TOTAL_SERVERS == (effective_server_id - 1):
                         stream['processed_by_server'] = True
                         distributed_streams.append(stream)
-                    else:
-                        stream['processed_by_server'] = False
+            finally:
+                if conn:
+                    db_pool.putconn(conn)
             
             logger.info(f"Distribuição de carga ativada: Servidor {server_id}/{TOTAL_SERVERS} " +
                        f"(efetivo: {effective_server_id}) - " +
@@ -1470,35 +1468,35 @@ async def check_servers_status():
                     logger.error("Não foi possível conectar ao banco de dados para verificar status dos servidores.")
                     continue
                 
-            with conn.cursor() as cursor:
-                # Verificar se a tabela existe
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'server_heartbeats'
-                    );
-                """)
+                with conn.cursor() as cursor:
+                    # Verificar se a tabela existe
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'server_heartbeats'
+                        );
+                    """)
                 
-                if not cursor.fetchone()[0]:
-                    logger.warning("Tabela de heartbeats não existe no banco de dados.")
-                    continue
+                    if not cursor.fetchone()[0]:
+                        logger.warning("Tabela de heartbeats não existe no banco de dados.")
+                        continue
                 
-                # Marcar servidores offline se não enviarem heartbeat há muito tempo
-                cursor.execute("""
-                    UPDATE server_heartbeats
-                    SET status = 'OFFLINE'
-                    WHERE last_heartbeat < NOW() - INTERVAL '%s seconds'
-                    AND status = 'ONLINE'
-                    RETURNING server_id, last_heartbeat;
-                """, (OFFLINE_THRESHOLD_SECS,))
-                
-                offline_servers = cursor.fetchall()
-                conn.commit()
-                
-                if offline_servers:
-                    # Servidores detectados como offline
-                    server_ids = [row[0] for row in offline_servers]
-                    last_heartbeats = [row[1] for row in offline_servers]
+                    # Marcar servidores offline se não enviarem heartbeat há muito tempo
+                    cursor.execute("""
+                        UPDATE server_heartbeats
+                        SET status = 'OFFLINE'
+                        WHERE last_heartbeat < NOW() - INTERVAL '%s seconds'
+                        AND status = 'ONLINE'
+                        RETURNING server_id, last_heartbeat;
+                    """, (OFFLINE_THRESHOLD_SECS,))
+                    
+                    offline_servers = cursor.fetchall()
+                    conn.commit()
+                    
+                    if offline_servers:
+                        # Servidores detectados como offline
+                        server_ids = [row[0] for row in offline_servers]
+                        last_heartbeats = [row[1] for row in offline_servers]
                     
                     # Log dos servidores que ficaram offline
                     logger.warning(f"Servidores detectados como OFFLINE: {server_ids}")
@@ -1548,11 +1546,14 @@ Este é um alerta automático.
                             except:
                                 logger.debug(f"Servidor {server_id} ({ip}): Último heartbeat em {last_hb}")
                 
-        except Exception as e:
-            logger.error(f"Erro ao verificar status dos servidores: {e}")
-        finally:
-            if conn:
-                db_pool.putconn(conn)
+            except Exception as e:
+                logger.error(f"Erro ao verificar status dos servidores: {e}")
+            finally:
+                if conn:
+                    db_pool.putconn(conn)
+
+
+
 
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0
