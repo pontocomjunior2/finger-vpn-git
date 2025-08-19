@@ -145,7 +145,7 @@ DISTRIBUTE_LOAD = (
 
 # Variáveis legadas para compatibilidade - agora usam hashing consistente
 ENABLE_ROTATION = False  # Sempre False, pois usa hashing consistente
-ROTATION_HOURS = 0       # Sempre 0, pois não há rotação por tempo
+ROTATION_HOURS = 0  # Sempre 0, pois não há rotação por tempo
 
 # Validar SERVER_ID
 if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
@@ -203,14 +203,29 @@ RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "junior@pontocomaudio.net")
 
 # === Funções de Distribuição e Locks ===
 
+
 def create_distribution_tables():
     """Cria tabelas de controle para distribuição e prevenção de duplicatas"""
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
+            # Criar tabela de heartbeats primeiro (referenciada pelas outras tabelas)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS server_heartbeats (
+                    server_id INTEGER PRIMARY KEY,
+                    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    status VARCHAR(20) DEFAULT 'ONLINE',
+                    ip_address VARCHAR(50),
+                    info JSONB
+                );
+            """
+            )
+
             # Tabela de locks distribuídos para streams
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS stream_locks (
                     stream_id VARCHAR(255) PRIMARY KEY,
                     server_id INTEGER NOT NULL,
@@ -219,10 +234,12 @@ def create_distribution_tables():
                     CONSTRAINT fk_server_id FOREIGN KEY (server_id) 
                         REFERENCES server_heartbeats(server_id) ON DELETE CASCADE
                 );
-            """)
-            
+            """
+            )
+
             # Tabela de registro de streams processados (para evitar duplicatas)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS stream_ownership (
                     stream_id VARCHAR(255) PRIMARY KEY,
                     server_id INTEGER NOT NULL,
@@ -231,30 +248,51 @@ def create_distribution_tables():
                     CONSTRAINT fk_server_ownership FOREIGN KEY (server_id) 
                         REFERENCES server_heartbeats(server_id) ON DELETE CASCADE
                 );
-            """)
-            
+            """
+            )
+
             # Índice para otimizar queries de distribuição
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_stream_locks_server 
                 ON stream_locks(server_id);
-            """)
-            
-            cursor.execute("""
+            """
+            )
+
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_stream_ownership_server 
                 ON stream_ownership(server_id);
-            """)
-            
+            """
+            )
+
             # Constraint única para prevenir duplicatas no log
-            cursor.execute("""
-                ALTER TABLE IF EXISTS "music_log" 
-                ADD CONSTRAINT IF NOT EXISTS unique_song_per_stream_per_minute 
-                UNIQUE (name, song_title, artist, date, time);
-            """)
-            
+            try:
+                cursor.execute(
+                    """
+                    ALTER TABLE "music_log" 
+                    ADD CONSTRAINT unique_song_per_stream_per_minute 
+                    UNIQUE (name, song_title, artist, date, time);
+                """
+                )
+            except Exception as e:
+                if 'already exists' in str(e).lower():
+                    logger.info("Constraint unique_song_per_stream_per_minute já existe")
+                else:
+                    raise e
+
+            # Garantir que a coluna heartbeat_at exista na tabela stream_locks
+            cursor.execute(
+                """
+                ALTER TABLE stream_locks 
+                ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            """
+            )
+
             conn.commit()
             logger.info("Tabelas de distribuição criadas/atualizadas com sucesso")
             return True
-            
+
     except Exception as e:
         logger.error(f"Erro ao criar tabelas de distribuição: {e}")
         if conn:
@@ -262,7 +300,7 @@ def create_distribution_tables():
         return False
     finally:
         if conn:
-            conn.close()
+            get_db_pool().pool.putconn(conn)
 
 
 def consistent_hash(value: str, buckets: int) -> int:
@@ -270,65 +308,81 @@ def consistent_hash(value: str, buckets: int) -> int:
     Implementa consistent hashing para distribuição uniforme de streams
     """
     import hashlib
-    
+
     if buckets <= 0:
         return 0
-    
+
     # Usar MD5 para gerar hash consistente
-    hash_object = hashlib.md5(value.encode('utf-8'))
+    hash_object = hashlib.md5(value.encode("utf-8"))
     hash_hex = hash_object.hexdigest()
-    
+
     # Converter para inteiro e mapear para o bucket
     hash_int = int(hash_hex, 16)
     return hash_int % buckets
 
 
-def acquire_stream_lock(stream_id: str, server_id: int, timeout_minutes: int = 5) -> bool:
+def acquire_stream_lock(
+    stream_id: str, server_id: int, timeout_minutes: int = 5
+) -> bool:
     """
     Tenta adquirir lock para processar um stream específico
     """
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
             # Limpar locks expirados
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM stream_locks 
                 WHERE heartbeat_at < NOW() - INTERVAL '%s minutes'
-            """, (timeout_minutes,))
-            
+            """,
+                (timeout_minutes,),
+            )
+
             # Tentar adquirir lock
             try:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO stream_locks (stream_id, server_id)
                     VALUES (%s, %s)
-                """, (stream_id, server_id))
+                """,
+                    (stream_id, server_id),
+                )
                 conn.commit()
-                logger.info(f"Lock adquirido para stream {stream_id} pelo servidor {server_id}")
+                logger.info(
+                    f"Lock adquirido para stream {stream_id} pelo servidor {server_id}"
+                )
                 return True
             except psycopg2.errors.UniqueViolation:
                 # Lock já existe para este stream
                 conn.rollback()
-                
+
                 # Verificar se o servidor atual é o dono do lock
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT server_id FROM stream_locks WHERE stream_id = %s
-                """, (stream_id,))
+                """,
+                    (stream_id,),
+                )
                 result = cursor.fetchone()
-                
+
                 if result and result[0] == server_id:
                     # Este servidor já possui o lock, atualizar heartbeat
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         UPDATE stream_locks 
                         SET heartbeat_at = NOW()
                         WHERE stream_id = %s AND server_id = %s
-                    """, (stream_id, server_id))
+                    """,
+                        (stream_id, server_id),
+                    )
                     conn.commit()
                     return True
                 else:
                     # Outro servidor possui o lock
                     return False
-                    
+
     except Exception as e:
         logger.error(f"Erro ao adquirir lock para stream {stream_id}: {e}")
         if conn:
@@ -336,7 +390,7 @@ def acquire_stream_lock(stream_id: str, server_id: int, timeout_minutes: int = 5
         return False
     finally:
         if conn:
-            conn.close()
+            get_db_pool().pool.putconn(conn)
 
 
 def release_stream_lock(stream_id: str, server_id: int) -> bool:
@@ -345,21 +399,28 @@ def release_stream_lock(stream_id: str, server_id: int) -> bool:
     """
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 DELETE FROM stream_locks 
                 WHERE stream_id = %s AND server_id = %s
-            """, (stream_id, server_id))
-            
+            """,
+                (stream_id, server_id),
+            )
+
             if cursor.rowcount > 0:
                 conn.commit()
-                logger.info(f"Lock liberado para stream {stream_id} pelo servidor {server_id}")
+                logger.info(
+                    f"Lock liberado para stream {stream_id} pelo servidor {server_id}"
+                )
                 return True
             else:
-                logger.warning(f"Nenhum lock encontrado para stream {stream_id} e servidor {server_id}")
+                logger.warning(
+                    f"Nenhum lock encontrado para stream {stream_id} e servidor {server_id}"
+                )
                 return False
-                
+
     except Exception as e:
         logger.error(f"Erro ao liberar lock para stream {stream_id}: {e}")
         if conn:
@@ -367,7 +428,7 @@ def release_stream_lock(stream_id: str, server_id: int) -> bool:
         return False
     finally:
         if conn:
-            conn.close()
+            get_db_pool().pool.putconn(conn)
 
 
 def assign_stream_ownership(stream_id: str, server_id: int) -> bool:
@@ -376,28 +437,33 @@ def assign_stream_ownership(stream_id: str, server_id: int) -> bool:
     """
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO stream_ownership (stream_id, server_id)
                 VALUES (%s, %s)
                 ON CONFLICT (stream_id) DO UPDATE SET
                     server_id = EXCLUDED.server_id,
                     assigned_at = NOW()
-            """, (stream_id, server_id))
-            
+            """,
+                (stream_id, server_id),
+            )
+
             conn.commit()
             logger.info(f"Stream {stream_id} atribuído ao servidor {server_id}")
             return True
-            
+
     except Exception as e:
-        logger.error(f"Erro ao atribuir stream {stream_id} ao servidor {server_id}: {e}")
+        logger.error(
+            f"Erro ao atribuir stream {stream_id} ao servidor {server_id}: {e}"
+        )
         if conn:
             conn.rollback()
         return False
     finally:
         if conn:
-            conn.close()
+            get_db_pool().pool.putconn(conn)
 
 
 def get_assigned_server(stream_id: str) -> int:
@@ -406,27 +472,31 @@ def get_assigned_server(stream_id: str) -> int:
     """
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT server_id FROM stream_ownership 
                 WHERE stream_id = %s
-            """, (stream_id,))
-            
+            """,
+                (stream_id,),
+            )
+
             result = cursor.fetchone()
             if result:
                 return result[0]
             else:
                 # Se não houver atribuição, usar consistent hashing
                 return consistent_hash(stream_id, TOTAL_SERVERS) + 1
-                
+
     except Exception as e:
         logger.error(f"Erro ao obter servidor atribuído para stream {stream_id}: {e}")
         # Fallback para consistent hashing
         return consistent_hash(stream_id, TOTAL_SERVERS) + 1
     finally:
         if conn:
-            conn.close()
+            get_db_pool().pool.putconn(conn)
+
 
 # === Fim das Funções de Distribuição ===
 
@@ -1536,14 +1606,10 @@ async def process_stream(stream, last_songs):
 
     while True:
         logger.info(f"Processando streaming: {name}")
-        
+
         # Verificar se este servidor tem o lock para este stream
-        has_lock = await asyncio.to_thread(
-            acquire_stream_lock, 
-            stream_key, 
-            SERVER_ID
-        )
-        
+        has_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
+
         if not has_lock:
             logger.info(
                 f"Stream {name} ({stream_key}) não tem lock para este servidor. Verificando novamente em 60 segundos."
@@ -1551,9 +1617,7 @@ async def process_stream(stream, last_songs):
             await asyncio.sleep(60)  # Aguardar antes de verificar novamente
             continue
 
-        current_segment_path = await capture_stream_segment(
-            name, url, duration=None
-        )
+        current_segment_path = await capture_stream_segment(name, url, duration=None)
 
         if current_segment_path is None:
             # Registrar erro no tracker
@@ -1562,7 +1626,7 @@ async def process_stream(stream, last_songs):
 
             # Liberar o lock em caso de falha
             await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
-            
+
             wait_time = 10  # Default wait time
             if failure_count > 3:
                 wait_time = 30  # Increased wait time after 3 failures
@@ -2252,9 +2316,6 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
 last_request_time = 0
 
 
-
-
-
 # Função principal para processar todos os streams
 async def main():
     logger.debug("Iniciando a função main()")
@@ -2353,43 +2414,47 @@ async def main():
             update_streams_in_db(
                 all_streams
             )  # Atualiza o banco de dados com as rádios do arquivo
-        
+
         # Atribuir streams usando consistent hashing e locks
         assigned_streams = []
         if DISTRIBUTE_LOAD:
             for stream in all_streams:
-                stream_id = stream.get('id', stream.get('name', ''))
-                assigned_server = await asyncio.to_thread(get_assigned_server, stream_id)
-                
+                stream_id = stream.get("id", stream.get("name", ""))
+                assigned_server = await asyncio.to_thread(
+                    get_assigned_server, stream_id
+                )
+
                 if assigned_server == SERVER_ID:
                     # Tentar adquirir lock para este stream
                     lock_acquired = await asyncio.to_thread(
-                        acquire_stream_lock, 
-                        stream_id, 
-                        SERVER_ID
+                        acquire_stream_lock, stream_id, SERVER_ID
                     )
-                    
+
                     if lock_acquired:
                         assigned_streams.append(stream)
-                        await asyncio.to_thread(assign_stream_ownership, stream_id, SERVER_ID)
+                        await asyncio.to_thread(
+                            assign_stream_ownership, stream_id, SERVER_ID
+                        )
         else:
             assigned_streams = all_streams
-        
+
         # Cancelar todas as tarefas existentes
         for task in tasks:
             if not task.done():
                 task.cancel()
         # Criar novas tarefas para os streams recarregados
         tasks.clear()
-        
+
         # Apenas adicionar tarefas para streams atribuídos a este servidor
         for stream in assigned_streams:
             task = asyncio.create_task(process_stream(stream, last_songs))
             register_task(task)  # Registrar para controle de finalização
             tasks.append(task)
-        
+
         STREAMS = assigned_streams
-        logger.info(f"{len(tasks)} tasks criadas para os {len(assigned_streams)} streams atribuídos.")
+        logger.info(
+            f"{len(tasks)} tasks criadas para os {len(assigned_streams)} streams atribuídos."
+        )
 
     # Criar e registrar todas as tarefas necessárias
     monitor_task = register_task(
