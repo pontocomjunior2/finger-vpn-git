@@ -34,6 +34,7 @@ except ImportError:
     # sys.exit(1)
 import psycopg2.errors # Para capturar UniqueViolation
 from db_pool import db_pool
+from async_queue import insert_queue
 
 # Definir diretório de segmentos global
 SEGMENTS_DIR = os.getenv('SEGMENTS_DIR', 'C:/DATARADIO/segments')
@@ -905,119 +906,46 @@ async def _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
         # --- Fim Log Detalhado ---
         return False # Assume não duplicata em caso de erro na verificação
 
-# Função para inserir dados no banco de dados (MODIFICADA)
+# Função para inserir dados no banco de dados usando fila assíncrona
 async def insert_data_to_db(entry_base, now_tz):
-    # Recebe dicionário base e timestamp TZ-aware
+    """
+    Adiciona uma tarefa de inserção à fila assíncrona.
+    Retorna True se a tarefa foi adicionada com sucesso à fila.
+    """
     song_title = entry_base['song_title']
     artist = entry_base['artist']
     name = entry_base['name']
-    logger.debug(f"insert_data_to_db: Iniciando processo para {song_title} - {artist} em {name}")
-
-    conn = None
+    
+    logger.debug(f"insert_data_to_db: Adicionando à fila: {song_title} - {artist} em {name}")
+    
     try:
-        conn = db_pool.get_connection_sync()
-        if not conn:
-            logger.error("insert_data_to_db: Não foi possível conectar ao DB.")
-            return False # Falha na inserção
-
-        # Logs detalhados para debugging do bug identified_by
-        logger.info(f"DEBUG INSERT - SERVER_ID sendo usado: {SERVER_ID} (tipo: {type(SERVER_ID)})")
-        logger.info(f"DEBUG INSERT - entry_base: {entry_base}")
-
-        with conn.cursor() as cursor:
-            # PASSO 1: Verificar duplicidade DENTRO da transação usando now_tz
-            is_duplicate = await _internal_is_duplicate_in_db(cursor, now_tz, name, artist, song_title)
-
-            if is_duplicate:
-                logger.info(f"insert_data_to_db: Inserção ignorada, duplicata encontrada (verificação de janela) para {song_title} - {artist} em {name}.")
-                return False # Indica que não inseriu (duplicata pela janela de tempo)
-
-            # PASSO 2: Formatar date/time strings e Inserir se não for duplicata
-            # Usar date/time do entry_base se presentes; caso contrário, usar now_tz
-            date_str = entry_base.get("date") or now_tz.strftime('%Y-%m-%d')
-            time_str = entry_base.get("time") or now_tz.strftime('%H:%M:%S')
-            logger.debug(f"  Formatado para INSERT: date='{date_str}', time='{time_str}'")
-
-            # Verificar se a tabela existe (redundante se check_log_table funcionou, mas seguro)
-            cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')")
-            if not cursor.fetchone()[0]:
-                logger.error(f"insert_data_to_db: A tabela '{DB_TABLE_NAME}' não existe! Inserção falhou.")
-                return False
-
-            # Garantir que identified_by use o SERVER_ID correto
-            identified_by_value = str(SERVER_ID)
-            logger.info(f"DEBUG INSERT - identified_by_value definido como: '{identified_by_value}'")
-
-            # Preparar valores para inserção
-            # Garantir que a ordem corresponde à query SQL
-            values = (
-                date_str,
-                time_str, 
-                entry_base.get("name"),
-                entry_base.get("artist"),
-                entry_base.get("song_title"),
-                entry_base.get("isrc", ""),
-                entry_base.get("cidade", ""),
-                entry_base.get("estado", ""),
-                entry_base.get("regiao", ""),
-                entry_base.get("segmento", ""),
-                entry_base.get("label", ""),
-                entry_base.get("genre", ""),
-                identified_by_value  # Usar variável explícita em vez de entry.get()
-            )
-            
-            logger.info(f"DEBUG INSERT - Valores sendo inseridos: {values}")
-
-            # Query SQL (verificar ordem das colunas)
-            insert_sql = f'''
-                INSERT INTO {DB_TABLE_NAME} (date, time, name, artist, song_title, isrc, cidade, estado, regiao, segmento, label, genre, identified_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id -- Retorna o ID para confirmação
-            '''
-            try:
-                cursor.execute(insert_sql, values)
-                inserted_id = cursor.fetchone()
-
-                if inserted_id:
-                    conn.commit() # Commit SÓ SE a inserção foi bem-sucedida
-                    logger.info(f"insert_data_to_db: Dados inseridos com sucesso: ID={inserted_id[0]}, {song_title} - {artist} ({name})")
-                    logger.info(f"Dados inseridos com sucesso no DB - identified_by='{identified_by_value}' para SERVER_ID={SERVER_ID}")
-                    return True # Indica que inseriu com sucesso
-                else:
-                    # Isso não deveria acontecer normalmente se a query está correta e não houve erro
-                    logger.error(f"insert_data_to_db: Inserção falhou ou não retornou ID para {song_title} - {artist}.")
-                    conn.rollback() # Garante rollback se algo estranho ocorreu
-                    return False
-
-            except psycopg2.errors.UniqueViolation as e_unique:
-                # Capturar erro específico de violação da constraint UNIQUE
-                conn.rollback() # Importante fazer rollback
-                logger.warning(f"insert_data_to_db: Inserção falhou devido a violação de constraint UNIQUE (duplicata exata no mesmo segundo detectada pelo DB): {e_unique}")
-                return False # Indica que não inseriu (duplicata exata)
-
-            except Exception as e_insert:
-                # Outros erros durante a inserção
-                conn.rollback()
-                logger.error(f"insert_data_to_db: Erro GERAL ao inserir dados ({song_title} - {artist}): {e_insert}", exc_info=True)
-                logger.error(f"DEBUG INSERT - SERVER_ID durante erro: {SERVER_ID}")
-                # Enviar alerta para erros GERAIS de inserção
-                subject = "Alerta: Erro ao Inserir Dados no Banco de Dados"
-                body = f"O servidor {SERVER_ID} encontrou um erro GERAL ao inserir dados na tabela {DB_TABLE_NAME}. Erro: {e_insert}\nDados: {entry_base}"
-                send_email_alert(subject, body)
-                return False # Indica falha na inserção
-
+        # Formatar dados para inserção
+        date_str = now_tz.strftime('%Y-%m-%d')
+        time_str = now_tz.strftime('%H:%M:%S')
+        
+        entry = entry_base.copy()
+        entry["date"] = date_str
+        entry["time"] = time_str
+        entry["identified_by"] = str(SERVER_ID)
+        
+        # Adicionar à fila assíncrona
+        await insert_queue.add_insert_task(entry)
+        
+        logger.info(f"insert_data_to_db: Tarefa adicionada à fila com sucesso: {song_title} - {artist} ({name})")
+        return True
+        
     except Exception as e:
-        # Erros na conexão ou fora do bloco with cursor
-        logger.error(f"insert_data_to_db: Erro INESPERADO fora da transação ({song_title} - {artist}): {e}", exc_info=True)
-        logger.error(f"DEBUG INSERT - SERVER_ID durante erro: {SERVER_ID}")
-        if conn:
-            try: conn.rollback()
-            except Exception as rb_err: logger.error(f"Erro no rollback externo: {rb_err}")
-        return False # Indica falha na inserção
-    finally:
-        if conn:
-            try: db_pool.putconn(conn)
-            except Exception as cl_err: logger.error(f"Erro ao retornar conexão ao pool: {cl_err}")
+        logger.error(f"insert_data_to_db: Erro ao adicionar tarefa à fila ({song_title} - {artist}): {e}", exc_info=True)
+        
+        # Enviar alerta por e-mail em caso de erro crítico
+        try:
+            subject = "Alerta: Erro ao Adicionar Tarefa à Fila de Inserção"
+            body = f"O servidor {SERVER_ID} encontrou um erro ao adicionar uma tarefa à fila de inserção.\n\nErro: {e}\nDados: {entry_base}"
+            send_email_alert(subject, body)
+        except Exception as email_err:
+            logger.error(f"Erro ao enviar e-mail de alerta: {email_err}")
+        
+        return False
 
 # Função para atualizar o log local e chamar a inserção no DB
 async def update_local_log(stream, song_title, artist, timestamp, isrc=None, label=None, genre=None):
@@ -1635,6 +1563,14 @@ async def main():
     logger.info(f"Configurações de distribuição carregadas do .env: SERVER_ID={SERVER_ID}, TOTAL_SERVERS={TOTAL_SERVERS}")
     logger.info(f"Distribuição de carga: {DISTRIBUTE_LOAD}, Rotação: {ENABLE_ROTATION}, Horas de rotação: {ROTATION_HOURS}")
     
+    # Inicializar a fila assíncrona de inserções
+    try:
+        await insert_queue.start_worker()
+        logger.info("Fila assíncrona de inserções inicializada com sucesso")
+    except Exception as e_queue:
+        logger.error(f"Erro ao inicializar fila assíncrona: {e_queue}")
+        sys.exit(1)
+    
     # Verificar se a tabela de logs existe e criar se necessário
     if not check_log_table():
         logger.warning("A verificação da tabela de logs falhou. Tentando prosseguir mesmo assim.")
@@ -1795,6 +1731,15 @@ if __name__ == '__main__':
             logger.error(f"Não foi possível enviar e-mail de alerta para erro crítico: {email_err}")
     finally:
         logger.info("Aplicação encerrando...")
+        
+        # Encerrar a fila assíncrona de inserções
+        try:
+            # Usar asyncio.run() para executar a operação assíncrona no contexto síncrono
+            asyncio.run(insert_queue.stop_worker())
+            logger.info("Fila assíncrona de inserções encerrada com sucesso")
+        except Exception as e_queue_stop:
+            logger.error(f"Erro ao encerrar fila assíncrona: {e_queue_stop}")
+        
         # Garantir que todas as tarefas sejam canceladas no encerramento
         if 'active_tasks' in globals() and active_tasks:
             logger.info(f"Tentando cancelar {len(active_tasks)} tarefas ativas...")

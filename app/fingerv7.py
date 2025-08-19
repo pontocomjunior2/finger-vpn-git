@@ -981,7 +981,7 @@ async def insert_data_to_db(entry_base, now_tz):
         entry["identified_by"] = str(SERVER_ID)
         
         # Adicionar à fila assíncrona
-        await insert_queue.add_task(entry)
+        await insert_queue.add_insert_task(entry)
         
         logger.info(f"insert_data_to_db: Tarefa adicionada à fila com sucesso: {song_title} - {artist} ({name})")
         return True
