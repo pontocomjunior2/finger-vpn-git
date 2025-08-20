@@ -498,35 +498,120 @@ def get_assigned_server(stream_id: str) -> int:
             get_db_pool().pool.putconn(conn)
 
 
+def clean_string(text: str) -> str:
+    """
+    Limpa e normaliza uma string para comparação:
+    - Remove acentos
+    - Remove caracteres especiais
+    - Converte para minúsculas
+    - Remove espaços extras
+    """
+    import unicodedata
+    import re
+    
+    if not text:
+        return ""
+    
+    # Remove acentos
+    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
+    
+    # Remove caracteres especiais e mantém apenas letras, números e espaços
+    text = re.sub(r'[^\w\s]', '', text)
+    
+    # Remove espaços extras e converte para minúsculas
+    text = re.sub(r'\s+', ' ', text).strip().lower()
+    
+    return text
+
 def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
     """
-    Verifica se já existe uma inserção recente para este stream/música nos últimos 2 minutos
+    Verifica se já existe uma inserção recente para este stream/música com múltiplas janelas de tempo
+    e verificação inteligente de similaridade
     """
     conn = None
     try:
         conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            # Verificar inserções nos últimos 2 minutos com comparação case-insensitive
+            # Buscar inserções com múltiplas janelas de tempo
             cursor.execute(
                 """
-                SELECT id, created_at FROM music_log 
+                SELECT id, created_at, song_title, artist 
+                FROM music_log 
                 WHERE name = %s 
-                AND TRIM(LOWER(song_title)) = TRIM(LOWER(%s)) 
-                AND TRIM(LOWER(artist)) = TRIM(LOWER(%s)) 
-                AND created_at >= NOW() - INTERVAL '2 minutes'
+                AND (
+                    created_at >= NOW() - INTERVAL '5 minutes' OR  -- Janela curta para duplicatas rápidas
+                    created_at >= NOW() - INTERVAL '30 minutes' OR -- Janela média
+                    created_at >= NOW() - INTERVAL '60 minutes'    -- Janela longa
+                )
                 ORDER BY created_at DESC
-                LIMIT 1
                 """,
-                (name, song_title, artist)
+                (name,)
             )
             
-            result = cursor.fetchone()
-            if result:
-                logger.info(
-                    f"Duplicata detectada: {song_title} - {artist} em {name} "
-                    f"(ID: {result[0]}, criado em: {result[1]} - {SERVER_ID})"
+            results = cursor.fetchall()
+            if not results:
+                return False
+            
+            # Limpar strings de entrada
+            clean_input_title = clean_string(song_title)
+            clean_input_artist = clean_string(artist)
+            
+            # Verificar cada registro recente com diferentes níveis de similaridade
+            for row in results:
+                db_id, created_at, db_title, db_artist = row
+                
+                clean_db_title = clean_string(db_title)
+                clean_db_artist = clean_string(db_artist)
+                
+                # Calcular tempo decorrido
+                time_diff = (datetime.now() - created_at).total_seconds()
+                
+                # Verificação exata após limpeza (mais rigorosa)
+                if clean_input_title == clean_db_title and clean_input_artist == clean_db_artist:
+                    logger.info(
+                        f"Duplicata EXATA detectada: {song_title} - {artist} em {name} "
+                        f"(ID: {db_id}, criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
+                    )
+                    return True
+                
+                # Verificação de similaridade com diferentes thresholds baseado no tempo
+                title_similar = (
+                    clean_input_title == clean_db_title or
+                    clean_input_title in clean_db_title or 
+                    clean_db_title in clean_input_title or
+                    (len(clean_input_title) > 5 and len(clean_db_title) > 5 and 
+                     (clean_input_title[:5] == clean_db_title[:5] or clean_input_title[-5:] == clean_db_title[-5:]))
                 )
-                return True
+                
+                artist_similar = (
+                    clean_input_artist == clean_db_artist or
+                    clean_input_artist in clean_db_artist or 
+                    clean_db_artist in clean_input_artist or
+                    (len(clean_input_artist) > 3 and len(clean_db_artist) > 3 and 
+                     (clean_input_artist[:3] == clean_db_artist[:3]))
+                )
+                
+                if title_similar and artist_similar:
+                    # Ajustar threshold baseado no tempo decorrido
+                    if time_diff < 300:  # 5 minutos - muito rigoroso
+                        logger.info(
+                            f"Duplicata RÁPIDA detectada: {song_title} - {artist} em {name} "
+                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
+                        )
+                        return True
+                    elif time_diff < 1800:  # 30 minutos - moderado
+                        logger.info(
+                            f"Duplicata RECENTE detectada: {song_title} - {artist} em {name} "
+                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
+                        )
+                        return True
+                    elif time_diff < 3600:  # 60 minutos - mais permissivo
+                        logger.info(
+                            f"Duplicata TARDIA detectada: {song_title} - {artist} em {name} "
+                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
+                        )
+                        return True
+            
             return False
             
     except Exception as e:
