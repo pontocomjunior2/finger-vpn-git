@@ -651,114 +651,184 @@ def should_process_stream(stream_id: str, server_id: int, total_servers: int) ->
 async def acquire_stream_lock(stream_id: str, server_id: int, timeout: int = 30) -> bool:
     """Tenta adquirir um lock exclusivo para processar um stream."""
     try:
-        conn = await db_pool.get_connection()
-        if not conn:
-            logger.error("Não foi possível conectar ao banco de dados para adquirir lock")
-            return False
-        
-        async with conn.cursor() as cursor:
-            # Usar advisory lock do PostgreSQL baseado no hash do stream_id
-            import hashlib
-            lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
-            
-            # Tentar adquirir o lock
-            await cursor.execute(
-                "SELECT pg_try_advisory_lock(%s, %s)",
-                (lock_id, server_id)
-            )
-            result = await cursor.fetchone()
-            
-            if result and result[0]:
-                # Registrar o lock no banco
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Usar advisory lock do PostgreSQL baseado no hash do stream_id
+                import hashlib
+                lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
+                
+                # Tentar adquirir o lock
                 await cursor.execute(
-                    """
-                    INSERT INTO stream_ownership (stream_id, server_id, acquired_at, active)
-                    VALUES (%s, %s, NOW(), TRUE)
-                    ON CONFLICT (stream_id) DO UPDATE SET
-                    server_id = EXCLUDED.server_id,
-                    acquired_at = EXCLUDED.acquired_at,
-                    active = TRUE
-                    """,
-                    (stream_id, server_id)
+                    "SELECT pg_try_advisory_lock(%s, %s)",
+                    (lock_id, server_id)
                 )
-                await conn.commit()
-                logger.info(f"Lock adquirido para stream {stream_id} pelo servidor {server_id}")
-                return True
-            else:
-                logger.info(f"Stream {stream_id} já está sendo processado por outro servidor")
-                return False
+                result = await cursor.fetchone()
+                
+                if result and result[0]:
+                    # Registrar o lock no banco
+                    await cursor.execute(
+                        """
+                        INSERT INTO stream_ownership (stream_id, server_id, acquired_at, active)
+                        VALUES (%s, %s, NOW(), TRUE)
+                        ON CONFLICT (stream_id) DO UPDATE SET
+                        server_id = EXCLUDED.server_id,
+                        acquired_at = EXCLUDED.acquired_at,
+                        active = TRUE
+                        """,
+                        (stream_id, server_id)
+                    )
+                    await conn.commit()
+                    logger.info(f"Lock adquirido para stream {stream_id} pelo servidor {server_id}")
+                    return True
+                else:
+                    logger.info(f"Stream {stream_id} já está sendo processado por outro servidor")
+                    return False
                 
     except Exception as e:
         logger.error(f"Erro ao adquirir lock para stream {stream_id}: {e}")
         return False
-    finally:
-        if 'conn' in locals() and conn:
-            await db_pool.putconn(conn)
+
+# Função para detectar entrada de novos servidores e rebalancear imediatamente
+async def monitor_server_joins():
+    """Detecta servidores que entraram recentemente (com base em server_heartbeats)
+    e dispara um rebalanceamento imediato, com cooldown para evitar excesso.
+
+    Critérios:
+    - Um servidor é considerado "novo" se apareceu nos últimos HEARTBEAT_INTERVAL_SECS
+      e não estava no conjunto KNOWN_SERVERS.
+    - Após um rebalanceamento, aguarda REBALANCE_COOLDOWN_SECS antes de um novo.
+    """
+    global KNOWN_SERVERS, _last_rebalance_time
+
+    check_interval = JOIN_CHECK_INTERVAL_SECS
+    logger.info(
+        f"Iniciando monitor de entrada de servidores (join). Intervalo={check_interval}s, "
+        f"cooldown={REBALANCE_COOLDOWN_SECS}s"
+    )
+
+    while True:
+        try:
+            await asyncio.sleep(check_interval)
+
+            # Consultar servidores com heartbeat recente
+            async with db_pool.get_connection() as conn:
+                now = datetime.now(timezone.utc)
+                recent_threshold = now - timedelta(seconds=HEARTBEAT_INTERVAL_SECS * 2)
+
+                async with conn.cursor() as cursor:
+                    # Verificar se a tabela existe antes de consultar
+                    await cursor.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'server_heartbeats'
+                        );
+                        """
+                    )
+                    exists = (await cursor.fetchone())[0]
+                    if not exists:
+                        logger.warning("Tabela de heartbeats não existe no banco de dados.")
+                        KNOWN_SERVERS = set()
+                        continue
+
+                    await cursor.execute(
+                        """
+                        SELECT DISTINCT server_id
+                        FROM server_heartbeats
+                        WHERE last_heartbeat >= %s
+                        """,
+                        (recent_threshold,)
+                    )
+                    rows = await cursor.fetchall()
+
+                current_servers = {r[0] for r in rows} if rows else set()
+
+                # Inicialização do conjunto conhecido na primeira execução
+                if not KNOWN_SERVERS:
+                    KNOWN_SERVERS = set(current_servers)
+                    continue
+
+                # Detectar joins: servidores presentes agora que não estavam antes
+                joined = current_servers - KNOWN_SERVERS
+                if joined:
+                    now_ts = time.time()
+                    since_last = now_ts - _last_rebalance_time if _last_rebalance_time else None
+
+                    logger.info(
+                        f"Detectados novos servidores: {sorted(joined)} | antes={sorted(KNOWN_SERVERS)} | agora={sorted(current_servers)}"
+                    )
+
+                    if _last_rebalance_time and since_last is not None and since_last < REBALANCE_COOLDOWN_SECS:
+                        logger.info(
+                            f"Rebalanceamento ignorado (cooldown {REBALANCE_COOLDOWN_SECS}s). "
+                            f"Decorridos {int(since_last)}s desde o último."
+                        )
+                    else:
+                        # Disparar rebalanceamento genérico (mantendo assinatura existente)
+                        try:
+                            await rebalance_streams(TOTAL_SERVERS, TOTAL_SERVERS)
+                            _last_rebalance_time = now_ts
+                        except Exception as reb_err:
+                            logger.error(f"Erro ao rebalancear após join: {reb_err}")
+
+                # Atualizar conjunto conhecido para próxima iteração
+                KNOWN_SERVERS = set(current_servers)
+
+        except Exception as e:
+            logger.error(f"Erro no monitor de joins: {e}")
 
 # Função para liberar lock de stream
 async def release_stream_lock(stream_id: str, server_id: int) -> bool:
     """Libera o lock de um stream."""
     try:
-        conn = await db_pool.get_connection()
-        if not conn:
-            return False
-        
-        async with conn.cursor() as cursor:
-            # Liberar advisory lock
-            import hashlib
-            lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
-            
-            await cursor.execute(
-                "SELECT pg_advisory_unlock(%s, %s)",
-                (lock_id, server_id)
-            )
-            
-            # Atualizar registro no banco
-            await cursor.execute(
-                """
-                UPDATE stream_ownership 
-                SET active = FALSE, released_at = NOW()
-                WHERE stream_id = %s AND server_id = %s
-                """,
-                (stream_id, server_id)
-            )
-            await conn.commit()
-            
-            logger.info(f"Lock liberado para stream {stream_id} pelo servidor {server_id}")
-            return True
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # Liberar advisory lock
+                import hashlib
+                lock_id = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
+                
+                await cursor.execute(
+                    "SELECT pg_advisory_unlock(%s, %s)",
+                    (lock_id, server_id)
+                )
+                
+                # Atualizar registro no banco
+                await cursor.execute(
+                    """
+                    UPDATE stream_ownership 
+                    SET active = FALSE, released_at = NOW()
+                    WHERE stream_id = %s AND server_id = %s
+                    """,
+                    (stream_id, server_id)
+                )
+                await conn.commit()
+                
+                logger.info(f"Lock liberado para stream {stream_id} pelo servidor {server_id}")
+                return True
             
     except Exception as e:
         logger.error(f"Erro ao liberar lock para stream {stream_id}: {e}")
         return False
-    finally:
-        if 'conn' in locals() and conn:
-            await db_pool.putconn(conn)
 
 # Função para verificar se este servidor possui o lock de um stream
 async def check_stream_ownership(stream_id: str, server_id: int) -> bool:
     """Verifica se este servidor possui o lock ativo para um stream."""
     try:
-        conn = await db_pool.get_connection()
-        if not conn:
-            return False
-        
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                SELECT active FROM stream_ownership 
-                WHERE stream_id = %s AND server_id = %s AND active = TRUE
-                """,
-                (stream_id, server_id)
-            )
-            result = await cursor.fetchone()
-            return bool(result and result[0])
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT active FROM stream_ownership 
+                    WHERE stream_id = %s AND server_id = %s AND active = TRUE
+                    """,
+                    (stream_id, server_id)
+                )
+                result = await cursor.fetchone()
+                return bool(result and result[0])
             
     except Exception as e:
         logger.error(f"Erro ao verificar ownership do stream {stream_id}: {e}")
         return False
-    finally:
-        if 'conn' in locals() and conn:
-            await db_pool.putconn(conn)
 
 # Função para detectar mudanças no número de servidores e rebalancear
 async def monitor_server_changes():
@@ -790,8 +860,7 @@ async def rebalance_streams(old_count: int, new_count: int):
     
     try:
         # Liberar todos os locks atuais para permitir redistribuição
-        conn = await db_pool.get_connection()
-        if conn:
+        async with db_pool.get_connection() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
                     """
@@ -806,9 +875,6 @@ async def rebalance_streams(old_count: int, new_count: int):
                 
     except Exception as e:
         logger.error(f"Erro durante rebalanceamento: {e}")
-    finally:
-        if 'conn' in locals() and conn:
-            await db_pool.putconn(conn)
 
 # Função para carregar o estado das últimas músicas identificadas
 def load_last_songs():
@@ -1695,6 +1761,12 @@ Este é um alerta automático.
 # Variável global para controlar o tempo da última solicitação
 last_request_time = 0
 
+# Variáveis/constantes para rebalanceamento imediato em 'join' de servidores
+JOIN_CHECK_INTERVAL_SECS = max(10, HEARTBEAT_INTERVAL_SECS // 2)
+REBALANCE_COOLDOWN_SECS = HEARTBEAT_INTERVAL_SECS * 3
+KNOWN_SERVERS: set[int] = set()
+_last_rebalance_time: float = 0.0
+
 # Função principal para processar todos os streams
 async def main():
     logger.debug("Iniciando a função main()")
@@ -1772,14 +1844,17 @@ async def main():
     
     # Adicionar tarefa de monitoramento para rebalanceamento
     rebalancing_task = register_task(asyncio.create_task(monitor_server_changes()))
+
+    # Nova tarefa: monitorar joins de servidores para rebalancear imediatamente
+    server_joins_task = register_task(asyncio.create_task(monitor_server_joins()))
     
     if 'send_data_to_db' in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
         tasks_to_gather = [monitor_task, shazam_task, send_data_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task, rebalancing_task]
+                          heartbeat_task, server_monitor_task, rebalancing_task, server_joins_task]
     else:
         tasks_to_gather = [monitor_task, shazam_task, shutdown_monitor_task, 
-                          heartbeat_task, server_monitor_task, rebalancing_task]
+                          heartbeat_task, server_monitor_task, rebalancing_task, server_joins_task]
     
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     json_sync_task = register_task(asyncio.create_task(schedule_json_sync()))

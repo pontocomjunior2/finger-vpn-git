@@ -322,16 +322,17 @@ def consistent_hash(value: str, buckets: int) -> int:
 
 
 def acquire_stream_lock(
-    stream_id: str, server_id: int, timeout_minutes: int = 5
+    stream_id: str, server_id: int, timeout_minutes: int = 2  # Reduzido de 5 para 2 minutos
 ) -> bool:
     """
     Tenta adquirir lock para processar um stream específico
+    CORRIGIDO: Previne duplicação de locks entre instâncias
     """
     conn = None
     try:
         conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            # Limpar locks expirados
+            # Limpar locks expirados com timeout menor
             cursor.execute(
                 """
                 DELETE FROM stream_locks 
@@ -339,36 +340,22 @@ def acquire_stream_lock(
             """,
                 (timeout_minutes,),
             )
-
-            # Tentar adquirir lock
-            try:
-                cursor.execute(
-                    """
-                    INSERT INTO stream_locks (stream_id, server_id)
-                    VALUES (%s, %s)
-                """,
-                    (stream_id, server_id),
-                )
-                conn.commit()
-                logger.info(
-                    f"Lock adquirido para stream {stream_id} pelo servidor {server_id}"
-                )
-                return True
-            except psycopg2.errors.UniqueViolation:
-                # Lock já existe para este stream
-                conn.rollback()
-
-                # Verificar se o servidor atual é o dono do lock
-                cursor.execute(
-                    """
-                    SELECT server_id FROM stream_locks WHERE stream_id = %s
-                """,
-                    (stream_id,),
-                )
-                result = cursor.fetchone()
-
-                if result and result[0] == server_id:
-                    # Este servidor já possui o lock, atualizar heartbeat
+            
+            # CORREÇÃO: Verificar se já existe lock ativo ANTES de tentar inserir
+            cursor.execute(
+                """
+                SELECT server_id, heartbeat_at FROM stream_locks 
+                WHERE stream_id = %s
+            """,
+                (stream_id,),
+            )
+            existing_lock = cursor.fetchone()
+            
+            if existing_lock:
+                existing_server_id, heartbeat_at = existing_lock
+                
+                # Se é o mesmo servidor, apenas atualizar heartbeat
+                if existing_server_id == server_id:
                     cursor.execute(
                         """
                         UPDATE stream_locks 
@@ -378,10 +365,38 @@ def acquire_stream_lock(
                         (stream_id, server_id),
                     )
                     conn.commit()
+                    logger.debug(f"Heartbeat atualizado para stream {stream_id} servidor {server_id}")
                     return True
                 else:
-                    # Outro servidor possui o lock
+                    # Outro servidor possui o lock - REJEITAR
+                    logger.warning(
+                        f"Stream {stream_id} já possui lock ativo do servidor {existing_server_id}. "
+                        f"Servidor {server_id} não pode adquirir lock."
+                    )
                     return False
+            
+            # Tentar inserir novo lock apenas se não existir
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO stream_locks (stream_id, server_id, heartbeat_at)
+                    VALUES (%s, %s, NOW())
+                """,
+                    (stream_id, server_id),
+                )
+                conn.commit()
+                logger.info(
+                    f"Lock adquirido para stream {stream_id} pelo servidor {server_id}"
+                )
+                return True
+                
+            except psycopg2.errors.UniqueViolation:
+                # Race condition - outro servidor inseriu lock entre verificação e inserção
+                conn.rollback()
+                logger.warning(
+                    f"Race condition detectada: outro servidor adquiriu lock para stream {stream_id}"
+                )
+                return False
 
     except Exception as e:
         logger.error(f"Erro ao adquirir lock para stream {stream_id}: {e}")
@@ -493,6 +508,33 @@ def get_assigned_server(stream_id: str) -> int:
         logger.error(f"Erro ao obter servidor atribuído para stream {stream_id}: {e}")
         # Fallback para consistent hashing
         return consistent_hash(stream_id, TOTAL_SERVERS) + 1
+    finally:
+        if conn:
+            get_db_pool().pool.putconn(conn)
+
+
+def check_existing_lock(stream_id: str) -> int:
+    """
+    NOVA FUNÇÃO: Verifica se existe lock ativo para um stream e retorna o server_id
+    """
+    conn = None
+    try:
+        conn = get_db_pool().pool.getconn()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT server_id FROM stream_locks 
+                WHERE stream_id = %s 
+                AND heartbeat_at > NOW() - INTERVAL '2 minutes'
+            """,
+                (stream_id,),
+            )
+            result = cursor.fetchone()
+            return result[0] if result else None
+            
+    except Exception as e:
+        logger.error(f"Erro ao verificar lock existente para stream {stream_id}: {e}")
+        return None
     finally:
         if conn:
             get_db_pool().pool.putconn(conn)
@@ -1736,19 +1778,33 @@ async def process_stream(stream, last_songs):
     # Use stream index or name as the key for tracking
     stream_key = stream.get("index", name)
     previous_segment = None
+    
+    # CORREÇÃO: Verificar lock inicial uma única vez
+    initial_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
+    
+    if not initial_lock:
+        logger.warning(
+            f"Stream {name} ({stream_key}) não pôde adquirir lock inicial. "
+            f"Outro servidor pode estar processando. Encerrando task."
+        )
+        return  # Encerrar task se não conseguir lock inicial
+    
+    cycle_count = 0
+    
+    try:
+        while True:
+            cycle_count += 1
+            logger.info(f"Processando streaming: {name} (ciclo {cycle_count})")
 
-    while True:
-        logger.info(f"Processando streaming: {name}")
-
-        # Verificar se este servidor tem o lock para este stream
-        has_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
-
-        if not has_lock:
-            logger.info(
-                f"Stream {name} ({stream_key}) não tem lock para este servidor. Verificando novamente em 60 segundos."
-            )
-            await asyncio.sleep(60)  # Aguardar antes de verificar novamente
-            continue
+            # CORREÇÃO: Verificar lock a cada 3 ciclos ao invés de todo ciclo
+            # Isso reduz overhead e race conditions
+            if cycle_count % 3 == 1:  # Verificar a cada 3 ciclos
+                has_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
+                if not has_lock:
+                    logger.warning(
+                        f"Stream {name} ({stream_key}) perdeu lock. Encerrando processamento."
+                    )
+                    break
 
         current_segment_path = await capture_stream_segment(name, url, duration=None)
 
@@ -1784,6 +1840,19 @@ async def process_stream(stream, last_songs):
             f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})..."
         )
         await asyncio.sleep(60)  # Intervalo de captura de segmentos
+            
+    except asyncio.CancelledError:
+        logger.info(f"Task do stream {name} ({stream_key}) foi cancelada.")
+        raise  # Re-raise para permitir cancelamento limpo
+    except Exception as e:
+        logger.error(f"Erro inesperado no processamento do stream {name}: {e}")
+    finally:
+        # CORREÇÃO: Garantir liberação do lock ao encerrar task
+        try:
+            await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
+            logger.info(f"Lock liberado para stream {name} ({stream_key}) ao encerrar task.")
+        except Exception as e:
+            logger.error(f"Erro ao liberar lock para stream {name}: {e}")
 
 
 def send_email_alert(subject, body):
@@ -2548,7 +2617,7 @@ async def main():
                 all_streams
             )  # Atualiza o banco de dados com as rádios do arquivo
 
-        # Atribuir streams usando consistent hashing e locks
+        # CORRIGIDO: Atribuir streams usando consistent hashing e locks com verificação prévia
         assigned_streams = []
         if DISTRIBUTE_LOAD:
             for stream in all_streams:
@@ -2558,7 +2627,19 @@ async def main():
                 )
 
                 if assigned_server == SERVER_ID:
-                    # Tentar adquirir lock para este stream
+                    # CORREÇÃO: Verificar se outro servidor já possui lock ativo
+                    existing_lock_server = await asyncio.to_thread(
+                        check_existing_lock, stream_id
+                    )
+                    
+                    if existing_lock_server and existing_lock_server != SERVER_ID:
+                        logger.warning(
+                            f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
+                            f"Pulando atribuição para servidor {SERVER_ID}."
+                        )
+                        continue
+                    
+                    # Tentar adquirir lock apenas se não houver conflito
                     lock_acquired = await asyncio.to_thread(
                         acquire_stream_lock, stream_id, SERVER_ID
                     )
@@ -2567,6 +2648,11 @@ async def main():
                         assigned_streams.append(stream)
                         await asyncio.to_thread(
                             assign_stream_ownership, stream_id, SERVER_ID
+                        )
+                    else:
+                        logger.warning(
+                            f"Não foi possível adquirir lock para stream {stream_id}. "
+                            f"Outro servidor pode estar processando."
                         )
         else:
             assigned_streams = all_streams

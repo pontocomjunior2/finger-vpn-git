@@ -555,11 +555,11 @@ class AsyncInsertQueue:
             artist = data.get("artist", "") or ""
             current_date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
             current_time = data.get("time", datetime.now().strftime("%H:%M:%S"))
-            
+
             # Calcular timestamp de 10 minutos atrás para verificação mais ampla
             now = datetime.now()
             ten_minutes_ago = now - timedelta(minutes=10)
-            
+
             # Verificação atômica com SELECT FOR UPDATE para prevenir condições de corrida
             # Usando uma transação mais robusta com verificação de duplicatas
             duplicate_check_query = """
@@ -572,23 +572,26 @@ class AsyncInsertQueue:
             AND (date || ' ' || time)::timestamp >= %s
             FOR UPDATE SKIP LOCKED
             """
-            
-            cursor.execute(duplicate_check_query, (
-                radio_name,
-                isrc,
-                song_title,
-                artist,
-                ten_minutes_ago.strftime("%Y-%m-%d %H:%M:%S")
-            ))
-            
+
+            cursor.execute(
+                duplicate_check_query,
+                (
+                    radio_name,
+                    isrc,
+                    song_title,
+                    artist,
+                    ten_minutes_ago.strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
+
             existing_records = cursor.fetchall()
-            
+
             if existing_records:
                 logger.debug(
                     f"Duplicata detectada e ignorada: {radio_name} - {song_title} ({artist}) - ID: {existing_records[0][0]}"
                 )
                 return
-                
+
             # Verificação adicional por tempo exato para garantir que não há duplicatas
             # mesmo que o servidor esteja processando o mesmo segmento
             exact_check_query = """
@@ -602,18 +605,14 @@ class AsyncInsertQueue:
             )
             FOR UPDATE SKIP LOCKED
             """
-            
-            cursor.execute(exact_check_query, (
-                radio_name,
-                current_date,
-                current_time,
-                isrc,
-                song_title,
-                artist
-            ))
-            
+
+            cursor.execute(
+                exact_check_query,
+                (radio_name, current_date, current_time, isrc, song_title, artist),
+            )
+
             exact_records = cursor.fetchall()
-            
+
             if exact_records:
                 logger.debug(
                     f"Duplicata exata detectada e ignorada: {radio_name} - {song_title} ({artist})"

@@ -273,24 +273,24 @@ async def list_instances() -> List[Dict[str, Any]]:
             pass
 
     # Fallback: usar DB (comportamento original)
-    conn = None
     try:
-        conn = db_pool.get_connection_sync()
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT server_id, last_heartbeat, status, ip_address, info
+                    FROM server_heartbeats
+                    ORDER BY server_id ASC
                 """
-                SELECT server_id, last_heartbeat, status, ip_address, info
-                FROM server_heartbeats
-                ORDER BY server_id ASC
-            """
-            )
-            rows = cur.fetchall()
-            return [_row_to_instance(dict(r)) for r in rows]
+                )
+                rows = await cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+                return [_row_to_instance(dict(zip(columns, r))) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
-                db_pool.putconn(conn)
+            db_pool.putconn(conn)
 
 
 @app.get("/api/health")
@@ -303,44 +303,67 @@ async def health_check():
 async def server_health_check(server_id: int):
     """Verifica a saúde de uma instância específica"""
     try:
-        conn = db_pool.get_connection_sync()
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            # Verifica se o servidor está processando streams corretamente
-            query = """
-                SELECT 
-                    COUNT(*) as total_streams,
-                    COUNT(CASE WHEN last_check > NOW() - INTERVAL '5 minutes' THEN 1 END) as active_streams,
-                    MAX(last_check) as last_activity
-                FROM stream_ownership 
-                WHERE server_id = %s
-            """
-            cur.execute(query, (server_id,))
-            result = cur.fetchone()
-            
-            # Verifica se há músicas recentes processadas por este servidor
-            cur.execute("""
-                SELECT COUNT(*) as recent_songs
-                FROM music_log 
-                WHERE identified_by = %s 
-                AND (date + time) > NOW() - INTERVAL '5 minutes'
-            """, (str(server_id),))
-            recent_music = cur.fetchone()
-            
-            is_healthy = (
-                result['active_streams'] > 0 or 
-                recent_music['recent_songs'] > 0 or
-                (result['last_activity'] and result['last_activity'] > datetime.now() - timedelta(minutes=5))
-            )
-            
-            return {
-                "server_id": server_id,
-                "healthy": is_healthy,
-                "total_streams": result['total_streams'],
-                "active_streams": result['active_streams'],
-                "recent_songs": recent_music['recent_songs'],
-                "last_activity": result['last_activity'],
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Verifica se o servidor está processando streams corretamente
+                query = """
+                    SELECT 
+                        COUNT(*) as total_streams,
+                        COUNT(CASE WHEN last_check > NOW() - INTERVAL '5 minutes' THEN 1 END) as active_streams,
+                        MAX(last_check) as last_activity
+                    FROM stream_ownership 
+                    WHERE server_id = %s
+                """
+                await cur.execute(query, (server_id,))
+                result_row = await cur.fetchone()
+                result_cols = [d[0] for d in cur.description]
+                result = (
+                    dict(zip(result_cols, result_row))
+                    if result_row
+                    else {
+                        "total_streams": 0,
+                        "active_streams": 0,
+                        "last_activity": None,
+                    }
+                )
+
+                # Verifica se há músicas recentes processadas por este servidor
+                await cur.execute(
+                    """
+                        SELECT COUNT(*) as recent_songs
+                        FROM music_log 
+                        WHERE identified_by = %s 
+                        AND (date + time) > NOW() - INTERVAL '5 minutes'
+                    """,
+                    (str(server_id),),
+                )
+                recent_row = await cur.fetchone()
+                recent_cols = [d[0] for d in cur.description]
+                recent_music = (
+                    dict(zip(recent_cols, recent_row))
+                    if recent_row
+                    else {"recent_songs": 0}
+                )
+
+                is_healthy = (
+                    (result.get("active_streams", 0) > 0)
+                    or (recent_music.get("recent_songs", 0) > 0)
+                    or (
+                        result.get("last_activity")
+                        and result["last_activity"]
+                        > datetime.now() - timedelta(minutes=5)
+                    )
+                )
+
+                return {
+                    "server_id": server_id,
+                    "healthy": is_healthy,
+                    "total_streams": result.get("total_streams", 0),
+                    "active_streams": result.get("active_streams", 0),
+                    "recent_songs": recent_music.get("recent_songs", 0),
+                    "last_activity": result.get("last_activity"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
     except Exception as e:
         logger.error(f"Erro ao verificar saúde do servidor {server_id}: {e}")
         return {"server_id": server_id, "healthy": False, "error": str(e)}
@@ -353,51 +376,64 @@ async def server_health_check(server_id: int):
 async def verify_stream_processing():
     """Verifica se todos os streams estão sendo processados corretamente"""
     try:
-        conn = db_pool.get_connection_sync()
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            # Total de streams
-            cur.execute("SELECT COUNT(*) FROM streams")
-            total_streams = cur.fetchone()[0]
-            
-            # Streams com lock ativo
-            cur.execute("""
-                SELECT s.id, s.name, so.server_id, so.last_check
-                FROM streams s
-                LEFT JOIN stream_ownership so ON s.id = so.stream_id
-                WHERE so.last_check > NOW() - INTERVAL '2 minutes'
-            """)
-            active_locks = cur.fetchall()
-            
-            # Streams sem processamento recente
-            cur.execute("""
-                SELECT s.id, s.name, 
-                       CASE WHEN so.server_id IS NULL THEN 'no_lock' ELSE 'inactive' END as status,
-                       so.server_id, so.last_check
-                FROM streams s
-                LEFT JOIN stream_ownership so ON s.id = so.stream_id
-                WHERE so.last_check IS NULL OR so.last_check < NOW() - INTERVAL '2 minutes'
-            """)
-            inactive_streams = cur.fetchall()
-            
-            # Verifica duplicatas
-            cur.execute("""
-                SELECT stream_id, server_id, COUNT(*) as count
-                FROM stream_ownership
-                WHERE last_check > NOW() - INTERVAL '1 hour'
-                GROUP BY stream_id, server_id
-                HAVING COUNT(*) > 1
-            """)
-            duplicates = cur.fetchall()
-            
-            return {
-                "total_streams": total_streams,
-                "active_locks": len(active_locks),
-                "inactive_streams": len(inactive_streams),
-                "duplicates": len(duplicates),
-                "inactive_details": [dict(row) for row in inactive_streams],
-                "duplicate_details": [dict(row) for row in duplicates],
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Total de streams
+                await cur.execute("SELECT COUNT(*) FROM streams")
+                total_streams = (await cur.fetchone())[0]
+
+                # Streams com lock ativo
+                await cur.execute(
+                    """
+                        SELECT s.id, s.name, so.server_id, so.last_check
+                        FROM streams s
+                        LEFT JOIN stream_ownership so ON s.id = so.stream_id
+                        WHERE so.last_check > NOW() - INTERVAL '2 minutes'
+                    """
+                )
+                active_locks = await cur.fetchall()
+                active_cols = [d[0] for d in cur.description]
+
+                # Streams sem processamento recente
+                await cur.execute(
+                    """
+                        SELECT s.id, s.name, 
+                               CASE WHEN so.server_id IS NULL THEN 'no_lock' ELSE 'inactive' END as status,
+                               so.server_id, so.last_check
+                        FROM streams s
+                        LEFT JOIN stream_ownership so ON s.id = so.stream_id
+                        WHERE so.last_check IS NULL OR so.last_check < NOW() - INTERVAL '2 minutes'
+                    """
+                )
+                inactive_streams = await cur.fetchall()
+                inactive_cols = [d[0] for d in cur.description]
+
+                # Verifica duplicatas
+                await cur.execute(
+                    """
+                        SELECT stream_id, server_id, COUNT(*) as count
+                        FROM stream_ownership
+                        WHERE last_check > NOW() - INTERVAL '1 hour'
+                        GROUP BY stream_id, server_id
+                        HAVING COUNT(*) > 1
+                    """
+                )
+                duplicates = await cur.fetchall()
+                duplicate_cols = [d[0] for d in cur.description]
+
+                return {
+                    "total_streams": total_streams,
+                    "active_locks": len(active_locks),
+                    "inactive_streams": len(inactive_streams),
+                    "duplicates": len(duplicates),
+                    "inactive_details": [
+                        dict(zip(inactive_cols, row)) for row in inactive_streams
+                    ],
+                    "duplicate_details": [
+                        dict(zip(duplicate_cols, row)) for row in duplicates
+                    ],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
     except Exception as e:
         logger.error(f"Erro na verificação de streams: {e}")
         return {"error": str(e)}
@@ -407,27 +443,27 @@ async def verify_stream_processing():
 
 
 @app.get("/api/instances/{server_id}/last-records")
-def last_records(
+async def last_records(
     server_id: int, limit: int = Query(5, ge=1, le=50)
 ) -> List[Dict[str, Any]]:
     """
     Retorna os últimos registros gravados no DB pela instância (identified_by = server_id).
     """
-    conn = None
     try:
-        conn = db_pool.get_connection_sync()
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            # IMPORTANTE: respeitar tabela configurada via DB_TABLE_NAME
-            query = f"""
-                SELECT date, time, name, artist, song_title
-                FROM {DB_TABLE_NAME}
-                WHERE identified_by = %s
-                ORDER BY date DESC, time DESC
-                LIMIT %s
-            """
-            cur.execute(query, (str(server_id), limit))
-            rows = cur.fetchall()
-            return [dict(r) for r in rows]
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # IMPORTANTE: respeitar tabela configurada via DB_TABLE_NAME
+                query = f"""
+                    SELECT date, time, name, artist, song_title
+                    FROM {DB_TABLE_NAME}
+                    WHERE identified_by = %s
+                    ORDER BY date DESC, time DESC
+                    LIMIT %s
+                """
+                await cur.execute(query, (str(server_id), limit))
+                rows = await cur.fetchall()
+                cols = [d[0] for d in cur.description]
+                return [dict(zip(cols, r)) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -436,37 +472,40 @@ def last_records(
 
 
 @app.get("/api/instances/{server_id}/errors")
-def last_errors(server_id: int) -> Dict[str, Any]:
+async def last_errors(server_id: int) -> Dict[str, Any]:
     """
     Retorna os últimos erros reportados pela instância no último heartbeat (se presentes no info.recent_errors).
     """
-    conn = None
     try:
-        conn = db_pool.get_connection_sync()
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(
-                """
-                SELECT info
-                FROM server_heartbeats
-                WHERE server_id = %s
-            """,
-                (server_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Instância não encontrada")
-
-            info_json = row["info"]
-            try:
-                info = (
-                    json.loads(info_json)
-                    if not isinstance(info_json, dict)
-                    else info_json
+        async with db_pool.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT info
+                    FROM server_heartbeats
+                    WHERE server_id = %s
+                    """,
+                    (server_id,),
                 )
-            except Exception:
-                info = {}
-            errors = info.get("recent_errors", [])
-            return {"server_id": server_id, "recent_errors": errors}
+                row = await cur.fetchone()
+                if not row:
+                    raise HTTPException(
+                        status_code=404, detail="Instância não encontrada"
+                    )
+
+                cols = [d[0] for d in cur.description]
+                row_dict = dict(zip(cols, row))
+                info_json = row_dict["info"]
+                try:
+                    info = (
+                        json.loads(info_json)
+                        if not isinstance(info_json, dict)
+                        else info_json
+                    )
+                except Exception:
+                    info = {}
+                errors = info.get("recent_errors", [])
+                return {"server_id": server_id, "recent_errors": errors}
     except HTTPException:
         raise
     except Exception as e:
