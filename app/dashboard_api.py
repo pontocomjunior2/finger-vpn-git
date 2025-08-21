@@ -322,7 +322,7 @@ async def server_health_check(server_id: int):
                 SELECT COUNT(*) as recent_songs
                 FROM music_log 
                 WHERE identified_by = %s 
-                AND created_at > NOW() - INTERVAL '5 minutes'
+                AND (date + time) > NOW() - INTERVAL '5 minutes'
             """, (str(server_id),))
             recent_music = cur.fetchone()
             

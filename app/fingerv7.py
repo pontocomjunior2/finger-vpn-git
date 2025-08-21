@@ -532,20 +532,17 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
     try:
         conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            # Buscar inserções com múltiplas janelas de tempo
+            # Buscar inserções na janela configurada usando date/time (evitar created_at)
+            window_start = datetime.now() - timedelta(seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS)
             cursor.execute(
                 """
-                SELECT id, created_at, song_title, artist 
-                FROM music_log 
-                WHERE name = %s 
-                AND (
-                    created_at >= NOW() - INTERVAL '5 minutes' OR  -- Janela curta para duplicatas rápidas
-                    created_at >= NOW() - INTERVAL '30 minutes' OR -- Janela média
-                    created_at >= NOW() - INTERVAL '60 minutes'    -- Janela longa
-                )
-                ORDER BY created_at DESC
+                SELECT id, date, time, song_title, artist
+                FROM music_log
+                WHERE name = %s
+                  AND (date + time) >= %s
+                ORDER BY date DESC, time DESC
                 """,
-                (name,)
+                (name, window_start)
             )
             
             results = cursor.fetchall()
@@ -558,13 +555,14 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
             
             # Verificar cada registro recente com diferentes níveis de similaridade
             for row in results:
-                db_id, created_at, db_title, db_artist = row
+                db_id, db_date, db_time, db_title, db_artist = row
                 
                 clean_db_title = clean_string(db_title)
                 clean_db_artist = clean_string(db_artist)
                 
-                # Calcular tempo decorrido
-                time_diff = (datetime.now() - created_at).total_seconds()
+                # Calcular tempo decorrido a partir de date/time
+                record_ts = datetime.combine(db_date, db_time)
+                time_diff = (datetime.now() - record_ts).total_seconds()
                 
                 # Verificação exata após limpeza (mais rigorosa)
                 if clean_input_title == clean_db_title and clean_input_artist == clean_db_artist:
