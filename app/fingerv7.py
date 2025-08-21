@@ -276,8 +276,10 @@ def create_distribution_tables():
                 """
                 )
             except Exception as e:
-                if 'already exists' in str(e).lower():
-                    logger.info("Constraint unique_song_per_stream_per_minute já existe")
+                if "already exists" in str(e).lower():
+                    logger.info(
+                        "Constraint unique_song_per_stream_per_minute já existe"
+                    )
                 else:
                     raise e
 
@@ -322,7 +324,9 @@ def consistent_hash(value: str, buckets: int) -> int:
 
 
 def acquire_stream_lock(
-    stream_id: str, server_id: int, timeout_minutes: int = 2  # Reduzido de 5 para 2 minutos
+    stream_id: str,
+    server_id: int,
+    timeout_minutes: int = 2,  # Reduzido de 5 para 2 minutos
 ) -> bool:
     """
     Tenta adquirir lock para processar um stream específico
@@ -340,7 +344,7 @@ def acquire_stream_lock(
             """,
                 (timeout_minutes,),
             )
-            
+
             # CORREÇÃO: Verificar se já existe lock ativo ANTES de tentar inserir
             cursor.execute(
                 """
@@ -350,10 +354,10 @@ def acquire_stream_lock(
                 (stream_id,),
             )
             existing_lock = cursor.fetchone()
-            
+
             if existing_lock:
                 existing_server_id, heartbeat_at = existing_lock
-                
+
                 # Se é o mesmo servidor, apenas atualizar heartbeat
                 if existing_server_id == server_id:
                     cursor.execute(
@@ -365,7 +369,9 @@ def acquire_stream_lock(
                         (stream_id, server_id),
                     )
                     conn.commit()
-                    logger.debug(f"Heartbeat atualizado para stream {stream_id} servidor {server_id}")
+                    logger.debug(
+                        f"Heartbeat atualizado para stream {stream_id} servidor {server_id}"
+                    )
                     return True
                 else:
                     # Outro servidor possui o lock - REJEITAR
@@ -374,7 +380,7 @@ def acquire_stream_lock(
                         f"Servidor {server_id} não pode adquirir lock."
                     )
                     return False
-            
+
             # Tentar inserir novo lock apenas se não existir
             try:
                 cursor.execute(
@@ -389,7 +395,7 @@ def acquire_stream_lock(
                     f"Lock adquirido para stream {stream_id} pelo servidor {server_id}"
                 )
                 return True
-                
+
             except psycopg2.errors.UniqueViolation:
                 # Race condition - outro servidor inseriu lock entre verificação e inserção
                 conn.rollback()
@@ -531,7 +537,7 @@ def check_existing_lock(stream_id: str) -> int:
             )
             result = cursor.fetchone()
             return result[0] if result else None
-            
+
     except Exception as e:
         logger.error(f"Erro ao verificar lock existente para stream {stream_id}: {e}")
         return None
@@ -550,20 +556,21 @@ def clean_string(text: str) -> str:
     """
     import unicodedata
     import re
-    
+
     if not text:
         return ""
-    
+
     # Remove acentos
-    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
-    
+    text = unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII")
+
     # Remove caracteres especiais e mantém apenas letras, números e espaços
-    text = re.sub(r'[^\w\s]', '', text)
-    
+    text = re.sub(r"[^\w\s]", "", text)
+
     # Remove espaços extras e converte para minúsculas
-    text = re.sub(r'\s+', ' ', text).strip().lower()
-    
+    text = re.sub(r"\s+", " ", text).strip().lower()
+
     return text
+
 
 def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
     """
@@ -575,7 +582,9 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
         conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
             # Buscar inserções na janela configurada usando date/time (evitar created_at)
-            window_start = datetime.now() - timedelta(seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS)
+            window_start = datetime.now() - timedelta(
+                seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
+            )
             cursor.execute(
                 """
                 SELECT id, date, time, song_title, artist
@@ -584,53 +593,65 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
                   AND (date + time) >= %s
                 ORDER BY date DESC, time DESC
                 """,
-                (name, window_start)
+                (name, window_start),
             )
-            
+
             results = cursor.fetchall()
             if not results:
                 return False
-            
+
             # Limpar strings de entrada
             clean_input_title = clean_string(song_title)
             clean_input_artist = clean_string(artist)
-            
+
             # Verificar cada registro recente com diferentes níveis de similaridade
             for row in results:
                 db_id, db_date, db_time, db_title, db_artist = row
-                
+
                 clean_db_title = clean_string(db_title)
                 clean_db_artist = clean_string(db_artist)
-                
+
                 # Calcular tempo decorrido a partir de date/time
                 record_ts = datetime.combine(db_date, db_time)
                 time_diff = (datetime.now() - record_ts).total_seconds()
-                
+
                 # Verificação exata após limpeza (mais rigorosa)
-                if clean_input_title == clean_db_title and clean_input_artist == clean_db_artist:
+                if (
+                    clean_input_title == clean_db_title
+                    and clean_input_artist == clean_db_artist
+                ):
                     logger.info(
                         f"Duplicata EXATA detectada: {song_title} - {artist} em {name} "
                         f"(ID: {db_id}, criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                     )
                     return True
-                
+
                 # Verificação de similaridade com diferentes thresholds baseado no tempo
                 title_similar = (
-                    clean_input_title == clean_db_title or
-                    clean_input_title in clean_db_title or 
-                    clean_db_title in clean_input_title or
-                    (len(clean_input_title) > 5 and len(clean_db_title) > 5 and 
-                     (clean_input_title[:5] == clean_db_title[:5] or clean_input_title[-5:] == clean_db_title[-5:]))
+                    clean_input_title == clean_db_title
+                    or clean_input_title in clean_db_title
+                    or clean_db_title in clean_input_title
+                    or (
+                        len(clean_input_title) > 5
+                        and len(clean_db_title) > 5
+                        and (
+                            clean_input_title[:5] == clean_db_title[:5]
+                            or clean_input_title[-5:] == clean_db_title[-5:]
+                        )
+                    )
                 )
-                
+
                 artist_similar = (
-                    clean_input_artist == clean_db_artist or
-                    clean_input_artist in clean_db_artist or 
-                    clean_db_artist in clean_input_artist or
-                    (len(clean_input_artist) > 3 and len(clean_db_artist) > 3 and 
-                     (clean_input_artist[:3] == clean_db_artist[:3]))
+                    clean_input_artist == clean_db_artist
+                    or clean_input_artist in clean_db_artist
+                    or clean_db_artist in clean_input_artist
+                    or (
+                        len(clean_input_artist) > 3
+                        and len(clean_db_artist) > 3
+                        and (clean_input_artist[:3] == clean_db_artist[:3])
+                    )
                 )
-                
+
                 if title_similar and artist_similar:
                     # Ajustar threshold baseado no tempo decorrido
                     if time_diff < 300:  # 5 minutos - muito rigoroso
@@ -651,9 +672,9 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
                             f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                         )
                         return True
-            
+
             return False
-            
+
     except Exception as e:
         logger.error(f"Erro ao verificar inserção recente: {e}")
         return False
@@ -1659,7 +1680,7 @@ async def insert_data_to_db(entry_base, now_tz):
         is_recent_duplicate = await asyncio.to_thread(
             check_recent_insertion, name, song_title, artist
         )
-        
+
         if is_recent_duplicate:
             logger.info(
                 f"insert_data_to_db: Inserção ignorada - duplicata recente detectada para {song_title} - {artist} em {name}"
@@ -1778,19 +1799,19 @@ async def process_stream(stream, last_songs):
     # Use stream index or name as the key for tracking
     stream_key = stream.get("index", name)
     previous_segment = None
-    
+
     # CORREÇÃO: Verificar lock inicial uma única vez
     initial_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
-    
+
     if not initial_lock:
         logger.warning(
             f"Stream {name} ({stream_key}) não pôde adquirir lock inicial. "
             f"Outro servidor pode estar processando. Encerrando task."
         )
         return  # Encerrar task se não conseguir lock inicial
-    
+
     cycle_count = 0
-    
+
     try:
         while True:
             cycle_count += 1
@@ -1799,48 +1820,52 @@ async def process_stream(stream, last_songs):
             # CORREÇÃO: Verificar lock a cada 3 ciclos ao invés de todo ciclo
             # Isso reduz overhead e race conditions
             if cycle_count % 3 == 1:  # Verificar a cada 3 ciclos
-                has_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
+                has_lock = await asyncio.to_thread(
+                    acquire_stream_lock, stream_key, SERVER_ID
+                )
                 if not has_lock:
                     logger.warning(
                         f"Stream {name} ({stream_key}) perdeu lock. Encerrando processamento."
                     )
                     break
 
-        current_segment_path = await capture_stream_segment(name, url, duration=None)
+            current_segment_path = await capture_stream_segment(
+                name, url, duration=None
+            )
 
-        if current_segment_path is None:
-            # Registrar erro no tracker
-            connection_tracker.record_error(stream_key)
-            failure_count = connection_tracker.get_error_count(stream_key)
+            if current_segment_path is None:
+                # Registrar erro no tracker
+                connection_tracker.record_error(stream_key)
+                failure_count = connection_tracker.get_error_count(stream_key)
 
-            # Liberar o lock em caso de falha
+                # Liberar o lock em caso de falha
+                await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
+
+                wait_time = 10  # Default wait time
+                if failure_count > 3:
+                    wait_time = 30  # Increased wait time after 3 failures
+
+                logger.error(
+                    f"Falha ao capturar segmento do streaming {name} ({stream_key}). Falha #{failure_count}. Tentando novamente em {wait_time} segundos..."
+                )
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                # Limpar erros no tracker em caso de sucesso
+                connection_tracker.clear_error(stream_key)
+
+            # Se a captura foi bem-sucedida, prosseguir com o Shazam
+            await shazam_queue.put((current_segment_path, stream, last_songs))
+            await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo
+
+            # Liberar o lock após processar este ciclo
             await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
 
-            wait_time = 10  # Default wait time
-            if failure_count > 3:
-                wait_time = 30  # Increased wait time after 3 failures
-
-            logger.error(
-                f"Falha ao capturar segmento do streaming {name} ({stream_key}). Falha #{failure_count}. Tentando novamente em {wait_time} segundos..."
+            logger.info(
+                f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})..."
             )
-            await asyncio.sleep(wait_time)
-            continue
-        else:
-            # Limpar erros no tracker em caso de sucesso
-            connection_tracker.clear_error(stream_key)
+            await asyncio.sleep(60)  # Intervalo de captura de segmentos
 
-        # Se a captura foi bem-sucedida, prosseguir com o Shazam
-        await shazam_queue.put((current_segment_path, stream, last_songs))
-        await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo
-
-        # Liberar o lock após processar este ciclo
-        await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
-
-        logger.info(
-            f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})..."
-        )
-        await asyncio.sleep(60)  # Intervalo de captura de segmentos
-            
     except asyncio.CancelledError:
         logger.info(f"Task do stream {name} ({stream_key}) foi cancelada.")
         raise  # Re-raise para permitir cancelamento limpo
@@ -1850,7 +1875,9 @@ async def process_stream(stream, last_songs):
         # CORREÇÃO: Garantir liberação do lock ao encerrar task
         try:
             await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
-            logger.info(f"Lock liberado para stream {name} ({stream_key}) ao encerrar task.")
+            logger.info(
+                f"Lock liberado para stream {name} ({stream_key}) ao encerrar task."
+            )
         except Exception as e:
             logger.error(f"Erro ao liberar lock para stream {name}: {e}")
 
@@ -2631,14 +2658,14 @@ async def main():
                     existing_lock_server = await asyncio.to_thread(
                         check_existing_lock, stream_id
                     )
-                    
+
                     if existing_lock_server and existing_lock_server != SERVER_ID:
                         logger.warning(
                             f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
                             f"Pulando atribuição para servidor {SERVER_ID}."
                         )
                         continue
-                    
+
                     # Tentar adquirir lock apenas se não houver conflito
                     lock_acquired = await asyncio.to_thread(
                         acquire_stream_lock, stream_id, SERVER_ID
