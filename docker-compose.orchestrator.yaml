@@ -1,0 +1,38 @@
+# docker-compose exclusivo para o Orquestrador
+# O orquestrador não precisa de VPN pois apenas distribui streams
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfilegit
+    command: ["python", "/app/orchestrator.py"]
+    ports:
+      - "8080:8080"
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - ORCHESTRATOR_HOST=0.0.0.0
+      - ORCHESTRATOR_PORT=8080
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/Sao_Paulo}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - orchestrator_network
+
+networks:
+  orchestrator_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
