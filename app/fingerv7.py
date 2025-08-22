@@ -135,25 +135,34 @@ except ImportError:
 load_dotenv()
 
 # Configuração para distribuição de carga entre servidores
-SERVER_ID = int(
-    os.getenv("SERVER_ID", "1")
-)  # ID único para cada servidor (convertido para inteiro)
-TOTAL_SERVERS = int(os.getenv("TOTAL_SERVERS", "1"))  # Número total de servidores
+SERVER_ID = os.getenv("SERVER_ID", socket.gethostname())  # ID único para cada servidor
+USE_ORCHESTRATOR = (
+    os.getenv("USE_ORCHESTRATOR", "True").lower() == "true"
+)  # Usar orquestrador central
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8001")  # URL do orquestrador
 DISTRIBUTE_LOAD = (
     os.getenv("DISTRIBUTE_LOAD", "False").lower() == "true"
 )  # Ativar distribuição
 
-# Variáveis legadas para compatibilidade - agora usam hashing consistente
-ENABLE_ROTATION = False  # Sempre False, pois usa hashing consistente
-ROTATION_HOURS = 0  # Sempre 0, pois não há rotação por tempo
+# Variáveis legadas para compatibilidade (mantidas para fallback)
+TOTAL_SERVERS = int(os.getenv("TOTAL_SERVERS", "1"))  # Número total de servidores
+ENABLE_ROTATION = False  # Sempre False
+ROTATION_HOURS = 0  # Sempre 0
 
-# Validar SERVER_ID
-if DISTRIBUTE_LOAD and (SERVER_ID < 1 or SERVER_ID > TOTAL_SERVERS):
-    print(
-        f"AVISO: SERVER_ID inválido ({SERVER_ID}). Deve estar entre 1 e {TOTAL_SERVERS}."
-    )
-    print(f"Ajustando SERVER_ID para 1 automaticamente.")
-    SERVER_ID = 1  # Ajustar automaticamente para um valor válido em vez de processar todos os streams
+# Importar cliente do orquestrador se habilitado
+orchestrator_client = None
+if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
+    try:
+        from orchestrator_client import create_orchestrator_client
+        orchestrator_client = create_orchestrator_client(
+            orchestrator_url=ORCHESTRATOR_URL,
+            server_id=SERVER_ID
+        )
+        logger.info(f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL}")
+    except ImportError as e:
+        logger.error(f"Erro ao importar cliente do orquestrador: {e}")
+        logger.warning("Fallback para modo sem orquestrador")
+        USE_ORCHESTRATOR = False
 
 # Configurações para identificação e verificação de duplicatas
 IDENTIFICATION_DURATION = int(
@@ -2667,43 +2676,35 @@ async def main():
                 all_streams
             )  # Atualiza o banco de dados com as rádios do arquivo
 
-        # CORRIGIDO: Atribuir streams usando consistent hashing e locks com verificação prévia
+        # Usar orquestrador central ou fallback para modo legado
         assigned_streams = []
         if DISTRIBUTE_LOAD:
-            for stream in all_streams:
-                stream_id = stream.get("id", stream.get("name", ""))
-                assigned_server = await asyncio.to_thread(
-                    get_assigned_server, stream_id
-                )
-
-                if assigned_server == SERVER_ID:
-                    # CORREÇÃO: Verificar se outro servidor já possui lock ativo
-                    existing_lock_server = await asyncio.to_thread(
-                        check_existing_lock, stream_id
-                    )
-
-                    if existing_lock_server and existing_lock_server != SERVER_ID:
-                        logger.warning(
-                            f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
-                            f"Pulando atribuição para servidor {SERVER_ID}."
-                        )
-                        continue
-
-                    # Tentar adquirir lock apenas se não houver conflito
-                    lock_acquired = await asyncio.to_thread(
-                        acquire_stream_lock, stream_id, SERVER_ID
-                    )
-
-                    if lock_acquired:
-                        assigned_streams.append(stream)
-                        await asyncio.to_thread(
-                            assign_stream_ownership, stream_id, SERVER_ID
-                        )
-                    else:
-                        logger.warning(
-                            f"Não foi possível adquirir lock para stream {stream_id}. "
-                            f"Outro servidor pode estar processando."
-                        )
+            if USE_ORCHESTRATOR and orchestrator_client:
+                try:
+                    # Registrar instância no orquestrador
+                    await orchestrator_client.register()
+                    logger.info(f"Instância {SERVER_ID} registrada no orquestrador")
+                    
+                    # Solicitar streams do orquestrador
+                    assigned_stream_ids = await orchestrator_client.request_streams()
+                    logger.info(f"Recebidos {len(assigned_stream_ids)} streams do orquestrador")
+                    
+                    # Filtrar streams atribuídos
+                    assigned_streams = [
+                        stream for stream in all_streams 
+                        if stream.get("id", stream.get("name", "")) in assigned_stream_ids
+                    ]
+                    
+                    logger.info(f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador")
+                    
+                except Exception as e:
+                    logger.error(f"Erro ao comunicar com orquestrador: {e}")
+                    logger.warning("Fallback para modo sem orquestrador")
+                    # Fallback para modo legado
+                    assigned_streams = await _legacy_stream_assignment(all_streams)
+            else:
+                # Modo legado com consistent hashing
+                assigned_streams = await _legacy_stream_assignment(all_streams)
         else:
             assigned_streams = all_streams
 
@@ -2721,6 +2722,45 @@ async def main():
             f"{len(tasks)} tasks criadas para {len(assigned_streams)} streams atribuídos."
         )
         STREAMS = assigned_streams
+
+    async def _legacy_stream_assignment(all_streams):
+        """Função de fallback para atribuição de streams usando consistent hashing"""
+        assigned_streams = []
+        for stream in all_streams:
+            stream_id = stream.get("id", stream.get("name", ""))
+            assigned_server = await asyncio.to_thread(
+                get_assigned_server, stream_id
+            )
+
+            if assigned_server == int(SERVER_ID) if SERVER_ID.isdigit() else 1:
+                # CORREÇÃO: Verificar se outro servidor já possui lock ativo
+                existing_lock_server = await asyncio.to_thread(
+                    check_existing_lock, stream_id
+                )
+
+                if existing_lock_server and existing_lock_server != int(SERVER_ID) if SERVER_ID.isdigit() else 1:
+                    logger.warning(
+                        f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
+                        f"Pulando atribuição para servidor {SERVER_ID}."
+                    )
+                    continue
+
+                # Tentar adquirir lock apenas se não houver conflito
+                lock_acquired = await asyncio.to_thread(
+                    acquire_stream_lock, stream_id, int(SERVER_ID) if SERVER_ID.isdigit() else 1
+                )
+
+                if lock_acquired:
+                    assigned_streams.append(stream)
+                    await asyncio.to_thread(
+                        assign_stream_ownership, stream_id, int(SERVER_ID) if SERVER_ID.isdigit() else 1
+                    )
+                else:
+                    logger.warning(
+                        f"Não foi possível adquirir lock para stream {stream_id}. "
+                        f"Outro servidor pode estar processando."
+                    )
+        return assigned_streams
 
     # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
     if DISTRIBUTE_LOAD:
@@ -2745,6 +2785,14 @@ async def main():
     # Adicionar tarefas de heartbeat e monitoramento de servidores
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
+    
+    # Adicionar tarefa de heartbeat do orquestrador se habilitado
+    orchestrator_heartbeat_task = None
+    if USE_ORCHESTRATOR and orchestrator_client and DISTRIBUTE_LOAD:
+        orchestrator_heartbeat_task = register_task(
+            asyncio.create_task(orchestrator_heartbeat_loop())
+        )
+        logger.info("Tarefa de heartbeat do orquestrador iniciada")
 
     if "send_data_to_db" in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
@@ -2764,6 +2812,10 @@ async def main():
             heartbeat_task,
             server_monitor_task,
         ]
+    
+    # Adicionar tarefa de heartbeat do orquestrador se disponível
+    if orchestrator_heartbeat_task:
+        tasks_to_gather.append(orchestrator_heartbeat_task)
 
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     json_sync_task = register_task(asyncio.create_task(schedule_json_sync()))
@@ -2813,6 +2865,28 @@ async def heartbeat_loop():
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECS)
 
 
+async def orchestrator_heartbeat_loop():
+    """
+    Loop de heartbeat para manter comunicação com o orquestrador central
+    """
+    logger.info("Iniciando loop de heartbeat do orquestrador")
+    
+    while not shutdown_event.is_set():
+        try:
+            if orchestrator_client:
+                # Enviar heartbeat para o orquestrador
+                await orchestrator_client.heartbeat()
+                logger.debug(f"Heartbeat enviado para orquestrador - Instância {SERVER_ID}")
+            
+        except Exception as e:
+            logger.error(f"Erro no heartbeat do orquestrador: {e}")
+            # Em caso de erro, tentar reconectar na próxima iteração
+            
+        finally:
+            # Aguardar 30 segundos antes do próximo heartbeat
+            await asyncio.sleep(30)
+
+
 # Ponto de entrada
 if __name__ == "__main__":
     # Configurar temporizador para reinício a cada 30 minutos
@@ -2856,6 +2930,14 @@ if __name__ == "__main__":
             )
     finally:
         logger.info("Aplicação encerrando...")
+
+        # Graceful shutdown - liberar streams do orquestrador
+        if USE_ORCHESTRATOR and orchestrator_client and DISTRIBUTE_LOAD:
+            try:
+                asyncio.run(orchestrator_client.release_all_streams())
+                logger.info("Streams liberados no orquestrador durante shutdown")
+            except Exception as e:
+                logger.error(f"Erro ao liberar streams durante shutdown: {e}")
 
         # Encerrar a fila assíncrona de inserções
         try:
