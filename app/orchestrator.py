@@ -102,9 +102,9 @@ async def lifespan(app: FastAPI):
     orchestrator = StreamOrchestrator()
     orchestrator.create_tables()
     
-    # Iniciar tarefas em background
-    cleanup_task = asyncio.create_task(orchestrator.cleanup_inactive_instances())
-    failover_task = asyncio.create_task(orchestrator.monitor_failover())
+    # Iniciar tarefas em background usando as funções independentes
+    cleanup_task_handle = asyncio.create_task(cleanup_task())
+    failover_task_handle = asyncio.create_task(failover_monitor_task())
     
     # Armazenar referência do orquestrador no app
     app.state.orchestrator = orchestrator
@@ -114,16 +114,16 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("Encerrando orquestrador...")
-        cleanup_task.cancel()
-        failover_task.cancel()
+        cleanup_task_handle.cancel()
+        failover_task_handle.cancel()
         
         try:
-            await cleanup_task
+            await cleanup_task_handle
         except asyncio.CancelledError:
             pass
             
         try:
-            await failover_task
+            await failover_task_handle
         except asyncio.CancelledError:
             pass
 
@@ -624,40 +624,6 @@ class StreamOrchestrator:
 
 # Instância global do orquestrador
 orchestrator = StreamOrchestrator()
-
-# Lifespan event handler
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Gerencia o ciclo de vida da aplicação."""
-    # Startup
-    logger.info("Iniciando Stream Orchestrator...")
-    orchestrator.create_tables()
-    
-    # Iniciar tarefas de background
-    cleanup_task_handle = asyncio.create_task(cleanup_task())
-    failover_task_handle = asyncio.create_task(failover_monitor_task())
-    
-    logger.info("Stream Orchestrator iniciado com sucesso")
-    logger.info("Tarefas de monitoramento e failover iniciadas")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Finalizando Stream Orchestrator...")
-    cleanup_task_handle.cancel()
-    failover_task_handle.cancel()
-    
-    try:
-        await cleanup_task_handle
-    except asyncio.CancelledError:
-        pass
-    
-    try:
-        await failover_task_handle
-    except asyncio.CancelledError:
-        pass
-    
-    logger.info("Stream Orchestrator finalizado")
 
 # Endpoints da API
 
