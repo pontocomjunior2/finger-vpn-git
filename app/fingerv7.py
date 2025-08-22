@@ -2126,10 +2126,18 @@ async def identify_song_shazamio(shazam):
         file_path, stream, last_songs = await shazam_queue.get()
         stream_index = stream.get("index")  # Obter índice aqui para uso posterior
 
-        # Verificar se o arquivo existe (pode ter sido pulado na captura)
+        # Verificar se o arquivo existe (pode ter sido pulado na captura ou já removido)
         if file_path is None:
             logger.info(
                 f"Arquivo de segmento para o stream {stream['name']} não foi capturado. Pulando identificação."
+            )
+            shazam_queue.task_done()
+            continue
+
+        # Verificar se o arquivo ainda existe no sistema de arquivos
+        if not os.path.exists(file_path):
+            logger.warning(
+                f"Arquivo de segmento {file_path} não existe mais (possivelmente já processado por outra tarefa). Pulando identificação."
             )
             shazam_queue.task_done()
             continue
