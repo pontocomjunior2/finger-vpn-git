@@ -1083,18 +1083,33 @@ shazam_pause_until_timestamp = 0.0
 class StreamConnectionTracker:
     def __init__(self):
         self.connection_errors = {}  # Stores stream_name: error_timestamp
+        self.error_counts = {}  # Stores stream_name: consecutive_error_count
 
     def record_error(self, stream_name):
         """Records the timestamp of the first consecutive error for a stream."""
         if stream_name not in self.connection_errors:
             self.connection_errors[stream_name] = time.time()
+            self.error_counts[stream_name] = 1
             logger.debug(f"Registrado primeiro erro de conexão para: {stream_name}")
+        else:
+            # Incrementar contador de erros consecutivos
+            self.error_counts[stream_name] = self.error_counts.get(stream_name, 0) + 1
+            logger.debug(
+                f"Erro consecutivo #{self.error_counts[stream_name]} para: {stream_name}"
+            )
 
     def clear_error(self, stream_name):
         """Clears the error status for a stream if it was previously recorded."""
         if stream_name in self.connection_errors:
             del self.connection_errors[stream_name]
             logger.debug(f"Erro de conexão limpo para: {stream_name}")
+        if stream_name in self.error_counts:
+            del self.error_counts[stream_name]
+            logger.debug(f"Contador de erros limpo para: {stream_name}")
+
+    def get_error_count(self, stream_name):
+        """Returns the number of consecutive errors for a stream."""
+        return self.error_counts.get(stream_name, 0)
 
     def check_persistent_errors(self, threshold_minutes=10):
         """Checks for streams that have been failing for longer than the threshold."""
@@ -2634,6 +2649,19 @@ async def main():
         logger.info(
             "Modo de distribuição de carga desativado. Processando todos os streams."
         )
+
+    # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
+    if DISTRIBUTE_LOAD:
+        logger.info("Executando distribuição inicial de streams...")
+        await reload_streams()
+        logger.info("Distribuição inicial de streams concluída.")
+    else:
+        # Criar tarefas para todos os streams quando distribuição está desativada
+        for stream in STREAMS:
+            task = asyncio.create_task(process_stream(stream, last_songs))
+            register_task(task)
+            tasks.append(task)
+        logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
 
     async def reload_streams():
         global STREAMS
