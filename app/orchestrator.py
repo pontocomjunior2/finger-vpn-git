@@ -17,6 +17,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
@@ -25,7 +26,30 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
-load_dotenv()
+# Primeiro tenta carregar do .env da raiz do projeto
+root_env_file = Path(__file__).parent.parent / ".env"
+app_env_file = Path(__file__).parent / ".env"
+
+if root_env_file.exists():
+    load_dotenv(root_env_file)
+    print(f"Orquestrador: Variáveis carregadas de {root_env_file}")
+elif app_env_file.exists():
+    load_dotenv(app_env_file)
+    print(f"Orquestrador: Variáveis carregadas de {app_env_file}")
+else:
+    print("Orquestrador: Nenhum arquivo .env encontrado")
+
+# Mapear variáveis POSTGRES_* para DB_* se necessário
+if os.getenv('POSTGRES_HOST') and not os.getenv('DB_HOST'):
+    os.environ['DB_HOST'] = os.getenv('POSTGRES_HOST')
+if os.getenv('POSTGRES_DB') and not os.getenv('DB_NAME'):
+    os.environ['DB_NAME'] = os.getenv('POSTGRES_DB')
+if os.getenv('POSTGRES_USER') and not os.getenv('DB_USER'):
+    os.environ['DB_USER'] = os.getenv('POSTGRES_USER')
+if os.getenv('POSTGRES_PASSWORD') and not os.getenv('DB_PASSWORD'):
+    os.environ['DB_PASSWORD'] = os.getenv('POSTGRES_PASSWORD')
+if os.getenv('POSTGRES_PORT') and not os.getenv('DB_PORT'):
+    os.environ['DB_PORT'] = os.getenv('POSTGRES_PORT')
 
 # Configuração de logging
 logging.basicConfig(
@@ -95,10 +119,10 @@ class StreamOrchestrator:
     
     def create_tables(self):
         """Cria as tabelas necessárias para o orquestrador."""
-        conn = self.get_db_connection()
-        cursor = conn.cursor()
-        
         try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+            
             # Tabela de instâncias registradas
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS orchestrator_instances (
@@ -110,12 +134,14 @@ class StreamOrchestrator:
                     current_streams INTEGER DEFAULT 0,
                     status VARCHAR(20) DEFAULT 'active',
                     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX(server_id),
-                    INDEX(status),
-                    INDEX(last_heartbeat)
+                    last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Criar índices para a tabela de instâncias
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_instances_server_id ON orchestrator_instances(server_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_instances_status ON orchestrator_instances(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_instances_heartbeat ON orchestrator_instances(last_heartbeat)")
             
             # Tabela de atribuições de streams
             cursor.execute("""
@@ -125,12 +151,14 @@ class StreamOrchestrator:
                     server_id VARCHAR(50) NOT NULL,
                     assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     status VARCHAR(20) DEFAULT 'active',
-                    UNIQUE(stream_id),
-                    INDEX(server_id),
-                    INDEX(stream_id),
-                    INDEX(status)
+                    UNIQUE(stream_id)
                 )
             """)
+            
+            # Criar índices para a tabela de atribuições
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_assignments_server_id ON orchestrator_stream_assignments(server_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_assignments_stream_id ON orchestrator_stream_assignments(stream_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_assignments_status ON orchestrator_stream_assignments(status)")
             
             # Tabela de histórico de rebalanceamentos
             cursor.execute("""
@@ -144,10 +172,16 @@ class StreamOrchestrator:
                 )
             """)
             
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
             logger.info("Tabelas do orquestrador criadas com sucesso")
+            return True
             
         except Exception as e:
             logger.error(f"Erro ao criar tabelas: {e}")
+            return False
             raise
         finally:
             cursor.close()
@@ -390,7 +424,7 @@ class StreamOrchestrator:
     def handle_orphaned_streams(self):
         """Detecta e reatribui streams órfãos automaticamente."""
         conn = self.get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         try:
             # Encontrar streams órfãos (atribuídos a instâncias inativas)
@@ -562,9 +596,12 @@ async def startup_event():
     logger.info("Iniciando Stream Orchestrator...")
     orchestrator.create_tables()
     
-    # Iniciar tarefa de limpeza em background
+    # Iniciar tarefas de background
     asyncio.create_task(cleanup_task())
+    asyncio.create_task(failover_monitor_task())
+    
     logger.info("Stream Orchestrator iniciado com sucesso")
+    logger.info("Tarefas de monitoramento e failover iniciadas")
 
 @app.post("/register")
 async def register_instance(registration: InstanceRegistration):
@@ -669,11 +706,5 @@ if __name__ == "__main__":
     host = os.getenv('ORCHESTRATOR_HOST', '0.0.0.0')
     
     logger.info(f"Iniciando orquestrador em {host}:{port}")
-    
-    # Iniciar tarefas de background
-    asyncio.create_task(cleanup_task())
-    asyncio.create_task(failover_monitor_task())
-    
-    logger.info("Tarefas de monitoramento e failover iniciadas")
     
     uvicorn.run(app, host=host, port=port, log_level="info")

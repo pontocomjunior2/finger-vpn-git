@@ -52,13 +52,34 @@ def install_dependencies():
 
 def load_environment():
     """Carrega variáveis de ambiente."""
-    env_file = Path(__file__).parent / ".env"
+    # Primeiro tenta carregar do .env da raiz do projeto
+    root_env_file = Path(__file__).parent.parent / ".env"
+    app_env_file = Path(__file__).parent / ".env"
     
-    if env_file.exists():
-        load_dotenv(env_file)
-        logger.info(f"Variáveis de ambiente carregadas de {env_file}")
+    env_loaded = False
+    
+    if root_env_file.exists():
+        load_dotenv(root_env_file)
+        logger.info(f"Variáveis de ambiente carregadas de {root_env_file}")
+        env_loaded = True
+    elif app_env_file.exists():
+        load_dotenv(app_env_file)
+        logger.info(f"Variáveis de ambiente carregadas de {app_env_file}")
+        env_loaded = True
     else:
-        logger.warning(f"Arquivo .env não encontrado em {env_file}")
+        logger.warning("Arquivo .env não encontrado")
+    
+    # Mapear variáveis POSTGRES_* para DB_* se necessário
+    if os.getenv('POSTGRES_HOST') and not os.getenv('DB_HOST'):
+        os.environ['DB_HOST'] = os.getenv('POSTGRES_HOST')
+    if os.getenv('POSTGRES_DB') and not os.getenv('DB_NAME'):
+        os.environ['DB_NAME'] = os.getenv('POSTGRES_DB')
+    if os.getenv('POSTGRES_USER') and not os.getenv('DB_USER'):
+        os.environ['DB_USER'] = os.getenv('POSTGRES_USER')
+    if os.getenv('POSTGRES_PASSWORD') and not os.getenv('DB_PASSWORD'):
+        os.environ['DB_PASSWORD'] = os.getenv('POSTGRES_PASSWORD')
+    if os.getenv('POSTGRES_PORT') and not os.getenv('DB_PORT'):
+        os.environ['DB_PORT'] = os.getenv('POSTGRES_PORT')
     
     # Verificar variáveis essenciais
     required_vars = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD']
@@ -71,11 +92,13 @@ def load_environment():
     if missing_vars:
         logger.error(f"Variáveis de ambiente obrigatórias não encontradas: {missing_vars}")
         logger.info("Configure as seguintes variáveis no arquivo .env:")
-        logger.info("DB_HOST=localhost")
-        logger.info("DB_NAME=radio_db")
-        logger.info("DB_USER=postgres")
-        logger.info("DB_PASSWORD=sua_senha")
-        logger.info("DB_PORT=5432")
+        logger.info("POSTGRES_HOST=seu_host (ou DB_HOST)")
+        logger.info("POSTGRES_DB=seu_banco (ou DB_NAME)")
+        logger.info("POSTGRES_USER=seu_usuario (ou DB_USER)")
+        logger.info("POSTGRES_PASSWORD=sua_senha (ou DB_PASSWORD)")
+        logger.info("POSTGRES_PORT=5432 (ou DB_PORT)")
+        logger.info("")
+        logger.info("Variáveis opcionais do orquestrador:")
         logger.info("ORCHESTRATOR_HOST=0.0.0.0")
         logger.info("ORCHESTRATOR_PORT=8001")
         logger.info("MAX_STREAMS_PER_INSTANCE=20")
@@ -83,6 +106,7 @@ def load_environment():
         logger.info("REBALANCE_INTERVAL=60")
         return False
     
+    logger.info(f"Configuração do banco: {os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}")
     return True
 
 def test_database_connection():
@@ -252,6 +276,11 @@ def main():
     """Função principal de configuração."""
     logger.info("=== Configuração do Stream Orchestrator ===")
     
+    # Verificar argumentos da linha de comando
+    skip_db_test = '--skip-db-test' in sys.argv
+    if skip_db_test:
+        logger.info("Modo de configuração: pulando teste de conexão com banco")
+    
     # Verificar versão do Python
     check_python_version()
     
@@ -265,15 +294,28 @@ def main():
         logger.error("Falha ao instalar dependências")
         sys.exit(1)
     
-    # Testar conexão com banco
-    if not test_database_connection():
-        logger.error("Falha na conexão com banco de dados")
-        sys.exit(1)
+    # Testar conexão com banco (opcional)
+    if not skip_db_test:
+        if not test_database_connection():
+            logger.warning("Falha na conexão com banco de dados")
+            logger.info("\nEm ambiente de produção, as credenciais podem ser diferentes.")
+            logger.info("Para pular este teste, use: python setup_orchestrator.py --skip-db-test")
+            
+            response = input("\nDeseja continuar mesmo assim? (s/N): ").lower().strip()
+            if response not in ['s', 'sim', 'y', 'yes']:
+                logger.error("Configuração cancelada pelo usuário")
+                sys.exit(1)
+            logger.info("Continuando configuração...")
+    else:
+        logger.info("Teste de conexão com banco pulado")
     
-    # Criar tabelas
-    if not create_database_tables():
-        logger.error("Falha ao criar tabelas")
-        sys.exit(1)
+    # Criar tabelas (apenas se conexão funcionou ou foi pulada)
+    if not skip_db_test:
+        if not create_database_tables():
+            logger.error("Falha ao criar tabelas")
+            sys.exit(1)
+    else:
+        logger.info("Criação de tabelas pulada (será feita no primeiro boot do orquestrador)")
     
     # Verificar porta
     port = int(os.getenv('ORCHESTRATOR_PORT', 8001))
@@ -305,6 +347,9 @@ def main():
     logger.info(f"  Instâncias: http://localhost:{port}/instances")
     logger.info(f"  Atribuições: http://localhost:{port}/streams/assignments")
     logger.info(f"  Documentação: http://localhost:{port}/docs")
+    
+    if skip_db_test:
+        logger.info("\n⚠️  IMPORTANTE: Certifique-se de que as credenciais do banco estão corretas no ambiente de produção!")
 
 if __name__ == "__main__":
     main()
