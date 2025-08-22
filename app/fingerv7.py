@@ -223,7 +223,7 @@ def create_distribution_tables():
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS server_heartbeats (
-                    server_id INTEGER PRIMARY KEY,
+                    server_id VARCHAR(100) PRIMARY KEY,
                     last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     status VARCHAR(20) DEFAULT 'ONLINE',
                     ip_address VARCHAR(50),
@@ -237,7 +237,7 @@ def create_distribution_tables():
                 """
                 CREATE TABLE IF NOT EXISTS stream_locks (
                     stream_id VARCHAR(255) PRIMARY KEY,
-                    server_id INTEGER NOT NULL,
+                    server_id VARCHAR(100) NOT NULL,
                     locked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     heartbeat_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     CONSTRAINT fk_server_id FOREIGN KEY (server_id) 
@@ -251,7 +251,7 @@ def create_distribution_tables():
                 """
                 CREATE TABLE IF NOT EXISTS stream_ownership (
                     stream_id VARCHAR(255) PRIMARY KEY,
-                    server_id INTEGER NOT NULL,
+                    server_id VARCHAR(100) NOT NULL,
                     assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     last_processed TIMESTAMP WITH TIME ZONE,
                     CONSTRAINT fk_server_ownership FOREIGN KEY (server_id) 
@@ -334,7 +334,7 @@ def consistent_hash(value: str, buckets: int) -> int:
 
 def acquire_stream_lock(
     stream_id: str,
-    server_id: int,
+    server_id: str,
     timeout_minutes: int = 2,  # Reduzido de 5 para 2 minutos
 ) -> bool:
     """
@@ -423,7 +423,7 @@ def acquire_stream_lock(
             get_db_pool().pool.putconn(conn)
 
 
-def release_stream_lock(stream_id: str, server_id: int) -> bool:
+def release_stream_lock(stream_id: str, server_id: str) -> bool:
     """
     Libera o lock de um stream
     """
@@ -461,7 +461,7 @@ def release_stream_lock(stream_id: str, server_id: int) -> bool:
             get_db_pool().pool.putconn(conn)
 
 
-def assign_stream_ownership(stream_id: str, server_id: int) -> bool:
+def assign_stream_ownership(stream_id: str, server_id: str) -> bool:
     """
     Atribui propriedade de um stream a um servidor específico
     """
@@ -1481,7 +1481,7 @@ async def monitor_streams_file(callback):
                                     f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}"
                                 )
                                 last_streams_count = current_count
-                                callback()
+                                await callback()
                 except Exception as db_err:
                     logger.error(
                         f"Erro ao verificar mudanças no banco de dados: {db_err}"
@@ -2385,7 +2385,7 @@ async def send_heartbeat():
                         cursor.execute(
                             """
                             CREATE TABLE IF NOT EXISTS server_heartbeats (
-                                server_id INTEGER PRIMARY KEY,
+                                server_id VARCHAR(100) PRIMARY KEY,
                                 last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                                 status VARCHAR(20) DEFAULT 'ONLINE',
                                 ip_address VARCHAR(50),
@@ -2483,7 +2483,7 @@ async def check_servers_status():
                                     f"check_servers_status [thread]: Servidores marcados como OFFLINE: {server_ids}"
                                 )
                                 # Definir flag para enviar alerta se este for o servidor 1
-                                if SERVER_ID == 1:
+                                if SERVER_ID == "1":
                                     _send_alert = True
 
                             # Obter estatísticas dos servidores online
@@ -2875,7 +2875,7 @@ async def orchestrator_heartbeat_loop():
         try:
             if orchestrator_client:
                 # Enviar heartbeat para o orquestrador
-                await orchestrator_client.heartbeat()
+                await orchestrator_client.send_heartbeat()
                 logger.debug(f"Heartbeat enviado para orquestrador - Instância {SERVER_ID}")
             
         except Exception as e:

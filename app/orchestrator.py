@@ -229,12 +229,11 @@ class StreamOrchestrator:
         cursor = conn.cursor()
         
         try:
-            # Buscar todos os streams ativos
+            # Buscar todos os streams disponíveis
             cursor.execute("""
-                SELECT DISTINCT stream_id 
+                SELECT DISTINCT id 
                 FROM streams 
-                WHERE status = 'active' 
-                ORDER BY stream_id
+                ORDER BY id
             """)
             
             all_streams = [row[0] for row in cursor.fetchall()]
@@ -401,6 +400,9 @@ class StreamOrchestrator:
                 WHERE server_id = %s
             """, (len(assigned_streams), request.server_id))
             
+            # Commit da transação
+            conn.commit()
+            
             logger.info(f"Atribuídos {len(assigned_streams)} streams para {request.server_id}")
             
             return {
@@ -441,6 +443,9 @@ class StreamOrchestrator:
                     SET current_streams = GREATEST(0, current_streams - %s)
                     WHERE server_id = %s
                 """, (len(released_streams), release.server_id))
+            
+            # Commit da transação
+            conn.commit()
             
             logger.info(f"Liberados {len(released_streams)} streams de {release.server_id}")
             

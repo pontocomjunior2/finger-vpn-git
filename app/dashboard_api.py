@@ -177,7 +177,7 @@ async def get_redis_client() -> "redis.Redis | None":
     return _redis_client
 
 
-async def get_redis_server_data(server_id: int) -> Optional[Dict[str, Any]]:
+async def get_redis_server_data(server_id: str) -> Optional[Dict[str, Any]]:
     """Obtém dados de um servidor específico do Redis usando prefixo smf:."""
     client = await get_redis_client()
     if not client:
@@ -206,7 +206,7 @@ async def list_redis_online_servers() -> List[Dict[str, Any]]:
 
         for key in keys:
             try:
-                server_id = int(key.split(":")[-1])  # smf:server:1 -> 1
+                server_id = key.split(":")[-1]  # smf:server:hostname -> hostname
                 data_str = await client.get(key)
                 if not data_str:
                     continue
@@ -300,7 +300,7 @@ async def health_check():
 
 
 @app.get("/api/server/{server_id}/health")
-async def server_health_check(server_id: int):
+async def server_health_check(server_id: str):
     """Verifica a saúde de uma instância específica"""
     try:
         async with db_pool.get_connection() as conn:
@@ -444,7 +444,7 @@ async def verify_stream_processing():
 
 @app.get("/api/instances/{server_id}/last-records")
 async def last_records(
-    server_id: int, limit: int = Query(5, ge=1, le=50)
+    server_id: str, limit: int = Query(5, ge=1, le=50)
 ) -> List[Dict[str, Any]]:
     """
     Retorna os últimos registros gravados no DB pela instância (identified_by = server_id).
@@ -472,7 +472,7 @@ async def last_records(
 
 
 @app.get("/api/instances/{server_id}/errors")
-async def last_errors(server_id: int) -> Dict[str, Any]:
+async def last_errors(server_id: str) -> Dict[str, Any]:
     """
     Retorna os últimos erros reportados pela instância no último heartbeat (se presentes no info.recent_errors).
     """
