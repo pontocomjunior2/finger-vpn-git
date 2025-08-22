@@ -16,13 +16,7 @@ from contextlib import contextmanager, asynccontextmanager
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
-# Para testes, usar .env.test se existir
-env_test_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env.test")
-env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-if os.path.exists(env_test_path):
-    load_dotenv(dotenv_path=env_test_path)
-else:
-    load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path='.env')
 
 logger = logging.getLogger(__name__)
 
