@@ -143,6 +143,48 @@ services:
    - Após deploy, o EasyPanel fornecerá uma URL como:
    - `https://finger-orchestrator-abc123.easypanel.host`
 
+### URL do Orquestrador
+
+**⚠️ IMPORTANTE**: O EasyPanel fornece uma URL HTTPS, mas o orquestrador roda em HTTP na porta 8080.
+
+**URL fornecida pelo EasyPanel**:
+```
+https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/
+```
+
+**URL correta para acesso**:
+```
+http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080/
+```
+
+### Variáveis de Ambiente para Instâncias
+```bash
+# Configuração do Orquestrador
+USE_ORCHESTRATOR=True
+ORCHESTRATOR_URL=http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080
+INSTANCE_ID=finger_app_1  # ID único para cada instância
+SERVER_ID=finger_app_1    # Mesmo valor do INSTANCE_ID
+HEARTBEAT_INTERVAL=30
+
+# Distribuição de Carga
+DISTRIBUTE_LOAD=True
+ENABLE_ROTATION=False
+TOTAL_SERVERS=1
+```
+
+### Arquivos Docker Compose por Tipo
+- **Orquestrador**: Use `docker-compose.orchestrator.yaml`
+- **Instâncias fingerv7**: Use `docker-compose.fingerv7.yaml`
+- **Deploy completo**: Use `docker-compose.github.yaml`
+
+⚠️ **IMPORTANTE**: Não use `docker-compose.github.yaml` para instâncias quando o orquestrador já estiver rodando em outro projeto.
+
+**Exemplo de teste**:
+```bash
+# Testar conectividade
+curl http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080/health
+```
+
 ### 2. Configurar Instâncias Fingerv7
 
 1. **Atualizar variáveis de ambiente** em cada projeto fingerv7:

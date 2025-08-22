@@ -6,8 +6,7 @@ services:
   orchestrator:
     build:
       context: .
-      dockerfile: Dockerfilegit
-    command: ["python", "/app/orchestrator.py"]
+      dockerfile: Dockerfile.orchestrator
     ports:
       - "8080:8080"
     environment:

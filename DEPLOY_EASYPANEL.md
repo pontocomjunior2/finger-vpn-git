@@ -127,7 +127,68 @@ CREATE INDEX IF NOT EXISTS idx_assignments_status ON orchestrator_stream_assignm
 
 ## Deploy
 
-### 1. Fazer Deploy
+### 1. Deploy do Orquestrador (Primeiro)
+
+1. **Criar projeto separado para o orquestrador**:
+   - Nome: `finger-orchestrator`
+   - Usar arquivo: `docker-compose.orchestrator.yaml`
+
+2. **Configurar variáveis de ambiente do orquestrador**:
+   ```bash
+   POSTGRES_HOST=seu_host_postgres
+   POSTGRES_USER=seu_usuario
+   POSTGRES_PASSWORD=sua_senha
+   POSTGRES_DB=seu_banco
+   POSTGRES_PORT=5432
+   ```
+
+3. **Fazer deploy do orquestrador**
+4. **Anotar a URL pública do orquestrador** (será usada pelas instâncias)
+
+### 2. Deploy de Instâncias fingerv7
+
+1. **Criar projeto separado para cada instância**:
+   - Nome: `finger_1_vpn`, `finger_2_vpn`, etc.
+   - Usar arquivo: `docker-compose.fingerv7.yaml`
+
+2. **Configurar variáveis de ambiente da instância**:
+   ```bash
+   # Banco de dados
+   POSTGRES_HOST=seu_host_postgres
+   POSTGRES_USER=seu_usuario
+   POSTGRES_PASSWORD=sua_senha
+   POSTGRES_DB=seu_banco
+   
+   # VPN
+   VPN_SERVICE_PROVIDER=protonvpn
+   WIREGUARD_PRIVATE_KEY=sua_chave_wireguard
+   
+   # Redis
+   REDIS_URL=sua_url_redis
+   
+   # Orquestrador (URL CORRETA)
+   USE_ORCHESTRATOR=True
+   ORCHESTRATOR_URL=http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080
+   INSTANCE_ID=finger_app_1  # ID único para cada instância
+   SERVER_ID=finger_app_1    # Mesmo valor do INSTANCE_ID
+   HEARTBEAT_INTERVAL=30
+   DISTRIBUTE_LOAD=True
+   ENABLE_ROTATION=False
+   TOTAL_SERVERS=1
+   ```
+
+3. **Fazer deploy da instância**
+4. **Verificar logs para confirmar conexão com orquestrador**
+
+### 3. Arquivos por Tipo de Deploy
+
+- **Orquestrador apenas**: `docker-compose.orchestrator.yaml`
+- **Instância fingerv7 apenas**: `docker-compose.fingerv7.yaml`
+- **Deploy completo (orquestrador + instância)**: `docker-compose.github.yaml`
+
+⚠️ **IMPORTANTE**: Não use `docker-compose.github.yaml` para instâncias quando o orquestrador já estiver rodando em outro projeto, pois causará conflito de porta 8080.
+
+### 4. Fazer Deploy
 
 1. No EasyPanel, clique em "Deploy"
 2. Aguarde o build e inicialização dos serviços
@@ -139,14 +200,27 @@ CREATE INDEX IF NOT EXISTS idx_assignments_status ON orchestrator_stream_assignm
 ### 2. Verificação de Saúde
 
 #### Verificar Orquestrador
+
+**⚠️ IMPORTANTE**: O EasyPanel fornece uma URL HTTPS, mas o orquestrador roda em HTTP na porta 8080.
+
+**Para acessar o orquestrador**:
+1. Use a URL fornecida pelo EasyPanel
+2. Remova o `https://` e adicione `http://`
+3. Adicione `:8080` ao final da URL
+
 ```bash
-curl http://seu_dominio:8080/health
+# Exemplo: se sua URL do EasyPanel for:
+# https://seu-projeto-orchestrator.azfa0v.easypanel.host/
+# Use:
+
+# Verificar se o orquestrador está rodando
+curl http://seu-projeto-orchestrator.azfa0v.easypanel.host:8080/health
 # Deve retornar: {"status": "healthy", "timestamp": "..."}
 ```
 
 #### Verificar Instâncias Registradas
 ```bash
-curl http://seu_dominio:8080/instances
+curl http://seu-projeto-orchestrator.azfa0v.easypanel.host:8080/instances
 # Deve mostrar a instância finger_app_1 registrada
 ```
 
