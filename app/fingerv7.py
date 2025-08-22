@@ -2650,19 +2650,6 @@ async def main():
             "Modo de distribuição de carga desativado. Processando todos os streams."
         )
 
-    # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
-    if DISTRIBUTE_LOAD:
-        logger.info("Executando distribuição inicial de streams...")
-        await reload_streams()
-        logger.info("Distribuição inicial de streams concluída.")
-    else:
-        # Criar tarefas para todos os streams quando distribuição está desativada
-        for stream in STREAMS:
-            task = asyncio.create_task(process_stream(stream, last_songs))
-            register_task(task)
-            tasks.append(task)
-        logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
-
     async def reload_streams():
         global STREAMS
         all_streams = load_streams()
@@ -2718,17 +2705,27 @@ async def main():
                 task.cancel()
         # Criar novas tarefas para os streams recarregados
         tasks.clear()
-
-        # Apenas adicionar tarefas para streams atribuídos a este servidor
         for stream in assigned_streams:
             task = asyncio.create_task(process_stream(stream, last_songs))
-            register_task(task)  # Registrar para controle de finalização
+            register_task(task)
             tasks.append(task)
-
-        STREAMS = assigned_streams
         logger.info(
-            f"{len(tasks)} tasks criadas para os {len(assigned_streams)} streams atribuídos."
+            f"{len(tasks)} tasks criadas para {len(assigned_streams)} streams atribuídos."
         )
+        STREAMS = assigned_streams
+
+    # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
+    if DISTRIBUTE_LOAD:
+        logger.info("Executando distribuição inicial de streams...")
+        await reload_streams()
+        logger.info("Distribuição inicial de streams concluída.")
+    else:
+        # Criar tarefas para todos os streams quando distribuição está desativada
+        for stream in STREAMS:
+            task = asyncio.create_task(process_stream(stream, last_songs))
+            register_task(task)
+            tasks.append(task)
+        logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
 
     # Criar e registrar todas as tarefas necessárias
     monitor_task = register_task(
