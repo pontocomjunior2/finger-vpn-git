@@ -22,15 +22,19 @@ O orquestrador é um serviço independente que **não precisa de VPN** pois apen
 
 ## 🚀 Deploy do Orquestrador
 
-### 1. Usando Docker Compose Exclusivo
+### 1. Deploy do Orquestrador
+
+O orquestrador deve ser deployado usando o arquivo `docker-compose.orchestrator.yaml`:
 
 ```bash
-# No servidor onde ficará o orquestrador
-cd /path/to/finger_vpn
-
-# Usar o docker-compose exclusivo (sem VPN)
+# No EasyPanel ou servidor
 docker-compose -f docker-compose.orchestrator.yaml up -d
 ```
+
+Este arquivo cria:
+- Serviço `orchestrator` na porta 8080
+- Health check para monitoramento
+- Usa a rede padrão do Docker para evitar conflitos
 
 ### 2. Verificar se está funcionando
 
