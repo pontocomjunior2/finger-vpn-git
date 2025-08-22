@@ -39,13 +39,21 @@ Este arquivo cria:
 ### 2. Verificar se está funcionando
 
 ```bash
-# Verificar logs
-docker-compose -f docker-compose.orchestrator.yaml logs -f
+# Verificar se o orquestrador está rodando
+docker-compose -f docker-compose.orchestrator.yaml ps
 
-# Testar endpoints
+# Verificar logs
+docker-compose -f docker-compose.orchestrator.yaml logs -f orchestrator
+
+# Testar health check
 curl http://localhost:8080/health
-curl http://localhost:8080/status
 ```
+
+### 3. Endpoints Disponíveis
+- `/health` - Health check (retorna status da aplicação e conexão com BD)
+- `/status` - Status detalhado do orquestrador
+- `/instances` - Lista de instâncias registradas
+- `/streams/assignments` - Atribuições de streams ativas
 
 ## ⚙️ Configuração das Instâncias Fingerv7
 

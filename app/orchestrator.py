@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -96,7 +97,8 @@ class StreamRelease(BaseModel):
 app = FastAPI(
     title="Stream Orchestrator",
     description="Orquestrador central para distribuição de streams",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 class StreamOrchestrator:
@@ -589,19 +591,41 @@ class StreamOrchestrator:
 # Instância global do orquestrador
 orchestrator = StreamOrchestrator()
 
-# Endpoints da API
-@app.on_event("startup")
-async def startup_event():
-    """Inicialização da aplicação."""
+# Lifespan event handler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gerencia o ciclo de vida da aplicação."""
+    # Startup
     logger.info("Iniciando Stream Orchestrator...")
     orchestrator.create_tables()
     
     # Iniciar tarefas de background
-    asyncio.create_task(cleanup_task())
-    asyncio.create_task(failover_monitor_task())
+    cleanup_task_handle = asyncio.create_task(cleanup_task())
+    failover_task_handle = asyncio.create_task(failover_monitor_task())
     
     logger.info("Stream Orchestrator iniciado com sucesso")
     logger.info("Tarefas de monitoramento e failover iniciadas")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Finalizando Stream Orchestrator...")
+    cleanup_task_handle.cancel()
+    failover_task_handle.cancel()
+    
+    try:
+        await cleanup_task_handle
+    except asyncio.CancelledError:
+        pass
+    
+    try:
+        await failover_task_handle
+    except asyncio.CancelledError:
+        pass
+    
+    logger.info("Stream Orchestrator finalizado")
+
+# Endpoints da API
 
 @app.post("/register")
 async def register_instance(registration: InstanceRegistration):
@@ -622,6 +646,22 @@ async def assign_streams(request: StreamRequest):
 async def release_streams(release: StreamRelease):
     """Libera streams de uma instância."""
     return orchestrator.release_streams(release)
+
+@app.get("/health")
+async def health_check():
+    """Endpoint de health check para verificação de saúde."""
+    try:
+        # Verificar conexão com banco de dados
+        conn = orchestrator.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        
+        return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Health check falhou: {e}")
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
 @app.get("/status")
 async def get_status():
