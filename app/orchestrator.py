@@ -93,6 +93,40 @@ class StreamRelease(BaseModel):
     server_id: str
     stream_ids: List[int]
 
+# Função de ciclo de vida da aplicação
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gerencia o ciclo de vida da aplicação FastAPI."""
+    # Startup
+    logger.info("Iniciando orquestrador...")
+    orchestrator = StreamOrchestrator()
+    orchestrator.create_tables()
+    
+    # Iniciar tarefas em background
+    cleanup_task = asyncio.create_task(orchestrator.cleanup_inactive_instances())
+    failover_task = asyncio.create_task(orchestrator.monitor_failover())
+    
+    # Armazenar referência do orquestrador no app
+    app.state.orchestrator = orchestrator
+    
+    try:
+        yield
+    finally:
+        # Shutdown
+        logger.info("Encerrando orquestrador...")
+        cleanup_task.cancel()
+        failover_task.cancel()
+        
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+            
+        try:
+            await failover_task
+        except asyncio.CancelledError:
+            pass
+
 # Aplicação FastAPI
 app = FastAPI(
     title="Stream Orchestrator",
