@@ -1,0 +1,40 @@
+# Dockerfile específico para o Orquestrador
+FROM python:3.11-slim-bookworm
+
+# Instalar dependências do sistema: curl para health check e ca-certificates para HTTPS
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Definir o diretório de trabalho dentro do container
+WORKDIR /app
+
+# Copiar arquivo de dependências do orquestrador
+COPY app/requirements_orchestrator.txt .
+
+# Instalar as dependências Python
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements_orchestrator.txt
+
+# Copiar arquivos necessários para o orquestrador
+COPY app/orchestrator.py .
+COPY app/db_pool.py .
+COPY app/__init__.py .
+COPY .env .
+
+# Criar usuário não-root
+RUN adduser --disabled-password --gecos "" appuser && \
+    chown -R appuser:appuser /app
+
+# Saída sem buffer para logs em tempo real
+ENV PYTHONUNBUFFERED=1
+
+# Executar como usuário não-root
+USER appuser
+
+# Expor a porta do orquestrador
+EXPOSE 8080
+
+# Comando de inicialização do orquestrador
+CMD ["python", "orchestrator.py"]
