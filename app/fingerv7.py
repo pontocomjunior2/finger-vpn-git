@@ -149,6 +149,9 @@ TOTAL_SERVERS = int(os.getenv("TOTAL_SERVERS", "1"))  # Número total de servido
 ENABLE_ROTATION = False  # Sempre False
 ROTATION_HOURS = 0  # Sempre 0
 
+# Configuração de MAX_STREAMS
+MAX_STREAMS = int(os.getenv("MAX_STREAMS", "10"))  # Número máximo de streams por instância
+
 # Importar cliente do orquestrador se habilitado
 orchestrator_client = None
 if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
@@ -156,9 +159,10 @@ if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
         from orchestrator_client import create_orchestrator_client
         orchestrator_client = create_orchestrator_client(
             orchestrator_url=ORCHESTRATOR_URL,
-            server_id=SERVER_ID
+            server_id=SERVER_ID,
+            max_streams=MAX_STREAMS
         )
-        logger.info(f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL}")
+        logger.info(f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}")
     except ImportError as e:
         logger.error(f"Erro ao importar cliente do orquestrador: {e}")
         logger.warning("Fallback para modo sem orquestrador")
@@ -2726,10 +2730,10 @@ async def main():
                     # Converter IDs do orquestrador para string para compatibilidade
                     assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
                     
-                    # Filtrar streams atribuídos
+                    # Filtrar streams atribuídos (corrigido para usar 'index')
                     assigned_streams = [
                         stream for stream in all_streams 
-                        if stream.get("id", stream.get("name", "")) in assigned_stream_ids_str
+                        if stream.get("index", "") in assigned_stream_ids_str
                     ]
                     
                     logger.info(f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador")
