@@ -33,18 +33,18 @@ original_check_stream_ownership = None
 
 
 async def mock_acquire_stream_lock(
-    stream_id: str, server_id: int, timeout: int = 30
+    stream_id: str, server_id: str, timeout: int = 30
 ) -> bool:
     """Mock simples para testes de distribuição."""
     return True
 
 
-async def mock_release_stream_lock(stream_id: str, server_id: int) -> bool:
+async def mock_release_stream_lock(stream_id: str, server_id: str) -> bool:
     """Mock simples para testes de distribuição."""
     return True
 
 
-async def mock_check_stream_ownership(stream_id: str, server_id: int) -> bool:
+async def mock_check_stream_ownership(stream_id: str, server_id: str) -> bool:
     """Mock simples para testes de distribuição."""
     return True
 

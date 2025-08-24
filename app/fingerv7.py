@@ -952,7 +952,7 @@ def check_log_table():
                             logger.info(
                                 f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
                             )
-                            create_table_sql = f'''
+                            create_table_sql = f"""
 CREATE TABLE {DB_TABLE_NAME} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
@@ -970,13 +970,15 @@ CREATE TABLE {DB_TABLE_NAME} (
     identified_by VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                            '''
+                            """
                             cursor.execute(create_table_sql)
                             conn.commit()
                             logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
                             return True
                         except Exception as e:
-                            logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
+                            logger.error(
+                                f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}"
+                            )
                             try:
                                 conn.rollback()
                             except Exception:
@@ -1036,7 +1038,7 @@ CREATE TABLE {DB_TABLE_NAME} (
                                     conn.rollback()
                                 except Exception:
                                     pass
-                        
+
                         logger.info(
                             f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!"
                         )
@@ -1047,9 +1049,7 @@ CREATE TABLE {DB_TABLE_NAME} (
                     cursor.execute(f"SELECT pg_advisory_unlock({lock_id})")
 
     except Exception as e:
-        logger.error(
-            f"Erro ao verificar tabela de logs: {e}", exc_info=True
-        )
+        logger.error(f"Erro ao verificar tabela de logs: {e}", exc_info=True)
         return False
 
 
@@ -1840,8 +1840,7 @@ async def process_stream(stream, last_songs):
                 connection_tracker.record_error(stream_key)
                 failure_count = connection_tracker.get_error_count(stream_key)
 
-                # Liberar o lock em caso de falha
-                await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
+                # Mantemos o lock mesmo em caso de falha de captura para estabilidade
 
                 wait_time = 5  # Otimizado: tempo de espera reduzido
                 if failure_count > 3:
@@ -1860,11 +1859,10 @@ async def process_stream(stream, last_songs):
             await shazam_queue.put((current_segment_path, stream, last_songs))
             await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo
 
-            # Liberar o lock após processar este ciclo
-            await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
+            # Lock será liberado apenas no finally
 
             logger.info(
-                f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})..."
+                f"Aguardando 45 segundos para o próximo ciclo do stream {name} ({stream_key})..."
             )
             await asyncio.sleep(45)  # Intervalo de captura de segmentos (otimizado)
 
@@ -2829,13 +2827,7 @@ async def main():
         rotation_task = register_task(asyncio.create_task(check_rotation_schedule()))
         tasks.append(rotation_task)
 
-    # Adicionar tarefas para processar os streams
-    for stream in STREAMS:
-        stream_task = register_task(
-            asyncio.create_task(process_stream(stream, last_songs))
-        )
-        tasks.append(stream_task)
-
+    # Evitar criação duplicada de tasks de streams; streams já foram agendados anteriormente
     tasks_to_gather.extend(tasks)
 
     try:
