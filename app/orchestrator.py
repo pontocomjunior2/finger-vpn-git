@@ -266,6 +266,16 @@ class StreamOrchestrator:
         cursor = conn.cursor()
         
         try:
+            # Verificar se é uma re-registração (instância já existe)
+            cursor.execute("""
+                SELECT server_id, current_streams 
+                FROM orchestrator_instances 
+                WHERE server_id = %s
+            """, (registration.server_id,))
+            
+            existing_instance = cursor.fetchone()
+            is_reregistration = existing_instance is not None
+            
             # Inserir ou atualizar instância
             cursor.execute("""
                 INSERT INTO orchestrator_instances 
@@ -276,12 +286,36 @@ class StreamOrchestrator:
                     ip = EXCLUDED.ip,
                     port = EXCLUDED.port,
                     max_streams = EXCLUDED.max_streams,
+                    current_streams = 0,
                     status = 'active',
                     last_heartbeat = CURRENT_TIMESTAMP
                 RETURNING id
             """, (registration.server_id, registration.ip, registration.port, registration.max_streams))
             
             instance_id = cursor.fetchone()[0]
+            
+            # Se é uma re-registração, liberar streams órfãos imediatamente
+            if is_reregistration:
+                logger.info(f"Re-registração detectada para instância {registration.server_id}, liberando streams órfãos")
+                
+                # Liberar todos os streams atribuídos à instância anterior
+                cursor.execute("""
+                    DELETE FROM orchestrator_stream_assignments 
+                    WHERE server_id = %s
+                """, (registration.server_id,))
+                
+                released_count = cursor.rowcount
+                if released_count > 0:
+                    logger.info(f"Liberados {released_count} streams órfãos da instância {registration.server_id}")
+                    
+                    # Forçar reatribuição imediata dos streams liberados
+                    try:
+                        self._immediate_stream_rebalance(cursor, registration.server_id)
+                    except Exception as e:
+                        logger.warning(f"Erro na reatribuição imediata de streams: {e}")
+            
+            # Commit das alterações
+            conn.commit()
             
             # Atualizar cache local
             self.active_instances[registration.server_id] = {
@@ -294,15 +328,20 @@ class StreamOrchestrator:
                 'last_heartbeat': datetime.now()
             }
             
-            logger.info(f"Instância {registration.server_id} registrada com sucesso")
+            if is_reregistration:
+                logger.info(f"Instância {registration.server_id} re-registrada com sucesso (streams órfãos liberados)")
+            else:
+                logger.info(f"Instância {registration.server_id} registrada com sucesso")
             
             return {
                 'status': 'registered',
                 'server_id': registration.server_id,
-                'max_streams': registration.max_streams
+                'max_streams': registration.max_streams,
+                'reregistration': is_reregistration
             }
             
         except Exception as e:
+            conn.rollback()
             logger.error(f"Erro ao registrar instância {registration.server_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Erro ao registrar instância: {e}")
         finally:
@@ -462,6 +501,52 @@ class StreamOrchestrator:
             cursor.close()
             conn.close()
     
+    def _immediate_stream_rebalance(self, cursor, reregistered_server_id: str):
+        """Força reatribuição imediata de streams para instância re-registrada."""
+        # Buscar streams não atribuídos
+        cursor.execute("""
+            SELECT stream_id FROM orchestrator_streams 
+            WHERE stream_id NOT IN (
+                SELECT stream_id FROM orchestrator_stream_assignments
+            )
+            LIMIT 50
+        """)
+        
+        available_streams = cursor.fetchall()
+        
+        if available_streams:
+            # Buscar capacidade da instância re-registrada
+            cursor.execute("""
+                SELECT max_streams, current_streams
+                FROM orchestrator_instances 
+                WHERE server_id = %s AND status = 'active'
+            """, (reregistered_server_id,))
+            
+            instance_info = cursor.fetchone()
+            
+            if instance_info:
+                max_streams, current_streams = instance_info
+                available_capacity = max_streams - current_streams
+                streams_to_assign = min(len(available_streams), available_capacity)
+                
+                if streams_to_assign > 0:
+                    assigned_count = 0
+                    for i, (stream_id,) in enumerate(available_streams[:streams_to_assign]):
+                        cursor.execute("""
+                            INSERT INTO orchestrator_stream_assignments (stream_id, server_id, assigned_at)
+                            VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        """, (stream_id, reregistered_server_id))
+                        assigned_count += 1
+                    
+                    # Atualizar contador da instância
+                    cursor.execute("""
+                        UPDATE orchestrator_instances 
+                        SET current_streams = current_streams + %s
+                        WHERE server_id = %s
+                    """, (assigned_count, reregistered_server_id))
+                    
+                    logger.info(f"Reatribuídos {assigned_count} streams imediatamente para instância re-registrada {reregistered_server_id}")
+
     def handle_orphaned_streams(self):
         """Detecta e reatribui streams órfãos automaticamente."""
         conn = self.get_db_connection()
