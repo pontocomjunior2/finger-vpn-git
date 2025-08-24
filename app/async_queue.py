@@ -121,9 +121,9 @@ class AsyncInsertQueue:
         """Loop principal do worker"""
         logger.info("Worker loop iniciado")
 
-        # Variáveis para backoff exponencial
-        base_delay = 0.1
-        max_delay = 30
+        # Variáveis para backoff exponencial (otimizado)
+        base_delay = 0.05
+        max_delay = 15
         current_delay = base_delay
         consecutive_errors = 0
         max_consecutive_errors = 10
@@ -472,10 +472,10 @@ class AsyncInsertQueue:
                         )
 
                         if conn_retry_count <= max_conn_retries and conn_error_detected:
-                            # Calcular delay com jitter para evitar thundering herd
-                            jitter = random.uniform(0.1, 0.5)
+                            # Calcular delay com jitter para evitar thundering herd (otimizado)
+                            jitter = random.uniform(0.05, 0.2)
                             current_delay = (
-                                conn_retry_delay * (2 ** (conn_retry_count - 1))
+                                conn_retry_delay * (1.5 ** (conn_retry_count - 1))
                                 + jitter
                             )
 

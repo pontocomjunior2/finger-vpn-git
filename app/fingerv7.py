@@ -299,6 +299,18 @@ def create_distribution_tables():
                 ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
             """
             )
+            
+            # Corrigir tipo de dados da coluna server_id para VARCHAR(100)
+            try:
+                cursor.execute(
+                    """
+                    ALTER TABLE stream_locks 
+                    ALTER COLUMN server_id TYPE VARCHAR(100);
+                """
+                )
+                logger.info("Tipo de dados da coluna server_id corrigido para VARCHAR(100)")
+            except Exception as alter_error:
+                logger.warning(f"Erro ao alterar tipo da coluna server_id (pode já estar correto): {alter_error}")
 
             conn.commit()
             logger.info("Tabelas de distribuição criadas/atualizadas com sucesso")
@@ -889,32 +901,33 @@ def check_log_table():
     )
     conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
+        conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            # Verificar se a tabela existe
-            cursor.execute(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
-            )
-            table_exists = cursor.fetchone()[0]
-
-            if not table_exists:
-                logger.error(
-                    f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
-                )
-                # Listar tabelas disponíveis
+                # Verificar se a tabela existe
                 cursor.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+                    (DB_TABLE_NAME,),
                 )
-                tables = [row[0] for row in cursor.fetchall()]
-                logger.info(f"Tabelas disponíveis no banco: {tables}")
+                table_exists = cursor.fetchone()[0]
 
-                # Criar tabela automaticamente para evitar erros
-                try:
-                    logger.info(
-                        f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
+                if not table_exists:
+                    logger.error(
+                        f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
                     )
-                    # Corrigir a formatação da string SQL multi-linha
-                    create_table_sql = """
+                    # Listar tabelas disponíveis
+                    cursor.execute(
+                        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                    )
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tabelas disponíveis no banco: {tables}")
+
+                    # Criar tabela automaticamente para evitar erros
+                    try:
+                        logger.info(
+                            f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
+                        )
+                        # Corrigir a formatação da string SQL multi-linha
+                        create_table_sql = """
 CREATE TABLE {} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
@@ -929,53 +942,51 @@ CREATE TABLE {} (
     segmento VARCHAR(100),
     label VARCHAR(255),
     genre VARCHAR(100),
-    identified_by VARCHAR(10),
+    identified_by TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                    """.format(
-                        DB_TABLE_NAME
-                    )  # Usar .format() para inserir o nome da tabela
-                    cursor.execute(create_table_sql)
-                    conn.commit()
-                    logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
-                    return True
-                except Exception as e:
-                    logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass  # Ignorar erros de rollback
-                    logger.info(
-                        "Considere criar a tabela manualmente com o seguinte comando SQL:"
+                        """.format(
+                            DB_TABLE_NAME
+                        )  # Usar .format() para inserir o nome da tabela
+                        cursor.execute(create_table_sql)
+                        conn.commit()
+                        logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass  # Ignorar erros de rollback
+                        logger.info(
+                            "Considere criar a tabela manualmente com o seguinte comando SQL:"
+                        )
+                        return False
+                else:
+                    # Verificar as colunas da tabela (garantir indentação correta aqui)
+                    cursor.execute(
+                        f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
                     )
-                    return False
-            else:
-                # Verificar as colunas da tabela (garantir indentação correta aqui)
-                cursor.execute(
-                    f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
-                )
-                columns_info = {
-                    row[0].lower(): {"type": row[1], "default": row[2]}
-                    for row in cursor.fetchall()
-                }
-                logger.info(
-                    f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
-                )
-                columns = list(columns_info.keys())
+                    columns_info = {
+                        row[0].lower(): {"type": row[1], "default": row[2]}
+                        for row in cursor.fetchall()
+                    }
+                    logger.info(
+                        f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
+                    )
+                    columns = list(columns_info.keys())
 
-                # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
-                col_identified_by = "identified_by"
+                    # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
+                    col_identified_by = "identified_by"
 
                 if col_identified_by in columns:
                     current_info = columns_info[col_identified_by]
                     needs_alter = False
                     alter_parts = []
-                    if (
-                        not current_info["type"].startswith("character varying")
-                        or "(10)" not in current_info["type"]
-                    ):
+                    # Alterar para TEXT ao invés de VARCHAR(10) para suportar server_ids longos
+                    if current_info["type"] != "text":
                         alter_parts.append(
-                            f"ALTER COLUMN {col_identified_by} TYPE VARCHAR(10)"
+                            f"ALTER COLUMN {col_identified_by} TYPE TEXT"
                         )
                         needs_alter = True
                     if current_info["default"] is not None:
@@ -1007,9 +1018,9 @@ CREATE TABLE {} (
                 else:
                     try:
                         logger.info(
-                            f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'..."
+                            f"Adicionando coluna '{col_identified_by}' (TEXT) à tabela '{DB_TABLE_NAME}'..."
                         )
-                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
+                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} TEXT;"
                         cursor.execute(add_sql)
                         conn.commit()
                         logger.info(
@@ -1075,13 +1086,14 @@ CREATE TABLE {} (
                 logger.info(
                     f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!"
                 )
+                # Commit final para garantir que todas as operações sejam confirmadas
+                conn.commit()
                 return True  # Este return está dentro do else, está correto
 
     except Exception as e:
         logger.error(
             f"Erro ao verificar tabela de logs: {e}", exc_info=True
         )  # Add exc_info
-        # Garantir que a transação seja finalizada adequadamente
         if conn:
             try:
                 conn.rollback()
@@ -1089,12 +1101,8 @@ CREATE TABLE {} (
                 pass  # Ignorar erros de rollback
         return False
     finally:
-        # Garantir que a conexão seja fechada adequadamente
         if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass  # Ignorar erros de fechamento
+            get_db_pool().pool.putconn(conn)
 
 
 # Fila para enviar ao Shazamio (RESTAURADO)
@@ -1553,8 +1561,8 @@ async def capture_stream_segment(name, url, duration=None):
         logger.info(f"Capturando segmento de {duration} segundos do stream {name}...")
         logger.debug(f"Comando FFmpeg: {' '.join(command)}")
 
-        # Usar o timeout aumentado
-        capture_timeout = duration + 30  # 30 segundos a mais do que a duração desejada
+        # Usar o timeout otimizado
+        capture_timeout = duration + 15  # 15 segundos a mais do que a duração desejada (otimizado)
 
         process = await asyncio.create_subprocess_exec(
             *command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1885,9 +1893,9 @@ async def process_stream(stream, last_songs):
                 # Liberar o lock em caso de falha
                 await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
 
-                wait_time = 10  # Default wait time
+                wait_time = 5  # Otimizado: tempo de espera reduzido
                 if failure_count > 3:
-                    wait_time = 30  # Increased wait time after 3 failures
+                    wait_time = 15  # Otimizado: tempo de espera após falhas reduzido
 
                 logger.error(
                     f"Falha ao capturar segmento do streaming {name} ({stream_key}). Falha #{failure_count}. Tentando novamente em {wait_time} segundos..."
@@ -1908,7 +1916,7 @@ async def process_stream(stream, last_songs):
             logger.info(
                 f"Aguardando 60 segundos para o próximo ciclo do stream {name} ({stream_key})..."
             )
-            await asyncio.sleep(60)  # Intervalo de captura de segmentos
+            await asyncio.sleep(45)  # Intervalo de captura de segmentos (otimizado)
 
     except asyncio.CancelledError:
         logger.info(f"Task do stream {name} ({stream_key}) foi cancelada.")
@@ -2045,8 +2053,8 @@ async def schedule_json_sync():
     while True:
         await sync_json_with_db()  # Sincroniza imediatamente na inicialização
         await asyncio.sleep(
-            3600
-        )  # Aguarda 1 hora (3600 segundos) antes da próxima sincronização
+            1800
+        )  # Aguarda 30 minutos (1800 segundos) antes da próxima sincronização (otimizado)
 
 
 # Função para verificar se é hora de recarregar os streams devido à rotação
@@ -2372,6 +2380,12 @@ async def send_heartbeat():
         )  # Interval pode ser bloqueante
         disk_info = await asyncio.to_thread(psutil.disk_usage, "/")
 
+        # Garantir que SERVER_ID seja tratado como int para operações matemáticas
+        try:
+            server_id_int = int(SERVER_ID) if isinstance(SERVER_ID, str) and SERVER_ID.isdigit() else 1
+        except (ValueError, TypeError):
+            server_id_int = 1
+
         # Informações para o banco de dados
         info = {
             "hostname": hostname,
@@ -2387,7 +2401,7 @@ async def send_heartbeat():
                     for s in STREAMS
                     if s.get(
                         "processed_by_server",
-                        (int(s.get("index", 0)) % TOTAL_SERVERS) == (SERVER_ID - 1),
+                        (int(s.get("index", 0)) % TOTAL_SERVERS) == (server_id_int - 1),
                     )
                 ]
             ),

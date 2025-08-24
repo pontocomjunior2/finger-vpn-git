@@ -16,7 +16,7 @@ from contextlib import contextmanager, asynccontextmanager
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
-load_dotenv(dotenv_path='.env')
+load_dotenv(dotenv_path=".env")
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class PoolMetrics:
             self.total_requests += 1
             if not success:
                 self.failed_requests += 1
-            if wait_time_ms > 50:  # Log tempos de espera > 50ms
+            if wait_time_ms > 100:  # Log tempos de espera > 100ms (reduzido ruído)
                 logger.warning(f"Pool connection wait time: {wait_time_ms:.2f}ms")
             self.wait_times.append(wait_time_ms)
             # Manter apenas os últimos 100 tempos
@@ -191,7 +191,7 @@ class DatabasePool:
         self.pool = None
         self.metrics = PoolMetrics()
         self.max_retries = 3
-        self.base_delay = 1  # Delay base para retry em segundos
+        self.base_delay = 0.5  # Delay base para retry em segundos (otimizado)
         self._last_pool_check = time.time()
         self._pool_stats = {
             "created_connections": 0,
@@ -219,7 +219,7 @@ class DatabasePool:
                     "password": os.getenv("POSTGRES_PASSWORD"),
                     "database": os.getenv("POSTGRES_DB"),
                     "port": os.getenv("POSTGRES_PORT", "5432"),
-                    "connect_timeout": 90,  # Aumentado para 90 segundos
+                    "connect_timeout": 30,  # Otimizado para 30 segundos
                     "options": "-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000",
                     "application_name": f'fingerv7_server_{os.getenv("SERVER_ID", "1")}',
                 }
@@ -289,9 +289,9 @@ class DatabasePool:
         """
         conn = None
         start_time = time.time()
-        max_retries = 5  # Aumentado para 5 tentativas
-        base_delay = 0.2  # Delay base aumentado
-        connection_timeout = 180  # Timeout em segundos para obtenção de conexão (aumentado para 3 minutos)
+        max_retries = 3  # Reduzido para 3 tentativas para resposta mais rápida
+        base_delay = 0.1  # Delay base otimizado para menor latência
+        connection_timeout = 60  # Timeout reduzido para 1 minuto
 
         # Capturar stack trace para diagnóstico de vazamentos
         import traceback
@@ -412,9 +412,9 @@ class DatabasePool:
         """Gerenciador de contexto síncrono para obter conexão do pool"""
         conn = None
         start_time = time.time()
-        max_retries = 5  # Aumentado para 5 tentativas
-        base_delay = 0.2  # Delay base aumentado
-        connection_timeout = 180  # Timeout em segundos para obtenção de conexão (aumentado para 3 minutos)
+        max_retries = 3  # Reduzido para 3 tentativas para resposta mais rápida
+        base_delay = 0.1  # Delay base otimizado para menor latência
+        connection_timeout = 60  # Timeout reduzido para 1 minuto
 
         for attempt in range(max_retries):
             try:
