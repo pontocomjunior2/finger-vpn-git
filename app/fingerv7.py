@@ -905,33 +905,32 @@ def check_log_table():
     )
     conn = None
     try:
-        conn = get_db_pool().pool.getconn()
+        conn = get_db_pool().get_connection_sync()
         with conn.cursor() as cursor:
-                # Verificar se a tabela existe
-                cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
-                    (DB_TABLE_NAME,),
+            # Verificar se a tabela existe
+            cursor.execute(
+                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
+            )
+            table_exists = cursor.fetchone()[0]
+
+            if not table_exists:
+                logger.error(
+                    f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
                 )
-                table_exists = cursor.fetchone()[0]
+                # Listar tabelas disponíveis
+                cursor.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                )
+                tables = [row[0] for row in cursor.fetchall()]
+                logger.info(f"Tabelas disponíveis no banco: {tables}")
 
-                if not table_exists:
-                    logger.error(
-                        f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
+                # Criar tabela automaticamente para evitar erros
+                try:
+                    logger.info(
+                        f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
                     )
-                    # Listar tabelas disponíveis
-                    cursor.execute(
-                        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-                    )
-                    tables = [row[0] for row in cursor.fetchall()]
-                    logger.info(f"Tabelas disponíveis no banco: {tables}")
-
-                    # Criar tabela automaticamente para evitar erros
-                    try:
-                        logger.info(
-                            f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
-                        )
-                        # Corrigir a formatação da string SQL multi-linha
-                        create_table_sql = """
+                    # Corrigir a formatação da string SQL multi-linha
+                    create_table_sql = """
 CREATE TABLE {} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
@@ -946,51 +945,53 @@ CREATE TABLE {} (
     segmento VARCHAR(100),
     label VARCHAR(255),
     genre VARCHAR(100),
-    identified_by TEXT,
+    identified_by VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                        """.format(
-                            DB_TABLE_NAME
-                        )  # Usar .format() para inserir o nome da tabela
-                        cursor.execute(create_table_sql)
-                        conn.commit()
-                        logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
-                        return True
-                    except Exception as e:
-                        logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass  # Ignorar erros de rollback
-                        logger.info(
-                            "Considere criar a tabela manualmente com o seguinte comando SQL:"
-                        )
-                        return False
-                else:
-                    # Verificar as colunas da tabela (garantir indentação correta aqui)
-                    cursor.execute(
-                        f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
-                    )
-                    columns_info = {
-                        row[0].lower(): {"type": row[1], "default": row[2]}
-                        for row in cursor.fetchall()
-                    }
+                    """.format(
+                        DB_TABLE_NAME
+                    )  # Usar .format() para inserir o nome da tabela
+                    cursor.execute(create_table_sql)
+                    conn.commit()
+                    logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
+                    return True
+                except Exception as e:
+                    logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass  # Ignorar erros de rollback
                     logger.info(
-                        f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
+                        "Considere criar a tabela manualmente com o seguinte comando SQL:"
                     )
-                    columns = list(columns_info.keys())
+                    return False
+            else:
+                # Verificar as colunas da tabela (garantir indentação correta aqui)
+                cursor.execute(
+                    f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
+                )
+                columns_info = {
+                    row[0].lower(): {"type": row[1], "default": row[2]}
+                    for row in cursor.fetchall()
+                }
+                logger.info(
+                    f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
+                )
+                columns = list(columns_info.keys())
 
-                    # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
-                    col_identified_by = "identified_by"
+                # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
+                col_identified_by = "identified_by"
 
                 if col_identified_by in columns:
                     current_info = columns_info[col_identified_by]
                     needs_alter = False
                     alter_parts = []
-                    # Alterar para TEXT ao invés de VARCHAR(10) para suportar server_ids longos
-                    if current_info["type"] != "text":
+                    if (
+                        not current_info["type"].startswith("character varying")
+                        or "(10)" not in current_info["type"]
+                    ):
                         alter_parts.append(
-                            f"ALTER COLUMN {col_identified_by} TYPE TEXT"
+                            f"ALTER COLUMN {col_identified_by} TYPE VARCHAR(10)"
                         )
                         needs_alter = True
                     if current_info["default"] is not None:
@@ -1022,9 +1023,9 @@ CREATE TABLE {} (
                 else:
                     try:
                         logger.info(
-                            f"Adicionando coluna '{col_identified_by}' (TEXT) à tabela '{DB_TABLE_NAME}'..."
+                            f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'..."
                         )
-                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} TEXT;"
+                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
                         cursor.execute(add_sql)
                         conn.commit()
                         logger.info(
@@ -1090,14 +1091,13 @@ CREATE TABLE {} (
                 logger.info(
                     f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!"
                 )
-                # Commit final para garantir que todas as operações sejam confirmadas
-                conn.commit()
                 return True  # Este return está dentro do else, está correto
 
     except Exception as e:
         logger.error(
             f"Erro ao verificar tabela de logs: {e}", exc_info=True
         )  # Add exc_info
+        # Garantir que a transação seja finalizada adequadamente
         if conn:
             try:
                 conn.rollback()
@@ -1105,8 +1105,12 @@ CREATE TABLE {} (
                 pass  # Ignorar erros de rollback
         return False
     finally:
+        # Garantir que a conexão seja fechada adequadamente
         if conn:
-            get_db_pool().pool.putconn(conn)
+            try:
+                conn.close()
+            except Exception:
+                pass  # Ignorar erros de fechamento
 
 
 # Fila para enviar ao Shazamio (RESTAURADO)
