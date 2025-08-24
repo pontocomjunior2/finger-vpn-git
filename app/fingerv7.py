@@ -132,14 +132,16 @@ except ImportError:
     # Considerar logar um aviso se SFTP for o método escolhido
 
 # Carregar variáveis de ambiente
-load_dotenv(dotenv_path='.env')
+load_dotenv(dotenv_path=".env")
 
 # Configuração para distribuição de carga entre servidores
 SERVER_ID = os.getenv("SERVER_ID", socket.gethostname())  # ID único para cada servidor
 USE_ORCHESTRATOR = (
     os.getenv("USE_ORCHESTRATOR", "True").lower() == "true"
 )  # Usar orquestrador central
-ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8001")  # URL do orquestrador
+ORCHESTRATOR_URL = os.getenv(
+    "ORCHESTRATOR_URL", "http://localhost:8001"
+)  # URL do orquestrador
 DISTRIBUTE_LOAD = (
     os.getenv("DISTRIBUTE_LOAD", "False").lower() == "true"
 )  # Ativar distribuição
@@ -150,19 +152,24 @@ ENABLE_ROTATION = False  # Sempre False
 ROTATION_HOURS = 0  # Sempre 0
 
 # Configuração de MAX_STREAMS
-MAX_STREAMS = int(os.getenv("MAX_STREAMS", "10"))  # Número máximo de streams por instância
+MAX_STREAMS = int(
+    os.getenv("MAX_STREAMS", "10")
+)  # Número máximo de streams por instância
 
 # Importar cliente do orquestrador se habilitado
 orchestrator_client = None
 if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
     try:
         from orchestrator_client import create_orchestrator_client
+
         orchestrator_client = create_orchestrator_client(
             orchestrator_url=ORCHESTRATOR_URL,
             server_id=SERVER_ID,
-            max_streams=MAX_STREAMS
+            max_streams=MAX_STREAMS,
         )
-        logger.info(f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}")
+        logger.info(
+            f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}"
+        )
     except ImportError as e:
         logger.error(f"Erro ao importar cliente do orquestrador: {e}")
         logger.warning("Fallback para modo sem orquestrador")
@@ -303,7 +310,7 @@ def create_distribution_tables():
                 ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
             """
             )
-            
+
             # Corrigir tipo de dados da coluna server_id para VARCHAR(100)
             try:
                 cursor.execute(
@@ -312,9 +319,13 @@ def create_distribution_tables():
                     ALTER COLUMN server_id TYPE VARCHAR(100);
                 """
                 )
-                logger.info("Tipo de dados da coluna server_id corrigido para VARCHAR(100)")
+                logger.info(
+                    "Tipo de dados da coluna server_id corrigido para VARCHAR(100)"
+                )
             except Exception as alter_error:
-                logger.warning(f"Erro ao alterar tipo da coluna server_id (pode já estar correto): {alter_error}")
+                logger.warning(
+                    f"Erro ao alterar tipo da coluna server_id (pode já estar correto): {alter_error}"
+                )
 
             conn.commit()
             logger.info("Tabelas de distribuição criadas/atualizadas com sucesso")
@@ -903,34 +914,36 @@ def check_log_table():
     logger.info(
         f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados..."
     )
+    conn = None
     try:
-        with get_db_pool().get_connection_sync() as conn:
-            with conn.cursor() as cursor:
-                # Verificar se a tabela existe
-                cursor.execute(
-                    f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
+        conn = get_db_pool().pool.getconn()
+        with conn.cursor() as cursor:
+            # Verificar se a tabela existe
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+                (DB_TABLE_NAME,),
+            )
+            table_exists = cursor.fetchone()[0]
+
+            if not table_exists:
+                logger.error(
+                    f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
                 )
-                table_exists = cursor.fetchone()[0]
+                # Listar tabelas disponíveis
+                cursor.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                )
+                tables = [row[0] for row in cursor.fetchall()]
+                logger.info(f"Tabelas disponíveis no banco: {tables}")
 
-                if not table_exists:
-                    logger.error(
-                        f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
+                # Criar tabela automaticamente para evitar erros
+                try:
+                    logger.info(
+                        f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
                     )
-                    # Listar tabelas disponíveis
-                    cursor.execute(
-                        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-                    )
-                    tables = [row[0] for row in cursor.fetchall()]
-                    logger.info(f"Tabelas disponíveis no banco: {tables}")
-
-                    # Criar tabela automaticamente para evitar erros
-                    try:
-                        logger.info(
-                            f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
-                        )
-                        # Corrigir a formatação da string SQL multi-linha
-                        create_table_sql = f"""
-CREATE TABLE {DB_TABLE_NAME} (
+                    # Corrigir a formatação da string SQL multi-linha
+                    create_table_sql = """
+CREATE TABLE {} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
     time TIME NOT NULL,
@@ -944,148 +957,146 @@ CREATE TABLE {DB_TABLE_NAME} (
     segmento VARCHAR(100),
     label VARCHAR(255),
     genre VARCHAR(100),
-    identified_by VARCHAR(10),
+    identified_by TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-"""
-                        cursor.execute(create_table_sql)
-                        conn.commit()
-                        logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso.")
-                        return True
-                    except Exception as create_err:
-                        logger.error(
-                            f"Falha ao criar a tabela '{DB_TABLE_NAME}': {create_err}"
-                        )
+                        """.format(
+                        DB_TABLE_NAME
+                    )  # Usar .format() para inserir o nome da tabela
+                    cursor.execute(create_table_sql)
+                    conn.commit()
+                    logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
+                    return True
+                except Exception as e:
+                    logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
+                    try:
                         conn.rollback()
-                        raise
-                else:
-                    logger.info(f"A tabela de logs '{DB_TABLE_NAME}' já existe.")
-                    return True  # Return True if table exists
-    except Exception as e:
-        # Adicionar traceback para depuração
-        tb_str = traceback.format_exc()
-        logger.error(f"Erro ao verificar/criar tabela de logs: {e}\n{tb_str}")
-        return False  # Return False on failure
+                    except Exception:
+                        pass  # Ignorar erros de rollback
+                    logger.info(
+                        "Considere criar a tabela manualmente com o seguinte comando SQL:"
+                    )
+                    return False
+            else:
+                # Verificar as colunas da tabela (garantir indentação correta aqui)
+                cursor.execute(
+                    f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
+                )
+                columns_info = {
+                    row[0].lower(): {"type": row[1], "default": row[2]}
+                    for row in cursor.fetchall()
+                }
+                logger.info(
+                    f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
+                )
+                columns = list(columns_info.keys())
 
                 # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
                 col_identified_by = "identified_by"
 
-                if col_identified_by in columns:
-                    current_info = columns_info[col_identified_by]
-                    needs_alter = False
-                    alter_parts = []
-                    if (
-                        not current_info["type"].startswith("character varying")
-                        or "(10)" not in current_info["type"]
-                    ):
+            if col_identified_by in columns:
+                current_info = columns_info[col_identified_by]
+                needs_alter = False
+                alter_parts = []
+                # Alterar para TEXT ao invés de VARCHAR(10) para suportar server_ids longos
+                if current_info["type"] != "text":
+                    alter_parts.append(f"ALTER COLUMN {col_identified_by} TYPE TEXT")
+                    needs_alter = True
+                if current_info["default"] is not None:
+                    if "null::" not in str(current_info["default"]).lower():
                         alter_parts.append(
-                            f"ALTER COLUMN {col_identified_by} TYPE VARCHAR(10)"
+                            f"ALTER COLUMN {col_identified_by} DROP DEFAULT"
                         )
                         needs_alter = True
-                    if current_info["default"] is not None:
-                        if "null::" not in str(current_info["default"]).lower():
-                            alter_parts.append(
-                                f"ALTER COLUMN {col_identified_by} DROP DEFAULT"
-                            )
-                            needs_alter = True
 
-                    if needs_alter:
-                        try:
-                            alter_sql = f"ALTER TABLE {DB_TABLE_NAME} { ', '.join(alter_parts) };"
-                            logger.info(
-                                f"Alterando coluna '{col_identified_by}': {alter_sql}"
-                            )
-                            cursor.execute(alter_sql)
-                            conn.commit()
-                            logger.info(
-                                f"Coluna '{col_identified_by}' alterada com sucesso."
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Erro ao alterar coluna '{col_identified_by}': {e}"
-                            )
-                            try:
-                                conn.rollback()
-                            except Exception:
-                                pass  # Ignorar erros de rollback
-                else:
+                if needs_alter:
                     try:
-                        logger.info(
-                            f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'..."
+                        alter_sql = (
+                            f"ALTER TABLE {DB_TABLE_NAME} { ', '.join(alter_parts) };"
                         )
-                        add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
-                        cursor.execute(add_sql)
+                        logger.info(
+                            f"Alterando coluna '{col_identified_by}': {alter_sql}"
+                        )
+                        cursor.execute(alter_sql)
                         conn.commit()
                         logger.info(
-                            f"Coluna '{col_identified_by}' adicionada com sucesso."
+                            f"Coluna '{col_identified_by}' alterada com sucesso."
                         )
-                        columns.append(col_identified_by)  # Adiciona à lista local
                     except Exception as e:
                         logger.error(
-                            f"Erro ao adicionar coluna '{col_identified_by}': {e}"
+                            f"Erro ao alterar coluna '{col_identified_by}': {e}"
                         )
                         try:
                             conn.rollback()
                         except Exception:
                             pass  # Ignorar erros de rollback
-
-                # --- Remoção da coluna 'identified_by_server' --- (garantir indentação correta)
-                col_to_remove = "identified_by_server"
-                if col_to_remove in columns:
-                    try:
-                        logger.info(
-                            f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'..."
-                        )
-                        drop_sql = f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
-                        cursor.execute(drop_sql)
-                        conn.commit()
-                        logger.info(
-                            f"Coluna '{col_to_remove}' removida com sucesso."
-                        )
-                        columns.remove(col_to_remove)  # Remove da lista local
-                    except Exception as e:
-                        logger.error(
-                            f"Erro ao remover coluna '{col_to_remove}': {e}"
-                        )
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass  # Ignorar erros de rollback
-
-                # Verificar colunas essenciais (garantir indentação correta)
-                required_columns = ["date", "time", "name", "artist", "song_title"]
-                missing_columns = [
-                    col for col in required_columns if col not in columns
-                ]
-
-                if missing_columns:
-                    logger.error(
-                        f"A tabela '{DB_TABLE_NAME}' existe, mas não possui as colunas necessárias: {missing_columns}"
-                    )
-                    return False  # Este return está dentro do else, está correto
-
-                # Mostrar algumas linhas da tabela para diagnóstico (garantir indentação correta)
+            else:
                 try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {DB_TABLE_NAME}")
-                    count = cursor.fetchone()[0]
                     logger.info(
-                        f"A tabela '{DB_TABLE_NAME}' contém {count} registros."
+                        f"Adicionando coluna '{col_identified_by}' (TEXT) à tabela '{DB_TABLE_NAME}'..."
                     )
+                    add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} TEXT;"
+                    cursor.execute(add_sql)
+                    conn.commit()
+                    logger.info(f"Coluna '{col_identified_by}' adicionada com sucesso.")
+                    columns.append(col_identified_by)  # Adiciona à lista local
                 except Exception as e:
-                    logger.error(
-                        f"Erro ao consultar dados da tabela '{DB_TABLE_NAME}': {e}"
-                    )
+                    logger.error(f"Erro ao adicionar coluna '{col_identified_by}': {e}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass  # Ignorar erros de rollback
 
-                logger.info(
-                    f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!"
+            # --- Remoção da coluna 'identified_by_server' --- (garantir indentação correta)
+            col_to_remove = "identified_by_server"
+            if col_to_remove in columns:
+                try:
+                    logger.info(
+                        f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'..."
+                    )
+                    drop_sql = (
+                        f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
+                    )
+                    cursor.execute(drop_sql)
+                    conn.commit()
+                    logger.info(f"Coluna '{col_to_remove}' removida com sucesso.")
+                    columns.remove(col_to_remove)  # Remove da lista local
+                except Exception as e:
+                    logger.error(f"Erro ao remover coluna '{col_to_remove}': {e}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass  # Ignorar erros de rollback
+
+            # Verificar colunas essenciais (garantir indentação correta)
+            required_columns = ["date", "time", "name", "artist", "song_title"]
+            missing_columns = [col for col in required_columns if col not in columns]
+
+            if missing_columns:
+                logger.error(
+                    f"A tabela '{DB_TABLE_NAME}' existe, mas não possui as colunas necessárias: {missing_columns}"
                 )
-                return True  # Este return está dentro do else, está correto
+                return False  # Este return está dentro do else, está correto
+
+            # Mostrar algumas linhas da tabela para diagnóstico (garantir indentação correta)
+            try:
+                cursor.execute(f"SELECT COUNT(*) FROM {DB_TABLE_NAME}")
+                count = cursor.fetchone()[0]
+                logger.info(f"A tabela '{DB_TABLE_NAME}' contém {count} registros.")
+            except Exception as e:
+                logger.error(
+                    f"Erro ao consultar dados da tabela '{DB_TABLE_NAME}': {e}"
+                )
+
+            logger.info(f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!")
+            # Commit final para garantir que todas as operações sejam confirmadas
+            conn.commit()
+            return True  # Este return está dentro do else, está correto
 
     except Exception as e:
         logger.error(
             f"Erro ao verificar tabela de logs: {e}", exc_info=True
         )  # Add exc_info
-        # Garantir que a transação seja finalizada adequadamente
         if conn:
             try:
                 conn.rollback()
@@ -1093,12 +1104,8 @@ CREATE TABLE {DB_TABLE_NAME} (
                 pass  # Ignorar erros de rollback
         return False
     finally:
-        # Garantir que a conexão seja fechada adequadamente
         if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass  # Ignorar erros de fechamento
+            get_db_pool().pool.putconn(conn)
 
 
 # Fila para enviar ao Shazamio (RESTAURADO)
@@ -1558,7 +1565,9 @@ async def capture_stream_segment(name, url, duration=None):
         logger.debug(f"Comando FFmpeg: {' '.join(command)}")
 
         # Usar o timeout otimizado
-        capture_timeout = duration + 15  # 15 segundos a mais do que a duração desejada (otimizado)
+        capture_timeout = (
+            duration + 15
+        )  # 15 segundos a mais do que a duração desejada (otimizado)
 
         process = await asyncio.create_subprocess_exec(
             *command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -2378,7 +2387,11 @@ async def send_heartbeat():
 
         # Garantir que SERVER_ID seja tratado como int para operações matemáticas
         try:
-            server_id_int = int(SERVER_ID) if isinstance(SERVER_ID, str) and SERVER_ID.isdigit() else 1
+            server_id_int = (
+                int(SERVER_ID)
+                if isinstance(SERVER_ID, str) and SERVER_ID.isdigit()
+                else 1
+            )
         except (ValueError, TypeError):
             server_id_int = 1
 
@@ -2714,22 +2727,27 @@ async def main():
                     # Registrar instância no orquestrador
                     await orchestrator_client.register()
                     logger.info(f"Instância {SERVER_ID} registrada no orquestrador")
-                    
+
                     # Solicitar streams do orquestrador
                     assigned_stream_ids = await orchestrator_client.request_streams()
-                    logger.info(f"Recebidos {len(assigned_stream_ids)} streams do orquestrador")
-                    
+                    logger.info(
+                        f"Recebidos {len(assigned_stream_ids)} streams do orquestrador"
+                    )
+
                     # Converter IDs do orquestrador para string para compatibilidade
                     assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
-                    
+
                     # Filtrar streams atribuídos (corrigido para usar 'index')
                     assigned_streams = [
-                        stream for stream in all_streams 
+                        stream
+                        for stream in all_streams
                         if stream.get("index", "") in assigned_stream_ids_str
                     ]
-                    
-                    logger.info(f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador")
-                    
+
+                    logger.info(
+                        f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador"
+                    )
+
                 except Exception as e:
                     logger.error(f"Erro ao comunicar com orquestrador: {e}")
                     logger.warning("Fallback para modo sem orquestrador")
@@ -2761,9 +2779,7 @@ async def main():
         assigned_streams = []
         for stream in all_streams:
             stream_id = stream.get("id", stream.get("name", ""))
-            assigned_server = await asyncio.to_thread(
-                get_assigned_server, stream_id
-            )
+            assigned_server = await asyncio.to_thread(get_assigned_server, stream_id)
 
             if assigned_server == int(SERVER_ID) if SERVER_ID.isdigit() else 1:
                 # CORREÇÃO: Verificar se outro servidor já possui lock ativo
@@ -2771,7 +2787,11 @@ async def main():
                     check_existing_lock, stream_id
                 )
 
-                if existing_lock_server and existing_lock_server != int(SERVER_ID) if SERVER_ID.isdigit() else 1:
+                if (
+                    existing_lock_server and existing_lock_server != int(SERVER_ID)
+                    if SERVER_ID.isdigit()
+                    else 1
+                ):
                     logger.warning(
                         f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
                         f"Pulando atribuição para servidor {SERVER_ID}."
@@ -2780,13 +2800,17 @@ async def main():
 
                 # Tentar adquirir lock apenas se não houver conflito
                 lock_acquired = await asyncio.to_thread(
-                    acquire_stream_lock, stream_id, int(SERVER_ID) if SERVER_ID.isdigit() else 1
+                    acquire_stream_lock,
+                    stream_id,
+                    int(SERVER_ID) if SERVER_ID.isdigit() else 1,
                 )
 
                 if lock_acquired:
                     assigned_streams.append(stream)
                     await asyncio.to_thread(
-                        assign_stream_ownership, stream_id, int(SERVER_ID) if SERVER_ID.isdigit() else 1
+                        assign_stream_ownership,
+                        stream_id,
+                        int(SERVER_ID) if SERVER_ID.isdigit() else 1,
                     )
                 else:
                     logger.warning(
@@ -2818,7 +2842,7 @@ async def main():
     # Adicionar tarefas de heartbeat e monitoramento de servidores
     heartbeat_task = register_task(asyncio.create_task(heartbeat_loop()))
     server_monitor_task = register_task(asyncio.create_task(check_servers_status()))
-    
+
     # Adicionar tarefa de heartbeat do orquestrador se habilitado
     orchestrator_heartbeat_task = None
     if USE_ORCHESTRATOR and orchestrator_client and DISTRIBUTE_LOAD:
@@ -2845,7 +2869,7 @@ async def main():
             heartbeat_task,
             server_monitor_task,
         ]
-    
+
     # Adicionar tarefa de heartbeat do orquestrador se disponível
     if orchestrator_heartbeat_task:
         tasks_to_gather.append(orchestrator_heartbeat_task)
@@ -2903,18 +2927,20 @@ async def orchestrator_heartbeat_loop():
     Loop de heartbeat para manter comunicação com o orquestrador central
     """
     logger.info("Iniciando loop de heartbeat do orquestrador")
-    
+
     while not shutdown_event.is_set():
         try:
             if orchestrator_client:
                 # Enviar heartbeat para o orquestrador
                 await orchestrator_client.send_heartbeat()
-                logger.debug(f"Heartbeat enviado para orquestrador - Instância {SERVER_ID}")
-            
+                logger.debug(
+                    f"Heartbeat enviado para orquestrador - Instância {SERVER_ID}"
+                )
+
         except Exception as e:
             logger.error(f"Erro no heartbeat do orquestrador: {e}")
             # Em caso de erro, tentar reconectar na próxima iteração
-            
+
         finally:
             # Aguardar 30 segundos antes do próximo heartbeat
             await asyncio.sleep(30)
