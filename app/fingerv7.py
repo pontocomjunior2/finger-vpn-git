@@ -903,35 +903,34 @@ def check_log_table():
     logger.info(
         f"Verificando se a tabela de logs '{DB_TABLE_NAME}' existe no banco de dados..."
     )
-    conn = None
     try:
-        conn = get_db_pool().get_connection_sync()
-        with conn.cursor() as cursor:
-            # Verificar se a tabela existe
-            cursor.execute(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
-            )
-            table_exists = cursor.fetchone()[0]
-
-            if not table_exists:
-                logger.error(
-                    f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
-                )
-                # Listar tabelas disponíveis
+        with get_db_pool().get_connection_sync() as conn:
+            with conn.cursor() as cursor:
+                # Verificar se a tabela existe
                 cursor.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                    f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
                 )
-                tables = [row[0] for row in cursor.fetchall()]
-                logger.info(f"Tabelas disponíveis no banco: {tables}")
+                table_exists = cursor.fetchone()[0]
 
-                # Criar tabela automaticamente para evitar erros
-                try:
-                    logger.info(
-                        f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
+                if not table_exists:
+                    logger.error(
+                        f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
                     )
-                    # Corrigir a formatação da string SQL multi-linha
-                    create_table_sql = """
-CREATE TABLE {} (
+                    # Listar tabelas disponíveis
+                    cursor.execute(
+                        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                    )
+                    tables = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"Tabelas disponíveis no banco: {tables}")
+
+                    # Criar tabela automaticamente para evitar erros
+                    try:
+                        logger.info(
+                            f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
+                        )
+                        # Corrigir a formatação da string SQL multi-linha
+                        create_table_sql = f"""
+CREATE TABLE {DB_TABLE_NAME} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
     time TIME NOT NULL,
@@ -948,36 +947,25 @@ CREATE TABLE {} (
     identified_by VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                    """.format(
-                        DB_TABLE_NAME
-                    )  # Usar .format() para inserir o nome da tabela
-                    cursor.execute(create_table_sql)
-                    conn.commit()
-                    logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
-                    return True
-                except Exception as e:
-                    logger.error(f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}")
-                    try:
+"""
+                        cursor.execute(create_table_sql)
+                        conn.commit()
+                        logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso.")
+                        return True
+                    except Exception as create_err:
+                        logger.error(
+                            f"Falha ao criar a tabela '{DB_TABLE_NAME}': {create_err}"
+                        )
                         conn.rollback()
-                    except Exception:
-                        pass  # Ignorar erros de rollback
-                    logger.info(
-                        "Considere criar a tabela manualmente com o seguinte comando SQL:"
-                    )
-                    return False
-            else:
-                # Verificar as colunas da tabela (garantir indentação correta aqui)
-                cursor.execute(
-                    f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
-                )
-                columns_info = {
-                    row[0].lower(): {"type": row[1], "default": row[2]}
-                    for row in cursor.fetchall()
-                }
-                logger.info(
-                    f"Tabela '{DB_TABLE_NAME}' existe com as seguintes colunas: {list(columns_info.keys())}"
-                )
-                columns = list(columns_info.keys())
+                        raise
+                else:
+                    logger.info(f"A tabela de logs '{DB_TABLE_NAME}' já existe.")
+                    return True  # Return True if table exists
+    except Exception as e:
+        # Adicionar traceback para depuração
+        tb_str = traceback.format_exc()
+        logger.error(f"Erro ao verificar/criar tabela de logs: {e}\n{tb_str}")
+        return False  # Return False on failure
 
                 # --- Ajuste da coluna 'identified_by' --- (garantir indentação correta)
                 col_identified_by = "identified_by"
