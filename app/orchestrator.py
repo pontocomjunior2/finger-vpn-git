@@ -505,9 +505,9 @@ class StreamOrchestrator:
         """Força reatribuição imediata de streams para instância re-registrada."""
         # Buscar streams não atribuídos
         cursor.execute("""
-            SELECT stream_id FROM orchestrator_streams 
-            WHERE stream_id NOT IN (
-                SELECT stream_id FROM orchestrator_stream_assignments
+            SELECT id FROM streams 
+            WHERE id NOT IN (
+                SELECT stream_id FROM orchestrator_stream_assignments WHERE status = 'active'
             )
             LIMIT 50
         """)
