@@ -918,42 +918,39 @@ def check_log_table():
 
     try:
         with get_db_pool().get_connection_sync() as conn:
-            with conn.cursor() as cursor:
-                try:
-                    # Tentar obter um bloqueio consultivo
-                    cursor.execute(f"SELECT pg_try_advisory_lock({lock_id})")
+            # Forçar autocommit para que DDL não deixe a sessão em estado abortado
+            prev_autocommit = getattr(conn, "autocommit", False)
+            try:
+                conn.autocommit = True
+            except Exception:
+                prev_autocommit = False
+
+            # Salvar lock_timeout atual e aumentar temporariamente para DDL
+            prev_lock_timeout = None
+            try:
+                with conn.cursor() as c:
+                    c.execute("SHOW lock_timeout")
+                    prev_lock_timeout = c.fetchone()[0]
+                    c.execute("SET lock_timeout = '60000'")  # 60s
+            except Exception as e:
+                logger.warning(f"Não foi possível ajustar lock_timeout: {e}")
+
+            lock_acquired = False
+            try:
+                # Tentar obter um bloqueio consultivo (sem aguardar)
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
                     lock_acquired = cursor.fetchone()[0]
 
-                    if not lock_acquired:
-                        logger.warning(
-                            "Não foi possível obter o bloqueio para verificação da tabela. Outro processo pode estar em execução."
-                        )
-                        return False
-
-                    # Verificar se a tabela existe
-                    cursor.execute(
-                        f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{DB_TABLE_NAME}')"
+                if not lock_acquired:
+                    logger.warning(
+                        "Não foi possível obter o bloqueio para verificação da tabela. Outro processo pode estar em execução."
                     )
-                    table_exists = cursor.fetchone()[0]
+                    return False
 
-                    if not table_exists:
-                        logger.error(
-                            f"A tabela de logs '{DB_TABLE_NAME}' não existe no banco de dados!"
-                        )
-                        # Listar tabelas disponíveis
-                        cursor.execute(
-                            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-                        )
-                        tables = [row[0] for row in cursor.fetchall()]
-                        logger.info(f"Tabelas disponíveis no banco: {tables}")
-
-                        # Criar tabela automaticamente para evitar erros
-                        try:
-                            logger.info(
-                                f"Tentando criar a tabela '{DB_TABLE_NAME}' automaticamente..."
-                            )
-                            create_table_sql = f"""
-CREATE TABLE {DB_TABLE_NAME} (
+                # Criar tabela se não existir (sem checagem prévia para reduzir janelas de corrida)
+                create_table_sql = f"""
+CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
     id SERIAL PRIMARY KEY,
     date DATE NOT NULL,
     time TIME NOT NULL,
@@ -970,83 +967,71 @@ CREATE TABLE {DB_TABLE_NAME} (
     identified_by VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-                            """
-                            cursor.execute(create_table_sql)
-                            conn.commit()
-                            logger.info(f"Tabela '{DB_TABLE_NAME}' criada com sucesso!")
-                            return True
-                        except Exception as e:
-                            logger.error(
-                                f"Erro ao criar a tabela '{DB_TABLE_NAME}': {e}"
-                            )
-                            try:
-                                conn.rollback()
-                            except Exception:
-                                pass
-                            return False
-                    else:
-                        # Verificar as colunas da tabela
-                        cursor.execute(
-                            f"SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name = '{DB_TABLE_NAME}'"
-                        )
-                        columns_info = {
-                            row[0].lower(): {"type": row[1], "default": row[2]}
-                            for row in cursor.fetchall()
-                        }
-                        columns = list(columns_info.keys())
+                """
+                with conn.cursor() as cursor:
+                    cursor.execute(create_table_sql)
 
-                        # Ajuste da coluna 'identified_by'
-                        col_identified_by = "identified_by"
-                        if col_identified_by not in columns:
-                            try:
-                                logger.info(
-                                    f"Adicionando coluna '{col_identified_by}' (VARCHAR(10)) à tabela '{DB_TABLE_NAME}'..."
-                                )
-                                add_sql = f"ALTER TABLE {DB_TABLE_NAME} ADD COLUMN {col_identified_by} VARCHAR(10);"
-                                cursor.execute(add_sql)
-                                conn.commit()
-                                logger.info(
-                                    f"Coluna '{col_identified_by}' adicionada com sucesso."
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Erro ao adicionar coluna '{col_identified_by}': {e}"
-                                )
-                                try:
-                                    conn.rollback()
-                                except Exception:
-                                    pass
+                # Garantir coluna 'identified_by'
+                with conn.cursor() as cursor:
+                    add_sql = (
+                        f"ALTER TABLE {DB_TABLE_NAME} "
+                        "ADD COLUMN IF NOT EXISTS identified_by VARCHAR(10);"
+                    )
+                    cursor.execute(add_sql)
 
-                        # Remoção da coluna 'identified_by_server'
-                        col_to_remove = "identified_by_server"
-                        if col_to_remove in columns:
-                            try:
-                                logger.info(
-                                    f"Removendo coluna obsoleta '{col_to_remove}' da tabela '{DB_TABLE_NAME}'..."
-                                )
-                                drop_sql = f"ALTER TABLE {DB_TABLE_NAME} DROP COLUMN {col_to_remove};"
-                                cursor.execute(drop_sql)
-                                conn.commit()
-                                logger.info(
-                                    f"Coluna '{col_to_remove}' removida com sucesso."
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Erro ao remover coluna '{col_to_remove}': {e}"
-                                )
-                                try:
-                                    conn.rollback()
-                                except Exception:
-                                    pass
+                # Remover coluna obsoleta 'identified_by_server' se existir
+                with conn.cursor() as cursor:
+                    drop_sql = (
+                        f"ALTER TABLE {DB_TABLE_NAME} "
+                        "DROP COLUMN IF EXISTS identified_by_server;"
+                    )
+                    cursor.execute(drop_sql)
 
-                        logger.info(
-                            f"Tabela de logs '{DB_TABLE_NAME}' verificada com sucesso!"
-                        )
-                        return True
+                logger.info(
+                    f"Tabela de logs '{DB_TABLE_NAME}' verificada/ajustada com sucesso!"
+                )
+                return True
 
-                finally:
-                    # Liberar o bloqueio consultivo
-                    cursor.execute(f"SELECT pg_advisory_unlock({lock_id})")
+            except psycopg2.errors.LockNotAvailable as e:
+                logger.warning(f"Operação atingiu lock_timeout durante DDL/verificação: {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                return False
+            except Exception as e:
+                logger.error(
+                    f"Erro ao verificar/criar tabela de logs: {e}", exc_info=True
+                )
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                return False
+            finally:
+                # Restaurar lock_timeout anterior
+                try:
+                    if prev_lock_timeout is not None:
+                        with conn.cursor() as c:
+                            c.execute(f"SET lock_timeout = '{prev_lock_timeout}'")
+                except Exception as e:
+                    logger.debug(f"Falha ao restaurar lock_timeout: {e}")
+
+                # Liberar o bloqueio consultivo
+                try:
+                    if lock_acquired:
+                        with conn.cursor() as cursor:
+                            cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                except Exception as unlock_err:
+                    logger.warning(
+                        f"Falha ao liberar advisory lock {lock_id}: {unlock_err}"
+                    )
+
+                # Restaurar autocommit original
+                try:
+                    conn.autocommit = prev_autocommit
+                except Exception:
+                    pass
 
     except Exception as e:
         logger.error(f"Erro ao verificar tabela de logs: {e}", exc_info=True)
