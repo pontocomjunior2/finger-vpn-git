@@ -1944,6 +1944,23 @@ async def monitor_shutdown():
     await shutdown_event.wait()
     logger.info("Cancelando todas as tarefas ativas...")
 
+    # CORREÇÃO CRÍTICA: Liberar streams imediatamente ao parar a instância
+    global STREAMS
+    if orchestrator_client and STREAMS:
+        try:
+            # Liberar todos os streams atribuídos
+            stream_ids = [stream.get('index', stream.get('name', '')) for stream in STREAMS]
+            if stream_ids:
+                logger.info(f"Liberando {len(stream_ids)} streams antes do shutdown: {stream_ids}")
+                await orchestrator_client.release_streams(stream_ids)
+                
+                # Zerar a contagem local de streams
+                orchestrator_client.update_stream_count(0)
+                STREAMS = []
+                logger.info("[SHUTDOWN] Streams liberados e current_streams zerado")
+        except Exception as e:
+            logger.error(f"Erro ao liberar streams durante shutdown: {e}")
+
     # Cancelar todas as tarefas ativas
     for task in active_tasks:
         if not task.done():
@@ -2380,6 +2397,11 @@ async def main():
             f"{len(tasks)} tasks criadas para {len(assigned_streams)} streams atribuídos."
         )
         STREAMS = assigned_streams
+        
+        # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client
+        if orchestrator_client:
+            orchestrator_client.update_stream_count(len(STREAMS))
+            logger.info(f"[RELOAD] current_streams sincronizado: {len(STREAMS)}")
 
     # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
     if DISTRIBUTE_LOAD:
@@ -2393,6 +2415,11 @@ async def main():
             register_task(task)
             tasks.append(task)
         logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
+        
+        # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client mesmo sem distribuição
+        if orchestrator_client:
+            orchestrator_client.update_stream_count(len(STREAMS))
+            logger.info(f"[INIT] current_streams sincronizado: {len(STREAMS)}")
 
     # Criar e registrar todas as tarefas necessárias
     # monitor_task removida - não é mais necessária com o orquestrador
@@ -2474,11 +2501,41 @@ async def main():
         logger.error(f"Erro durante execução principal: {e}")
     finally:
         logger.info("Finalizando aplicação...")
+        # Liberar streams e zerar contagem em caso de finalização inesperada
+        if USE_ORCHESTRATOR and DISTRIBUTE_LOAD and orchestrator_client:
+            try:
+                if orchestrator_client.assigned_streams:
+                    logger.info(f"Liberando {len(orchestrator_client.assigned_streams)} streams atribuídos durante finalização")
+                    await orchestrator_client.release_streams(list(orchestrator_client.assigned_streams))
+                orchestrator_client.update_stream_count(0)
+                logger.info("Streams liberados e contagem zerada durante finalização")
+            except Exception as release_error:
+                logger.error(f"Erro ao liberar streams durante finalização: {release_error}")
+        # Limpar lista global de streams
+        global STREAMS
+        STREAMS.clear()
+        logger.info("Lista global de streams limpa durante finalização")
 
 
 def stop_and_restart():
     """Função para parar e reiniciar o script."""
     logger.info("Reiniciando o script...")
+    # Liberar streams antes de reiniciar
+    if USE_ORCHESTRATOR and DISTRIBUTE_LOAD and orchestrator_client:
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if orchestrator_client.assigned_streams:
+                logger.info(f"Liberando {len(orchestrator_client.assigned_streams)} streams antes do restart")
+                loop.run_until_complete(orchestrator_client.release_streams(list(orchestrator_client.assigned_streams)))
+            orchestrator_client.update_stream_count(0)
+            logger.info("Streams liberados antes do restart")
+        except Exception as release_error:
+            logger.error(f"Erro ao liberar streams antes do restart: {release_error}")
+    # Limpar lista global de streams
+    global STREAMS
+    STREAMS.clear()
+    logger.info("Lista global de streams limpa antes do restart")
     os.execv(sys.executable, ["python"] + sys.argv)
 
 
@@ -2832,6 +2889,11 @@ async def reload_streams_dynamic(assigned_stream_ids):
 
         # Atualizar lista global de streams
         STREAMS = new_assigned_streams
+
+        # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client
+        if orchestrator_client:
+            orchestrator_client.update_stream_count(len(STREAMS))
+            logger.info(f"[RELOAD_DYNAMIC] current_streams sincronizado: {len(STREAMS)}")
 
         logger.info(
             f"Sincronização dinâmica concluída: {len(STREAMS)} streams ativos, "
