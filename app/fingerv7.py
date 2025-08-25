@@ -210,7 +210,7 @@ FAILOVER_REMOTE_DIR = os.getenv("FAILOVER_REMOTE_DIR")
 FAILOVER_SSH_KEY_PATH = os.getenv("FAILOVER_SSH_KEY_PATH")  # Pode ser None
 
 # Caminho para o arquivo JSON contendo os streamings
-STREAMS_FILE = "streams.json"
+# STREAMS_FILE removido - não é mais necessário com o orquestrador
 # Caminho para o arquivo JSON que armazenará o estado das últimas músicas identificadas
 LAST_SONGS_FILE = "last_songs.json"
 # Caminho para o arquivo de log local
@@ -359,227 +359,16 @@ def consistent_hash(value: str, buckets: int) -> int:
     return hash_int % buckets
 
 
-def acquire_stream_lock(
-    stream_id: str,
-    server_id: str,
-    timeout_minutes: int = 2,  # Reduzido de 5 para 2 minutos
-) -> bool:
-    """
-    Tenta adquirir lock para processar um stream específico
-    CORRIGIDO: Previne duplicação de locks entre instâncias
-    """
-    conn = None
-    try:
-        conn = get_db_pool().pool.getconn()
-        with conn.cursor() as cursor:
-            # Limpar locks expirados com timeout menor
-            cursor.execute(
-                """
-                DELETE FROM stream_locks 
-                WHERE heartbeat_at < NOW() - INTERVAL '%s minutes'
-            """,
-                (timeout_minutes,),
-            )
-
-            # CORREÇÃO: Verificar se já existe lock ativo ANTES de tentar inserir
-            cursor.execute(
-                """
-                SELECT server_id, heartbeat_at FROM stream_locks 
-                WHERE stream_id = %s
-            """,
-                (stream_id,),
-            )
-            existing_lock = cursor.fetchone()
-
-            if existing_lock:
-                existing_server_id, heartbeat_at = existing_lock
-
-                # Se é o mesmo servidor, apenas atualizar heartbeat
-                if existing_server_id == server_id:
-                    cursor.execute(
-                        """
-                        UPDATE stream_locks 
-                        SET heartbeat_at = NOW()
-                        WHERE stream_id = %s AND server_id = %s
-                    """,
-                        (stream_id, server_id),
-                    )
-                    conn.commit()
-                    logger.debug(
-                        f"Heartbeat atualizado para stream {stream_id} servidor {server_id}"
-                    )
-                    return True
-                else:
-                    # Outro servidor possui o lock - REJEITAR
-                    logger.warning(
-                        f"Stream {stream_id} já possui lock ativo do servidor {existing_server_id}. "
-                        f"Servidor {server_id} não pode adquirir lock."
-                    )
-                    return False
-
-            # Tentar inserir novo lock apenas se não existir
-            try:
-                cursor.execute(
-                    """
-                    INSERT INTO stream_locks (stream_id, server_id, heartbeat_at)
-                    VALUES (%s, %s, NOW())
-                """,
-                    (stream_id, server_id),
-                )
-                conn.commit()
-                logger.info(
-                    f"Lock adquirido para stream {stream_id} pelo servidor {server_id}"
-                )
-                return True
-
-            except psycopg2.errors.UniqueViolation:
-                # Race condition - outro servidor inseriu lock entre verificação e inserção
-                conn.rollback()
-                logger.warning(
-                    f"Race condition detectada: outro servidor adquiriu lock para stream {stream_id}"
-                )
-                return False
-
-    except Exception as e:
-        logger.error(f"Erro ao adquirir lock para stream {stream_id}: {e}")
-        if conn:
-            conn.rollback()
-        return False
-    finally:
-        if conn:
-            get_db_pool().pool.putconn(conn)
+# Função acquire_stream_lock removida - não é mais necessária com o orquestrador
 
 
-def release_stream_lock(stream_id: str, server_id: str) -> bool:
-    """
-    Libera o lock de um stream
-    """
-    conn = None
-    try:
-        conn = get_db_pool().pool.getconn()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                DELETE FROM stream_locks 
-                WHERE stream_id = %s AND server_id = %s
-            """,
-                (stream_id, server_id),
-            )
-
-            if cursor.rowcount > 0:
-                conn.commit()
-                logger.info(
-                    f"Lock liberado para stream {stream_id} pelo servidor {server_id}"
-                )
-                return True
-            else:
-                logger.warning(
-                    f"Nenhum lock encontrado para stream {stream_id} e servidor {server_id}"
-                )
-                return False
-
-    except Exception as e:
-        logger.error(f"Erro ao liberar lock para stream {stream_id}: {e}")
-        if conn:
-            conn.rollback()
-        return False
-    finally:
-        if conn:
-            get_db_pool().pool.putconn(conn)
+# Função release_stream_lock removida - não é mais necessária com o orquestrador
 
 
-def assign_stream_ownership(stream_id: str, server_id: str) -> bool:
-    """
-    Atribui propriedade de um stream a um servidor específico
-    """
-    conn = None
-    try:
-        conn = get_db_pool().pool.getconn()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO stream_ownership (stream_id, server_id)
-                VALUES (%s, %s)
-                ON CONFLICT (stream_id) DO UPDATE SET
-                    server_id = EXCLUDED.server_id,
-                    assigned_at = NOW()
-            """,
-                (stream_id, server_id),
-            )
-
-            conn.commit()
-            logger.info(f"Stream {stream_id} atribuído ao servidor {server_id}")
-            return True
-
-    except Exception as e:
-        logger.error(
-            f"Erro ao atribuir stream {stream_id} ao servidor {server_id}: {e}"
-        )
-        if conn:
-            conn.rollback()
-        return False
-    finally:
-        if conn:
-            get_db_pool().pool.putconn(conn)
+# Função assign_stream_ownership removida - não é mais necessária com o orquestrador
 
 
-def get_assigned_server(stream_id: str) -> int:
-    """
-    Retorna o servidor atribuído para processar um stream específico
-    """
-    conn = None
-    try:
-        conn = get_db_pool().pool.getconn()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT server_id FROM stream_ownership 
-                WHERE stream_id = %s
-            """,
-                (stream_id,),
-            )
-
-            result = cursor.fetchone()
-            if result:
-                return result[0]
-            else:
-                # Se não houver atribuição, usar consistent hashing
-                return consistent_hash(stream_id, TOTAL_SERVERS) + 1
-
-    except Exception as e:
-        logger.error(f"Erro ao obter servidor atribuído para stream {stream_id}: {e}")
-        # Fallback para consistent hashing
-        return consistent_hash(stream_id, TOTAL_SERVERS) + 1
-    finally:
-        if conn:
-            get_db_pool().pool.putconn(conn)
-
-
-def check_existing_lock(stream_id: str) -> int:
-    """
-    NOVA FUNÇÃO: Verifica se existe lock ativo para um stream e retorna o server_id
-    """
-    conn = None
-    try:
-        conn = get_db_pool().pool.getconn()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT server_id FROM stream_locks 
-                WHERE stream_id = %s 
-                AND heartbeat_at > NOW() - INTERVAL '2 minutes'
-            """,
-                (stream_id,),
-            )
-            result = cursor.fetchone()
-            return result[0] if result else None
-
-    except Exception as e:
-        logger.error(f"Erro ao verificar lock existente para stream {stream_id}: {e}")
-        return None
-    finally:
-        if conn:
-            get_db_pool().pool.putconn(conn)
+# Funções get_assigned_server e check_existing_lock removidas - não são mais necessárias com o orquestrador
 
 
 def clean_string(text: str) -> str:
@@ -1310,112 +1099,25 @@ def fetch_streams_from_db():
 
 
 # Função para salvar streams no arquivo JSON local
-def save_streams_to_json(streams):
-    """
-    Salva a lista de streams no arquivo JSON local como backup.
-    """
-    try:
-        with open(STREAMS_FILE, "w", encoding="utf-8") as f:
-            json.dump(streams, f, ensure_ascii=False, indent=2)
-        logger.info(f"Streams salvos com sucesso no arquivo JSON local: {STREAMS_FILE}")
-    except Exception as e:
-        logger.error(f"Erro ao salvar streams no arquivo JSON {STREAMS_FILE}: {e}")
+# Função save_streams_to_json removida - não é mais necessária com o orquestrador
 
 
 # Função para carregar os streamings do banco de dados PostgreSQL
 def load_streams():
     """
-    Carrega a configuração dos streams. Prioriza o banco de dados,
-    usa o JSON local como fallback e atualiza o JSON após sucesso no DB.
+    Carrega a configuração dos streams apenas do banco de dados.
     Retorna apenas a lista de streams.
     """
-    streams_from_db = fetch_streams_from_db()  # Tenta buscar do DB primeiro
+    streams_from_db = fetch_streams_from_db()  # Busca do DB
 
     if streams_from_db is not None:
         logger.info("Streams carregados com sucesso do banco de dados.")
-        save_streams_to_json(streams_from_db)  # Atualiza o JSON local como backup
         return streams_from_db  # Retorna apenas a lista de streams
-
-    # Fallback: Tentar carregar do JSON local se o DB falhar
-    logger.warning(
-        f"Falha ao carregar do DB ou DB não configurado. "
-        f"Tentando carregar do arquivo de fallback: {STREAMS_FILE}"
-    )
-    if os.path.exists(STREAMS_FILE):
-        try:
-            with open(STREAMS_FILE, "r", encoding="utf-8") as f:
-                streams_from_json = json.load(f)
-
-            if isinstance(streams_from_json, list):  # Verificar se é uma lista
-                # Validar estrutura básica (opcional, mas recomendado)
-                valid_streams = []
-                seen_ids = set()
-                for stream in streams_from_json:
-                    # Validação mais robusta
-                    stream_id_val = stream.get("id")  # Obter ID para validação
-                    if (
-                        isinstance(stream, dict)
-                        and stream_id_val is not None  # ID não pode ser None
-                        and "name" in stream
-                        and "url" in stream
-                        and str(stream_id_val) not in seen_ids  # Evitar IDs duplicados
-                    ):
-                        stream_id_str = str(stream_id_val)  # Normalizar para string
-
-                        # Garantir que 'metadata' exista e seja um dict
-                        if "metadata" not in stream or not isinstance(
-                            stream["metadata"], dict
-                        ):
-                            if "metadata" in stream:
-                                logger.warning(
-                                    f"Corrigindo campo 'metadata' inválido para stream ID {stream_id_str} no JSON."
-                                )
-                            stream["metadata"] = {}
-
-                        # Atualizar o ID no dicionário para ser string se necessário
-                        stream["id"] = stream_id_str
-                        valid_streams.append(stream)
-                        seen_ids.add(stream_id_str)
-                    else:
-                        logger.warning(
-                            f"Stream inválido, sem ID, ou ID duplicado ({stream_id_val}) "
-                            f"encontrado e ignorado no JSON: {stream}"
-                        )
-
-                if not valid_streams:
-                    logger.error(
-                        f"Nenhum stream válido encontrado no arquivo JSON de fallback: {STREAMS_FILE}"
-                    )
-                    return []
-
-                logger.info(
-                    f"Carregados {len(valid_streams)} streams válidos do arquivo JSON de fallback."
-                )
-                return valid_streams  # Retorna apenas a lista de streams
-            else:
-                logger.error(
-                    f"Conteúdo do arquivo JSON ({STREAMS_FILE}) não é uma lista válida."
-                )
-                return []  # Retorna lista vazia
-
-        except (IOError, json.JSONDecodeError) as e:
-            logger.error(
-                f"Erro ao carregar ou parsear streams do arquivo JSON {STREAMS_FILE}: {e}",
-                exc_info=True,
-            )
-            return []  # Retorna lista vazia
-        except Exception as e:
-            logger.error(
-                f"Erro inesperado ao carregar streams do JSON {STREAMS_FILE}: {e}",
-                exc_info=True,
-            )
-            return []
     else:
         logger.critical(
-            f"Falha ao carregar do DB e arquivo JSON de fallback {STREAMS_FILE} não encontrado. "
-            f"Não há fonte de streams disponível."
+            "Falha ao carregar streams do banco de dados. "
+            "Não há fonte de streams disponível."
         )
-        # send_email_alert("Erro Crítico - Sem Fonte de Streams", f"Falha ao conectar ao DB e o arquivo {STREAMS_FILE} não existe.")
         return []
 
 
@@ -1509,42 +1211,7 @@ def convert_iso8601_to_datetime(iso_date):
 
 
 # Função para monitorar periodicamente o banco de dados para atualizações nos streams
-async def monitor_streams_file(callback):
-    logger.debug("Iniciando a função monitor_streams_file()")
-    last_streams_count = 0
-    last_check_time = 0
-    check_interval = 300  # Verificar a cada 5 minutos (300 segundos)
-
-    while True:
-        try:
-            current_time = time.time()
-            # Verificar apenas a cada intervalo definido
-            if current_time - last_check_time >= check_interval:
-                try:
-                    with get_db_pool().get_connection_sync() as conn:
-                        with conn.cursor() as cursor:
-                            cursor.execute("SELECT COUNT(*) FROM streams")
-                            current_count = cursor.fetchone()[0]
-
-                            # Se o número de streams mudou, recarregar
-                            if current_count != last_streams_count:
-                                logger.info(
-                                    f"Mudança detectada no número de streams: {last_streams_count} -> {current_count}"
-                                )
-                                last_streams_count = current_count
-                                await callback()
-                except Exception as db_err:
-                    logger.error(
-                        f"Erro ao verificar mudanças no banco de dados: {db_err}"
-                    )
-                last_check_time = current_time
-
-            await asyncio.sleep(
-                60
-            )  # Verificar a cada minuto se é hora de checar o banco
-        except Exception as e:
-            logger.error(f"Erro ao monitorar streams no banco de dados: {e}")
-            await asyncio.sleep(60)  # Esperar um minuto antes de tentar novamente
+# Função monitor_streams_file removida - não é mais necessária com o orquestrador
 
 
 # Função para capturar o áudio do streaming ao vivo e salvar um segmento temporário
@@ -1878,34 +1545,12 @@ async def process_stream(stream, last_songs):
     # Use stream index or name as the key for tracking
     stream_key = stream.get("index", name)
     previous_segment = None
-
-    # CORREÇÃO: Verificar lock inicial uma única vez
-    initial_lock = await asyncio.to_thread(acquire_stream_lock, stream_key, SERVER_ID)
-
-    if not initial_lock:
-        logger.warning(
-            f"Stream {name} ({stream_key}) não pôde adquirir lock inicial. "
-            f"Outro servidor pode estar processando. Encerrando task."
-        )
-        return  # Encerrar task se não conseguir lock inicial
-
     cycle_count = 0
 
     try:
         while True:
             cycle_count += 1
             logger.info(f"Processando streaming: {name} (ciclo {cycle_count})")
-
-            # CORREÇÃO: Renovar lock a cada ciclo para garantir estabilidade
-            # Isso evita que o lock expire durante o processamento
-            has_lock = await asyncio.to_thread(
-                acquire_stream_lock, stream_key, SERVER_ID
-            )
-            if not has_lock:
-                logger.warning(
-                    f"Stream {name} ({stream_key}) perdeu lock. Encerrando processamento."
-                )
-                break
 
             current_segment_path = await capture_stream_segment(
                 name, url, duration=None
@@ -1916,11 +1561,9 @@ async def process_stream(stream, last_songs):
                 connection_tracker.record_error(stream_key)
                 failure_count = connection_tracker.get_error_count(stream_key)
 
-                # Mantemos o lock mesmo em caso de falha de captura para estabilidade
-
-                wait_time = 5  # Otimizado: tempo de espera reduzido
+                wait_time = 5  # Tempo de espera reduzido
                 if failure_count > 3:
-                    wait_time = 15  # Otimizado: tempo de espera após falhas reduzido
+                    wait_time = 15  # Tempo de espera após falhas reduzido
 
                 logger.error(
                     f"Falha ao capturar segmento do streaming {name} ({stream_key}). Falha #{failure_count}. Tentando novamente em {wait_time} segundos..."
@@ -1935,8 +1578,6 @@ async def process_stream(stream, last_songs):
             await shazam_queue.put((current_segment_path, stream, last_songs))
             await shazam_queue.join()  # Esperar o item ser processado antes do próximo ciclo
 
-            # Lock será liberado apenas no finally
-
             logger.info(
                 f"Aguardando 45 segundos para o próximo ciclo do stream {name} ({stream_key})..."
             )
@@ -1947,15 +1588,6 @@ async def process_stream(stream, last_songs):
         raise  # Re-raise para permitir cancelamento limpo
     except Exception as e:
         logger.error(f"Erro inesperado no processamento do stream {name}: {e}")
-    finally:
-        # CORREÇÃO: Garantir liberação do lock ao encerrar task
-        try:
-            await asyncio.to_thread(release_stream_lock, stream_key, SERVER_ID)
-            logger.info(
-                f"Lock liberado para stream {name} ({stream_key}) ao encerrar task."
-            )
-        except Exception as e:
-            logger.error(f"Erro ao liberar lock para stream {name}: {e}")
 
 
 def send_email_alert(subject, body):
@@ -1999,86 +1631,10 @@ async def check_and_alert_persistent_errors():
 
 
 # Função para sincronizar o arquivo JSON local com o banco de dados
-async def sync_json_with_db():
-    logger.debug("Iniciando a função sync_json_with_db()")
-    conn = None
-    rows = None
-    try:
-        # Operações de DB em thread separada
-        def db_operations():
-            try:
-                with get_db_pool().get_connection_sync() as _conn:
-                    with _conn.cursor() as _cursor:
-                        _cursor.execute(
-                            "SELECT url, name, sheet, cidade, estado, regiao, segmento, index FROM streams ORDER BY index"
-                        )
-                        _rows = _cursor.fetchall()
-                    return (
-                        None,
-                        _rows,
-                    )  # Retorna None para conn (já foi devolvida ao pool) e as linhas
-            except Exception as db_err:
-                logger.error(
-                    f"Erro DB em sync_json_with_db (operações cursor): {db_err}"
-                )
-                return None, None  # Retorna None para conn e rows em caso de erro
-
-        conn, rows = await asyncio.to_thread(db_operations)
-
-        if rows is not None:  # Checar se rows não é None
-            streams = []
-            for row in rows:
-                stream = {
-                    "url": row[0],
-                    "name": row[1],
-                    "sheet": row[2],
-                    "cidade": row[3],
-                    "estado": row[4],
-                    "regiao": row[5],
-                    "segmento": row[6],
-                    "index": str(row[7]),
-                }
-                streams.append(stream)
-
-            # Usar hashing consistente para atribuir streams aos servidores (apenas para visualização)
-            if DISTRIBUTE_LOAD and TOTAL_SERVERS > 1:
-                for stream_item in streams:
-                    assigned_server = get_assigned_server(
-                        stream_item.get("index", stream_item["name"])
-                    )
-                    stream_item["assigned_server"] = assigned_server
-
-            # Salvar os streams no arquivo JSON local (operação de I/O síncrona)
-            try:
-                with open(STREAMS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(streams, f, ensure_ascii=False, indent=2)
-                logger.info(
-                    f"Arquivo JSON local sincronizado com sucesso. {len(streams)} streams salvos."
-                )
-            except Exception as file_err:
-                logger.error(
-                    f"Erro ao salvar arquivo JSON local em sync_json_with_db: {file_err}"
-                )
-
-        else:
-            logger.error(
-                "Erro ao buscar dados do banco para sincronizar o arquivo JSON local."
-            )
-
-    except Exception as e:
-        logger.error(
-            f"Erro geral ao sincronizar o arquivo JSON local com o banco de dados: {e}"
-        )
+# Função sync_json_with_db removida - não é mais necessária com o orquestrador
 
 
-# Função para agendar a sincronização periódica do arquivo JSON
-async def schedule_json_sync():
-    logger.info("Iniciando agendamento de sincronização do arquivo JSON local")
-    while True:
-        await sync_json_with_db()  # Sincroniza imediatamente na inicialização
-        await asyncio.sleep(
-            1800
-        )  # Aguarda 30 minutos (1800 segundos) antes da próxima sincronização (otimizado)
+# Função schedule_json_sync removida - não é mais necessária com o orquestrador
 
 
 # Função para verificar se é hora de recarregar os streams devido à rotação
@@ -2738,45 +2294,42 @@ async def main():
                 all_streams
             )  # Atualiza o banco de dados com as rádios do arquivo
 
-        # Usar orquestrador central ou fallback para modo legado
+        # Usar apenas o orquestrador para distribuição de streams
         assigned_streams = []
-        if DISTRIBUTE_LOAD:
-            if USE_ORCHESTRATOR and orchestrator_client:
-                try:
-                    # Registrar instância no orquestrador
-                    await orchestrator_client.register()
-                    logger.info(f"Instância {SERVER_ID} registrada no orquestrador")
+        if DISTRIBUTE_LOAD and USE_ORCHESTRATOR and orchestrator_client:
+            try:
+                # Registrar instância no orquestrador
+                await orchestrator_client.register()
+                logger.info(f"Instância {SERVER_ID} registrada no orquestrador")
 
-                    # Solicitar streams do orquestrador
-                    assigned_stream_ids = await orchestrator_client.request_streams()
-                    logger.info(
-                        f"Recebidos {len(assigned_stream_ids)} streams do orquestrador"
-                    )
+                # Solicitar streams do orquestrador
+                assigned_stream_ids = await orchestrator_client.request_streams()
+                logger.info(
+                    f"Recebidos {len(assigned_stream_ids)} streams do orquestrador"
+                )
 
-                    # Converter IDs do orquestrador para string para compatibilidade
-                    assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
+                # Converter IDs do orquestrador para string para compatibilidade
+                assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
 
-                    # Filtrar streams atribuídos (corrigido para usar 'index')
-                    assigned_streams = [
-                        stream
-                        for stream in all_streams
-                        if stream.get("index", "") in assigned_stream_ids_str
-                    ]
+                # Filtrar streams atribuídos (usando 'index')
+                assigned_streams = [
+                    stream
+                    for stream in all_streams
+                    if stream.get("index", "") in assigned_stream_ids_str
+                ]
 
-                    logger.info(
-                        f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador"
-                    )
+                logger.info(
+                    f"Processando {len(assigned_streams)} streams atribuídos pelo orquestrador"
+                )
 
-                except Exception as e:
-                    logger.error(f"Erro ao comunicar com orquestrador: {e}")
-                    logger.warning("Fallback para modo sem orquestrador")
-                    # Fallback para modo legado
-                    assigned_streams = await _legacy_stream_assignment(all_streams)
-            else:
-                # Modo legado com consistent hashing
-                assigned_streams = await _legacy_stream_assignment(all_streams)
+            except Exception as e:
+                logger.error(f"Erro ao comunicar com orquestrador: {e}")
+                logger.error("Sistema de distribuição requer orquestrador funcional")
+                assigned_streams = []  # Não processar streams se orquestrador falhar
         else:
+            # Modo sem distribuição - processar todos os streams
             assigned_streams = all_streams
+            logger.info("Modo de distribuição desativado - processando todos os streams")
 
         # Cancelar todas as tarefas existentes
         for task in tasks:
@@ -2793,50 +2346,7 @@ async def main():
         )
         STREAMS = assigned_streams
 
-    async def _legacy_stream_assignment(all_streams):
-        """Função de fallback para atribuição de streams usando consistent hashing"""
-        assigned_streams = []
-        for stream in all_streams:
-            stream_id = stream.get("id", stream.get("name", ""))
-            assigned_server = await asyncio.to_thread(get_assigned_server, stream_id)
 
-            if assigned_server == int(SERVER_ID) if SERVER_ID.isdigit() else 1:
-                # CORREÇÃO: Verificar se outro servidor já possui lock ativo
-                existing_lock_server = await asyncio.to_thread(
-                    check_existing_lock, stream_id
-                )
-
-                if (
-                    existing_lock_server and existing_lock_server != int(SERVER_ID)
-                    if SERVER_ID.isdigit()
-                    else 1
-                ):
-                    logger.warning(
-                        f"Stream {stream_id} já possui lock ativo do servidor {existing_lock_server}. "
-                        f"Pulando atribuição para servidor {SERVER_ID}."
-                    )
-                    continue
-
-                # Tentar adquirir lock apenas se não houver conflito
-                lock_acquired = await asyncio.to_thread(
-                    acquire_stream_lock,
-                    stream_id,
-                    int(SERVER_ID) if SERVER_ID.isdigit() else 1,
-                )
-
-                if lock_acquired:
-                    assigned_streams.append(stream)
-                    await asyncio.to_thread(
-                        assign_stream_ownership,
-                        stream_id,
-                        int(SERVER_ID) if SERVER_ID.isdigit() else 1,
-                    )
-                else:
-                    logger.warning(
-                        f"Não foi possível adquirir lock para stream {stream_id}. "
-                        f"Outro servidor pode estar processando."
-                    )
-        return assigned_streams
 
     # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
     if DISTRIBUTE_LOAD:
@@ -2852,9 +2362,7 @@ async def main():
         logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
 
     # Criar e registrar todas as tarefas necessárias
-    monitor_task = register_task(
-        asyncio.create_task(monitor_streams_file(reload_streams))
-    )
+    # monitor_task removida - não é mais necessária com o orquestrador
     shazam_task = register_task(asyncio.create_task(identify_song_shazamio(shazam)))
     shutdown_monitor_task = register_task(asyncio.create_task(monitor_shutdown()))
 
@@ -2873,7 +2381,6 @@ async def main():
     if "send_data_to_db" in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
         tasks_to_gather = [
-            monitor_task,
             shazam_task,
             send_data_task,
             shutdown_monitor_task,
@@ -2882,7 +2389,6 @@ async def main():
         ]
     else:
         tasks_to_gather = [
-            monitor_task,
             shazam_task,
             shutdown_monitor_task,
             heartbeat_task,
@@ -2894,9 +2400,9 @@ async def main():
         tasks_to_gather.append(orchestrator_heartbeat_task)
 
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
-    json_sync_task = register_task(asyncio.create_task(schedule_json_sync()))
+    # json_sync_task removida - não é mais necessária com o orquestrador
 
-    tasks_to_gather.extend([alert_task, json_sync_task])
+    tasks_to_gather.extend([alert_task])
 
     # Adicionar tarefa para verificar a rotação de streams
     if DISTRIBUTE_LOAD and ENABLE_ROTATION:
