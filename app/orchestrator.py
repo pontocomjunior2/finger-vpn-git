@@ -26,6 +26,12 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# Configuração de logging (deve vir antes de qualquer uso do logger)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 # Importar psutil para métricas de sistema
 try:
     import psutil
@@ -60,11 +66,7 @@ if os.getenv("POSTGRES_PASSWORD") and not os.getenv("DB_PASSWORD"):
 if os.getenv("POSTGRES_PORT") and not os.getenv("DB_PORT"):
     os.environ["DB_PORT"] = os.getenv("POSTGRES_PORT")
 
-# Configuração de logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Configuração de logging já foi feita acima
 
 # Configurações do banco de dados
 DB_CONFIG = {
