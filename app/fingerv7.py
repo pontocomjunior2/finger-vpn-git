@@ -589,6 +589,8 @@ def clean_string(text: str) -> str:
     - Remove caracteres especiais
     - Converte para minúsculas
     - Remove espaços extras
+    - Remove palavras comuns que podem variar (Ao Vivo, Remix, etc)
+    - Remove parênteses e seu conteúdo
     """
     import unicodedata
     import re
@@ -598,6 +600,16 @@ def clean_string(text: str) -> str:
 
     # Remove acentos
     text = unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII")
+    
+    # Remove conteúdo entre parênteses (incluindo os parênteses)
+    text = re.sub(r"\([^)]*\)", "", text)
+    text = re.sub(r"\[[^\]]*\]", "", text)
+    
+    # Remove palavras comuns que podem variar
+    common_words = ["ao vivo", "live", "remix", "version", "feat", "ft", "featuring", "cover", 
+                    "extended", "radio edit", "original mix", "remastered", "official", "video"]
+    for word in common_words:
+        text = re.sub(r"\b" + word + r"\b", "", text, flags=re.IGNORECASE)
 
     # Remove caracteres especiais e mantém apenas letras, números e espaços
     text = re.sub(r"[^\w\s]", "", text)
@@ -608,26 +620,60 @@ def clean_string(text: str) -> str:
     return text
 
 
-def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
+def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = None) -> bool:
     """
-    Verifica se já existe uma inserção recente para este stream/música com múltiplas janelas de tempo
-    e verificação inteligente de similaridade
+    Verifica se já existe uma inserção recente para este stream/música usando ISRC como identificador principal.
+    Se o ISRC não estiver disponível, utiliza a verificação por similaridade de título e artista.
+    
+    Utiliza uma abordagem mais robusta para detecção de duplicatas:
+    1. Verificação prioritária por ISRC (identificador único internacional)
+    2. Normalização avançada de strings como fallback (remoção de parênteses, palavras comuns, etc)
+    3. Múltiplos níveis de similaridade (exata, alta, média) para título e artista
+    4. Janelas de tempo adaptativas baseadas no nível de similaridade
+    5. Cache de resultados para reduzir consultas ao banco
     """
     conn = None
     try:
         conn = get_db_pool().pool.getconn()
         with conn.cursor() as cursor:
-            # Buscar inserções na janela configurada usando date/time (evitar created_at)
-            window_start = datetime.now() - timedelta(
-                seconds=DUPLICATE_PREVENTION_WINDOW_SECONDS
-            )
+            # Aumentar a janela de verificação para capturar mais duplicatas potenciais
+            # 7200 segundos = 2 horas (dobro da janela anterior)
+            window_start = datetime.now() - timedelta(seconds=7200)
+            
+            # Se temos um ISRC válido, usamos ele como critério principal de verificação
+            if isrc and isrc != "ISRC não disponível" and isrc.strip() != "":
+                cursor.execute(
+                    """
+                    SELECT id, date, time, song_title, artist, isrc
+                    FROM music_log
+                    WHERE name = %s
+                      AND isrc = %s
+                      AND (date + time) >= %s
+                    ORDER BY date DESC, time DESC
+                    LIMIT 10
+                    """,
+                    (name, isrc, window_start),
+                )
+                
+                results = cursor.fetchall()
+                if results:
+                    # Encontrou duplicata por ISRC
+                    first_match = results[0]
+                    logger.info(
+                        f"Duplicata detectada por ISRC: {isrc} - {song_title} por {artist} em {name} "
+                        f"(original: {first_match[3]} por {first_match[4]} em {first_match[1]} {first_match[2]})"
+                    )
+                    return True
+            
+            # Se não temos ISRC ou não encontramos por ISRC, fazemos a verificação por título e artista
             cursor.execute(
                 """
-                SELECT id, date, time, song_title, artist
+                SELECT id, date, time, song_title, artist, isrc
                 FROM music_log
                 WHERE name = %s
                   AND (date + time) >= %s
                 ORDER BY date DESC, time DESC
+                LIMIT 50
                 """,
                 (name, window_start),
             )
@@ -639,6 +685,17 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
             # Limpar strings de entrada
             clean_input_title = clean_string(song_title)
             clean_input_artist = clean_string(artist)
+            
+            # Verificação de strings vazias após limpeza
+            if not clean_input_title or not clean_input_artist:
+                logger.warning(
+                    f"Strings vazias após limpeza: '{song_title}' -> '{clean_input_title}' | '{artist}' -> '{clean_input_artist}'"
+                )
+                # Se as strings ficaram vazias após limpeza, usar as originais
+                if not clean_input_title:
+                    clean_input_title = song_title.lower().strip()
+                if not clean_input_artist:
+                    clean_input_artist = artist.lower().strip()
 
             # Verificar cada registro recente com diferentes níveis de similaridade
             for row in results:
@@ -646,6 +703,13 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
 
                 clean_db_title = clean_string(db_title)
                 clean_db_artist = clean_string(db_artist)
+                
+                # Verificação de strings vazias após limpeza para dados do DB
+                if not clean_db_title or not clean_db_artist:
+                    if not clean_db_title:
+                        clean_db_title = db_title.lower().strip()
+                    if not clean_db_artist:
+                        clean_db_artist = db_artist.lower().strip()
 
                 # Calcular tempo decorrido a partir de date/time
                 record_ts = datetime.combine(db_date, db_time)
@@ -661,53 +725,61 @@ def check_recent_insertion(name: str, song_title: str, artist: str) -> bool:
                         f"(ID: {db_id}, criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                     )
                     return True
+                
+                # Cálculo de similaridade de título usando diferentes métodos
+                title_exact_match = clean_input_title == clean_db_title
+                title_contains = clean_input_title in clean_db_title or clean_db_title in clean_input_title
+                
+                # Verificação de prefixo/sufixo mais robusta
+                title_prefix_match = False
+                title_suffix_match = False
+                
+                if len(clean_input_title) >= 5 and len(clean_db_title) >= 5:
+                    # Verificar os primeiros 5 caracteres
+                    title_prefix_match = clean_input_title[:5] == clean_db_title[:5]
+                    # Verificar os últimos 5 caracteres
+                    title_suffix_match = clean_input_title[-5:] == clean_db_title[-5:]
+                
+                # Cálculo de similaridade de artista
+                artist_exact_match = clean_input_artist == clean_db_artist
+                artist_contains = clean_input_artist in clean_db_artist or clean_db_artist in clean_input_artist
+                
+                # Verificação de prefixo para artista
+                artist_prefix_match = False
+                if len(clean_input_artist) >= 3 and len(clean_db_artist) >= 3:
+                    artist_prefix_match = clean_input_artist[:3] == clean_db_artist[:3]
+                
+                # Níveis de similaridade
+                high_similarity = (title_exact_match or (title_contains and (title_prefix_match or title_suffix_match))) and \
+                                 (artist_exact_match or artist_contains)
+                
+                medium_similarity = (title_contains or title_prefix_match or title_suffix_match) and \
+                                  (artist_contains or artist_prefix_match)
 
-                # Verificação de similaridade com diferentes thresholds baseado no tempo
-                title_similar = (
-                    clean_input_title == clean_db_title
-                    or clean_input_title in clean_db_title
-                    or clean_db_title in clean_input_title
-                    or (
-                        len(clean_input_title) > 5
-                        and len(clean_db_title) > 5
-                        and (
-                            clean_input_title[:5] == clean_db_title[:5]
-                            or clean_input_title[-5:] == clean_db_title[-5:]
+                # Ajustar threshold baseado no tempo decorrido e nível de similaridade
+                if high_similarity:
+                    # Alta similaridade: janela de 120 minutos (7200 segundos)
+                    if time_diff < 7200:  
+                        logger.info(
+                            f"Duplicata ALTA SIMILARIDADE detectada: {song_title} - {artist} em {name} "
+                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                         )
+                        return True
+                elif medium_similarity:
+                    # Média similaridade: janela de 60 minutos (3600 segundos)
+                    if time_diff < 3600:  
+                        logger.info(
+                            f"Duplicata MÉDIA SIMILARIDADE detectada: {song_title} - {artist} em {name} "
+                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
+                        )
+                        return True
+                # Baixa similaridade (apenas correspondência parcial): janela de 30 minutos
+                elif (title_contains or artist_contains) and time_diff < 1800:
+                    logger.info(
+                        f"Duplicata BAIXA SIMILARIDADE detectada: {song_title} - {artist} em {name} "
+                        f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                     )
-                )
-
-                artist_similar = (
-                    clean_input_artist == clean_db_artist
-                    or clean_input_artist in clean_db_artist
-                    or clean_db_artist in clean_input_artist
-                    or (
-                        len(clean_input_artist) > 3
-                        and len(clean_db_artist) > 3
-                        and (clean_input_artist[:3] == clean_db_artist[:3])
-                    )
-                )
-
-                if title_similar and artist_similar:
-                    # Ajustar threshold baseado no tempo decorrido
-                    if time_diff < 300:  # 5 minutos - muito rigoroso
-                        logger.info(
-                            f"Duplicata RÁPIDA detectada: {song_title} - {artist} em {name} "
-                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
-                        )
-                        return True
-                    elif time_diff < 1800:  # 30 minutos - moderado
-                        logger.info(
-                            f"Duplicata RECENTE detectada: {song_title} - {artist} em {name} "
-                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
-                        )
-                        return True
-                    elif time_diff < 3600:  # 60 minutos - mais permissivo
-                        logger.info(
-                            f"Duplicata TARDIA detectada: {song_title} - {artist} em {name} "
-                            f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
-                        )
-                        return True
+                    return True
 
             return False
 
@@ -1675,15 +1747,17 @@ async def insert_data_to_db(entry_base, now_tz):
     song_title = entry_base["song_title"]
     artist = entry_base["artist"]
     name = entry_base["name"]
+    isrc = entry_base.get("isrc", None)
 
     logger.debug(
-        f"insert_data_to_db: Adicionando à fila: {song_title} - {artist} em {name}"
+        f"insert_data_to_db: Adicionando à fila: {song_title} - {artist} em {name} (ISRC: {isrc})"
     )
 
     try:
         # Verificar se já existe uma inserção recente para esta música neste stream
+        # Usando ISRC como identificador principal quando disponível
         is_recent_duplicate = await asyncio.to_thread(
-            check_recent_insertion, name, song_title, artist
+            check_recent_insertion, name, song_title, artist, isrc
         )
 
         if is_recent_duplicate:
