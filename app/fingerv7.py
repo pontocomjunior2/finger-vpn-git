@@ -2372,11 +2372,18 @@ async def main():
 
     # Adicionar tarefa de heartbeat do orquestrador se habilitado
     orchestrator_heartbeat_task = None
+    orchestrator_sync_task = None
     if USE_ORCHESTRATOR and orchestrator_client and DISTRIBUTE_LOAD:
         orchestrator_heartbeat_task = register_task(
             asyncio.create_task(orchestrator_heartbeat_loop())
         )
         logger.info("Tarefa de heartbeat do orquestrador iniciada")
+        
+        # Adicionar tarefa de sincronização dinâmica do orquestrador
+        orchestrator_sync_task = register_task(
+            asyncio.create_task(orchestrator_sync_loop())
+        )
+        logger.info("Tarefa de sincronização dinâmica do orquestrador iniciada")
 
     if "send_data_to_db" in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
@@ -2395,9 +2402,11 @@ async def main():
             server_monitor_task,
         ]
 
-    # Adicionar tarefa de heartbeat do orquestrador se disponível
+    # Adicionar tarefas do orquestrador se disponíveis
     if orchestrator_heartbeat_task:
         tasks_to_gather.append(orchestrator_heartbeat_task)
+    if orchestrator_sync_task:
+        tasks_to_gather.append(orchestrator_sync_task)
 
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     # json_sync_task removida - não é mais necessária com o orquestrador
@@ -2466,6 +2475,163 @@ async def orchestrator_heartbeat_loop():
         finally:
             # Aguardar 30 segundos antes do próximo heartbeat
             await asyncio.sleep(30)
+
+
+async def orchestrator_sync_loop():
+    """Loop para sincronização dinâmica de streams com o orquestrador a cada 3 segundos."""
+    global STREAMS, tasks, last_songs
+    last_assigned_streams = set()
+    
+    logger.info("Iniciando loop de sincronização dinâmica do orquestrador")
+    
+    while not shutdown_event.is_set():
+        try:
+            logger.info("[SYNC] Executando ciclo de sincronização dinâmica")
+            
+            if orchestrator_client:
+                logger.info(f"[SYNC] orchestrator_client existe: {orchestrator_client}")
+                logger.info(f"[SYNC] is_registered: {orchestrator_client.is_registered}")
+                
+                if orchestrator_client.is_registered:
+                    logger.info("[SYNC] Cliente do orquestrador registrado, solicitando streams")
+                    
+                    # Solicitar streams atuais do orquestrador
+                    current_assigned_stream_ids = await orchestrator_client.request_streams()
+                    current_assigned_streams = set(current_assigned_stream_ids)
+                    
+                    logger.info(f"[SYNC] Streams recebidos do orquestrador: {current_assigned_streams}")
+                    logger.info(f"[SYNC] Streams anteriores: {last_assigned_streams}")
+                    
+                    # Verificar se houve mudanças nos assignments
+                    if current_assigned_streams != last_assigned_streams:
+                        logger.info(
+                            f"[SYNC] Mudança detectada nos assignments: {len(current_assigned_streams)} streams atribuídos"
+                        )
+                        
+                        # Recarregar streams dinamicamente
+                        await reload_streams_dynamic(current_assigned_stream_ids)
+                        last_assigned_streams = current_assigned_streams
+                        
+                        logger.info(
+                            f"[SYNC] Sincronização dinâmica concluída: {len(STREAMS)} streams ativos"
+                        )
+                    else:
+                        logger.info(
+                            f"[SYNC] Nenhuma mudança nos assignments: {len(current_assigned_streams)} streams"
+                        )
+                else:
+                    logger.info(f"[SYNC] Cliente do orquestrador não registrado. is_registered={orchestrator_client.is_registered}")
+            else:
+                logger.info("[SYNC] orchestrator_client é None")
+            
+            logger.info("[SYNC] Aguardando 3 segundos antes da próxima verificação")
+            await asyncio.sleep(3)  # Verificar a cada 3 segundos para resposta mais rápida
+            
+        except asyncio.CancelledError:
+            logger.info("[SYNC] Loop de sincronização do orquestrador cancelado")
+            break
+        except Exception as e:
+            logger.error(f"[SYNC] Erro no loop de sincronização do orquestrador: {e}")
+            import traceback
+            logger.error(f"[SYNC] Traceback: {traceback.format_exc()}")
+            await asyncio.sleep(5)  # Aguardar menos tempo em caso de erro para recuperação mais rápida
+
+
+async def handle_stream_change_notification(change_type, stream_data=None):
+    """Handle notificações em tempo real de mudanças de streams.
+    
+    Args:
+        change_type: Tipo de mudança ('assignment_changed', 'stream_updated', 'stream_added', 'stream_removed')
+        stream_data: Dados do stream (opcional, dependendo do tipo de mudança)
+    """
+    try:
+        logger.info(f"Notificação de mudança recebida: {change_type}")
+        
+        if change_type == 'assignment_changed':
+            # Forçar sincronização imediata
+            if orchestrator_client and orchestrator_client.is_registered:
+                current_assigned_stream_ids = await orchestrator_client.request_streams()
+                await reload_streams_dynamic(current_assigned_stream_ids)
+                logger.info("Sincronização imediata concluída devido a mudança de assignment")
+        
+        elif change_type in ['stream_updated', 'stream_added', 'stream_removed']:
+            # Recarregar todos os streams do banco de dados
+            if orchestrator_client and orchestrator_client.is_registered:
+                current_assigned_stream_ids = await orchestrator_client.request_streams()
+                await reload_streams_dynamic(current_assigned_stream_ids)
+                logger.info(f"Streams recarregados devido a {change_type}")
+        
+    except Exception as e:
+        logger.error(f"Erro ao processar notificação de mudança: {e}")
+
+
+async def reload_streams_dynamic(assigned_stream_ids):
+    """Recarrega streams dinamicamente sem reinicializar todo o sistema."""
+    global STREAMS, tasks, last_songs
+    
+    try:
+        # Carregar todos os streams disponíveis
+        all_streams = load_streams()
+        if not all_streams:
+            logger.error("Falha ao carregar streams do banco de dados")
+            return
+        
+        # Converter IDs para string para compatibilidade
+        assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
+        
+        # Filtrar streams atribuídos
+        new_assigned_streams = [
+            stream
+            for stream in all_streams
+            if stream.get("index", "") in assigned_stream_ids_str
+        ]
+        
+        # Identificar streams que precisam ser removidos
+        current_stream_ids = {stream.get("index", "") for stream in STREAMS}
+        new_stream_ids = {stream.get("index", "") for stream in new_assigned_streams}
+        
+        streams_to_remove = current_stream_ids - new_stream_ids
+        streams_to_add = new_stream_ids - current_stream_ids
+        
+        # Cancelar tarefas de streams removidos
+        if streams_to_remove:
+            logger.info(f"Removendo {len(streams_to_remove)} streams: {streams_to_remove}")
+            tasks_to_cancel = []
+            for i, task in enumerate(tasks):
+                if i < len(STREAMS):
+                    stream_id = STREAMS[i].get("index", "")
+                    if stream_id in streams_to_remove:
+                        tasks_to_cancel.append(task)
+            
+            for task in tasks_to_cancel:
+                if not task.done():
+                    task.cancel()
+                if task in tasks:
+                    tasks.remove(task)
+        
+        # Adicionar tarefas para novos streams
+        if streams_to_add:
+            logger.info(f"Adicionando {len(streams_to_add)} novos streams: {streams_to_add}")
+            for stream in new_assigned_streams:
+                stream_id = stream.get("index", "")
+                if stream_id in streams_to_add:
+                    task = asyncio.create_task(process_stream(stream, last_songs))
+                    register_task(task)
+                    tasks.append(task)
+        
+        # Atualizar lista global de streams
+        STREAMS = new_assigned_streams
+        
+        logger.info(
+            f"Sincronização dinâmica concluída: {len(STREAMS)} streams ativos, "
+            f"{len(streams_to_remove)} removidos, {len(streams_to_add)} adicionados"
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro durante sincronização dinâmica: {e}")
+        # Em caso de erro, fazer reload completo como fallback
+        logger.info("Executando reload completo como fallback...")
+        await reload_streams()
 
 
 # Ponto de entrada

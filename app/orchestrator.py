@@ -328,16 +328,100 @@ class StreamOrchestrator:
                 'last_heartbeat': datetime.now()
             }
             
+            # Verificar se deve fazer rebalanceamento automático
+            should_rebalance = False
+            
+            if not is_reregistration:
+                # Nova instância - verificar se há necessidade de rebalanceamento
+                cursor.execute("""
+                    SELECT COUNT(*) as total_instances,
+                           SUM(max_streams) as total_capacity,
+                           (
+                               SELECT COUNT(*) 
+                               FROM orchestrator_stream_assignments 
+                               WHERE status = 'active'
+                           ) as total_assigned_streams
+                    FROM orchestrator_instances 
+                    WHERE status = 'active' 
+                      AND last_heartbeat > NOW() - INTERVAL '1 minute'
+                """)
+                
+                stats = cursor.fetchone()
+                total_instances = stats[0]
+                total_capacity = stats[1] or 0
+                total_assigned_streams = stats[2] or 0
+                
+                # Rebalancear se:
+                # 1. Há mais de uma instância ativa
+                # 2. Há streams atribuídos
+                # 3. A nova capacidade permite melhor distribuição
+                if total_instances > 1 and total_assigned_streams > 0:
+                    # Calcular se o rebalanceamento seria benéfico
+                    # (diferença significativa na distribuição atual)
+                    cursor.execute("""
+                        SELECT 
+                            server_id,
+                            current_streams,
+                            max_streams
+                        FROM orchestrator_instances 
+                        WHERE status = 'active' 
+                          AND last_heartbeat > NOW() - INTERVAL '1 minute'
+                          AND server_id != %s
+                        ORDER BY current_streams DESC
+                    """, (registration.server_id,))
+                    
+                    other_instances = cursor.fetchall()
+                    
+                    if other_instances:
+                        max_load = max(inst[1] for inst in other_instances)
+                        avg_load = total_assigned_streams / total_instances
+                        
+                        # Rebalancear se a diferença for significativa (> 20% da média)
+                        if max_load > avg_load * 1.2:
+                            should_rebalance = True
+                            logger.info(f"Rebalanceamento automático ativado: carga máxima {max_load} > 20% da média {avg_load:.1f}")
+            
             if is_reregistration:
                 logger.info(f"Instância {registration.server_id} re-registrada com sucesso (streams órfãos liberados)")
             else:
                 logger.info(f"Instância {registration.server_id} registrada com sucesso")
+                
+                # Executar rebalanceamento automático se necessário
+                if should_rebalance:
+                    try:
+                        logger.info(f"Iniciando rebalanceamento automático devido ao registro da nova instância {registration.server_id}")
+                        
+                        # Fechar conexão atual antes do rebalanceamento
+                        cursor.close()
+                        conn.close()
+                        
+                        # Executar rebalanceamento completo
+                        self.rebalance_all_streams()
+                        
+                        # Registrar histórico do rebalanceamento
+                        conn = self.get_db_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("""
+                            INSERT INTO orchestrator_rebalance_history 
+                            (rebalance_type, reason, executed_at)
+                            VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        """, ('automatic', f'Nova instância registrada: {registration.server_id}'))
+                        
+                        conn.commit()
+                        
+                        logger.info(f"Rebalanceamento automático concluído para nova instância {registration.server_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Erro no rebalanceamento automático: {e}")
+                        # Continuar mesmo se o rebalanceamento falhar
             
             return {
                 'status': 'registered',
                 'server_id': registration.server_id,
                 'max_streams': registration.max_streams,
-                'reregistration': is_reregistration
+                'reregistration': is_reregistration,
+                'auto_rebalanced': should_rebalance
             }
             
         except Exception as e:
@@ -548,7 +632,7 @@ class StreamOrchestrator:
                     logger.info(f"Reatribuídos {assigned_count} streams imediatamente para instância re-registrada {reregistered_server_id}")
 
     def handle_orphaned_streams(self):
-        """Detecta e reatribui streams órfãos automaticamente."""
+        """Detecta e reatribui streams órfãos automaticamente de forma mais agressiva."""
         conn = self.get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
@@ -559,7 +643,7 @@ class StreamOrchestrator:
                 FROM orchestrator_stream_assignments osa
                 JOIN orchestrator_instances oi ON osa.server_id = oi.server_id
                 WHERE oi.status = 'inactive' 
-                   OR oi.last_heartbeat < NOW() - INTERVAL '3 minutes'
+                   OR oi.last_heartbeat < NOW() - INTERVAL '2 minutes'
             """)
             
             orphaned_streams = [row['stream_id'] for row in cursor.fetchall()]
@@ -572,46 +656,231 @@ class StreamOrchestrator:
                     DELETE FROM orchestrator_stream_assignments osa
                     USING orchestrator_instances oi
                     WHERE osa.server_id = oi.server_id
-                    AND (oi.status = 'inactive' OR oi.last_heartbeat < NOW() - INTERVAL '3 minutes')
+                    AND (oi.status = 'inactive' OR oi.last_heartbeat < NOW() - INTERVAL '2 minutes')
                 """)
                 
-                # Reatribuir streams órfãos para instâncias ativas
-                for stream_id in orphaned_streams:
-                    try:
-                        # Encontrar instância com menor carga
-                        cursor.execute("""
-                            SELECT oi.server_id, 
-                                   COALESCE(COUNT(osa.stream_id), 0) as current_load
-                            FROM orchestrator_instances oi
-                            LEFT JOIN orchestrator_stream_assignments osa ON oi.server_id = osa.server_id
-                            WHERE oi.status = 'active' 
-                              AND oi.last_heartbeat > NOW() - INTERVAL '2 minutes'
-                            GROUP BY oi.server_id
-                            ORDER BY current_load ASC
-                            LIMIT 1
-                        """)
-                        
-                        best_instance = cursor.fetchone()
-                        
-                        if best_instance:
-                            # Atribuir stream à melhor instância
-                            cursor.execute("""
-                                INSERT INTO orchestrator_stream_assignments 
-                                (stream_id, server_id, assigned_at)
-                                VALUES (%s, %s, CURRENT_TIMESTAMP)
-                            """, (stream_id, best_instance['server_id']))
-                            
-                            logger.info(f"Stream órfão {stream_id} reatribuído para instância {best_instance['server_id']}")
-                        else:
-                            logger.error(f"Nenhuma instância ativa disponível para reatribuir stream {stream_id}")
-                            
-                    except Exception as e:
-                        logger.error(f"Erro ao reatribuir stream órfão {stream_id}: {e}")
+                # Atualizar contadores das instâncias que perderam streams
+                cursor.execute("""
+                    UPDATE orchestrator_instances 
+                    SET current_streams = (
+                        SELECT COUNT(*) 
+                        FROM orchestrator_stream_assignments 
+                        WHERE server_id = orchestrator_instances.server_id
+                    )
+                    WHERE server_id IN (
+                        SELECT DISTINCT oi.server_id 
+                        FROM orchestrator_instances oi
+                        WHERE oi.status = 'inactive' 
+                           OR oi.last_heartbeat < NOW() - INTERVAL '2 minutes'
+                    )
+                """)
+                
+                # Reatribuir todos os streams órfãos de uma vez usando distribuição otimizada
+                if orphaned_streams:
+                    self._redistribute_orphaned_streams_optimized(cursor, orphaned_streams)
                 
                 logger.info(f"Failover automático concluído para {len(orphaned_streams)} streams")
             
         except Exception as e:
             logger.error(f"Erro no failover automático: {e}")
+        finally:
+            cursor.close()
+            conn.close()
+    
+    def _redistribute_orphaned_streams_optimized(self, cursor, orphaned_streams: list):
+        """Redistribui streams órfãos de forma otimizada para balanceamento de carga."""
+        try:
+            # Buscar todas as instâncias ativas com suas capacidades e cargas atuais
+            cursor.execute("""
+                SELECT 
+                    oi.server_id,
+                    oi.max_streams,
+                    COALESCE(COUNT(osa.stream_id), 0) as current_load,
+                    (oi.max_streams - COALESCE(COUNT(osa.stream_id), 0)) as available_capacity
+                FROM orchestrator_instances oi
+                LEFT JOIN orchestrator_stream_assignments osa ON oi.server_id = osa.server_id
+                WHERE oi.status = 'active' 
+                  AND oi.last_heartbeat > NOW() - INTERVAL '1 minute'
+                GROUP BY oi.server_id, oi.max_streams
+                HAVING (oi.max_streams - COALESCE(COUNT(osa.stream_id), 0)) > 0
+                ORDER BY current_load ASC, available_capacity DESC
+            """)
+            
+            available_instances = cursor.fetchall()
+            
+            if not available_instances:
+                logger.error("Nenhuma instância ativa com capacidade disponível para reatribuir streams órfãos")
+                return
+            
+            # Distribuir streams órfãos de forma balanceada
+            assignments = []
+            instance_index = 0
+            
+            for stream_id in orphaned_streams:
+                # Encontrar a próxima instância com capacidade disponível
+                attempts = 0
+                while attempts < len(available_instances):
+                    instance = available_instances[instance_index]
+                    
+                    if instance['available_capacity'] > 0:
+                        assignments.append((stream_id, instance['server_id']))
+                        # Reduzir capacidade disponível temporariamente para balanceamento
+                        available_instances[instance_index] = {
+                            **instance,
+                            'available_capacity': instance['available_capacity'] - 1,
+                            'current_load': instance['current_load'] + 1
+                        }
+                        break
+                    
+                    instance_index = (instance_index + 1) % len(available_instances)
+                    attempts += 1
+                
+                if attempts >= len(available_instances):
+                    logger.warning(f"Não foi possível encontrar capacidade para stream {stream_id}")
+                    break
+                
+                # Avançar para próxima instância para distribuição round-robin
+                instance_index = (instance_index + 1) % len(available_instances)
+            
+            # Executar todas as atribuições em lote
+            if assignments:
+                cursor.executemany("""
+                    INSERT INTO orchestrator_stream_assignments 
+                    (stream_id, server_id, assigned_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                """, assignments)
+                
+                # Atualizar contadores das instâncias
+                for stream_id, server_id in assignments:
+                    cursor.execute("""
+                        UPDATE orchestrator_instances 
+                        SET current_streams = current_streams + 1
+                        WHERE server_id = %s
+                    """, (server_id,))
+                
+                logger.info(f"Reatribuídos {len(assignments)} streams órfãos para {len(set(a[1] for a in assignments))} instâncias")
+                
+                # Log detalhado das atribuições
+                for stream_id, server_id in assignments:
+                    logger.debug(f"Stream órfão {stream_id} reatribuído para instância {server_id}")
+            
+        except Exception as e:
+            logger.error(f"Erro na redistribuição otimizada de streams órfãos: {e}")
+            raise
+    
+    def rebalance_all_streams(self):
+        """Rebalanceia todos os streams de forma igualitária entre todas as instâncias ativas."""
+        conn = self.get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        try:
+            # Buscar todas as instâncias ativas
+            cursor.execute("""
+                SELECT server_id, max_streams
+                FROM orchestrator_instances 
+                WHERE status = 'active' 
+                  AND last_heartbeat > NOW() - INTERVAL '1 minute'
+                ORDER BY server_id
+            """)
+            
+            active_instances = cursor.fetchall()
+            
+            if not active_instances:
+                logger.warning("Nenhuma instância ativa encontrada para rebalanceamento")
+                return
+            
+            # Buscar todos os streams atribuídos
+            cursor.execute("""
+                SELECT stream_id, server_id
+                FROM orchestrator_stream_assignments
+                WHERE status = 'active'
+                ORDER BY stream_id
+            """)
+            
+            current_assignments = cursor.fetchall()
+            
+            if not current_assignments:
+                logger.info("Nenhum stream atribuído encontrado")
+                return
+            
+            # Calcular distribuição ideal
+            total_capacity = sum(instance['max_streams'] for instance in active_instances)
+            total_streams = len(current_assignments)
+            
+            if total_streams > total_capacity:
+                logger.error(f"Número de streams ({total_streams}) excede capacidade total ({total_capacity})")
+                return
+            
+            # Calcular quantos streams cada instância deve ter
+            target_distribution = {}
+            remaining_streams = total_streams
+            
+            for i, instance in enumerate(active_instances):
+                if i == len(active_instances) - 1:
+                    # Última instância recebe os streams restantes
+                    target_distribution[instance['server_id']] = remaining_streams
+                else:
+                    # Distribuição proporcional baseada na capacidade
+                    proportion = instance['max_streams'] / total_capacity
+                    target_count = min(int(total_streams * proportion), remaining_streams, instance['max_streams'])
+                    target_distribution[instance['server_id']] = target_count
+                    remaining_streams -= target_count
+            
+            logger.info(f"Distribuição alvo: {target_distribution}")
+            
+            # Liberar todos os streams atuais
+            cursor.execute("DELETE FROM orchestrator_stream_assignments WHERE status = 'active'")
+            
+            # Redistribuir streams de acordo com a distribuição alvo
+            assignments = []
+            stream_index = 0
+            
+            for server_id, target_count in target_distribution.items():
+                for _ in range(target_count):
+                    if stream_index < len(current_assignments):
+                        stream_id = current_assignments[stream_index]['stream_id']
+                        assignments.append((stream_id, server_id))
+                        stream_index += 1
+            
+            # Executar novas atribuições
+            if assignments:
+                cursor.executemany("""
+                    INSERT INTO orchestrator_stream_assignments 
+                    (stream_id, server_id, assigned_at, status)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, 'active')
+                """, assignments)
+                
+                # Atualizar contadores das instâncias
+                cursor.execute("""
+                    UPDATE orchestrator_instances 
+                    SET current_streams = (
+                        SELECT COUNT(*) 
+                        FROM orchestrator_stream_assignments 
+                        WHERE server_id = orchestrator_instances.server_id 
+                          AND status = 'active'
+                    )
+                    WHERE status = 'active'
+                """)
+                
+                # Log da nova distribuição
+                cursor.execute("""
+                    SELECT 
+                        oi.server_id,
+                        oi.current_streams,
+                        oi.max_streams
+                    FROM orchestrator_instances oi
+                    WHERE oi.status = 'active'
+                    ORDER BY oi.server_id
+                """)
+                
+                final_distribution = cursor.fetchall()
+                logger.info(f"Rebalanceamento concluído. Nova distribuição:")
+                for dist in final_distribution:
+                    logger.info(f"  {dist['server_id']}: {dist['current_streams']}/{dist['max_streams']} streams")
+            
+        except Exception as e:
+            logger.error(f"Erro no rebalanceamento completo: {e}")
+            raise
         finally:
             cursor.close()
             conn.close()
@@ -822,12 +1091,12 @@ async def failover_monitor_task():
     """Tarefa de monitoramento de failover que executa mais frequentemente."""
     while True:
         try:
-            # Executar verificação de failover a cada 30 segundos
+            # Executar verificação de failover a cada 10 segundos para maior responsividade
             orchestrator.handle_orphaned_streams()
-            await asyncio.sleep(30)
+            await asyncio.sleep(10)
         except Exception as e:
             logger.error(f"Erro na tarefa de failover: {e}")
-            await asyncio.sleep(15)  # Aguardar menos tempo em caso de erro
+            await asyncio.sleep(5)  # Aguardar menos tempo em caso de erro
 
 if __name__ == "__main__":
     import uvicorn
