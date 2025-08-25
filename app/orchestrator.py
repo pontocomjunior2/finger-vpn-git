@@ -26,6 +26,14 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# Importar psutil para métricas de sistema
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    logger.warning("psutil não encontrado. Métricas de sistema não estarão disponíveis.")
+
 # Carregar variáveis de ambiente
 # Primeiro tenta carregar do .env da raiz do projeto
 root_env_file = Path(__file__).parent.parent / ".env"
@@ -81,10 +89,23 @@ class InstanceRegistration(BaseModel):
     max_streams: int = MAX_STREAMS_PER_INSTANCE
 
 
+class SystemMetrics(BaseModel):
+    cpu_percent: float
+    memory_percent: float
+    memory_used_gb: float
+    memory_total_gb: float
+    disk_percent: float
+    disk_free_gb: float
+    disk_total_gb: float
+    load_average: Optional[List[float]] = None
+    uptime_seconds: Optional[float] = None
+
+
 class HeartbeatRequest(BaseModel):
     server_id: str
     current_streams: int
     status: str = "active"
+    system_metrics: Optional[SystemMetrics] = None
 
 
 class StreamRequest(BaseModel):
@@ -222,6 +243,37 @@ class StreamOrchestrator:
             )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_assignments_status ON orchestrator_stream_assignments(status)"
+            )
+
+            # Tabela de métricas de sistema das instâncias
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS orchestrator_instance_metrics (
+                    id SERIAL PRIMARY KEY,
+                    server_id VARCHAR(50) NOT NULL,
+                    cpu_percent FLOAT,
+                    memory_percent FLOAT,
+                    memory_used_gb FLOAT,
+                    memory_total_gb FLOAT,
+                    disk_percent FLOAT,
+                    disk_free_gb FLOAT,
+                    disk_total_gb FLOAT,
+                    load_average_1m FLOAT,
+                    load_average_5m FLOAT,
+                    load_average_15m FLOAT,
+                    uptime_seconds FLOAT,
+                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (server_id) REFERENCES orchestrator_instances(server_id) ON DELETE CASCADE
+                )
+            """
+            )
+
+            # Criar índices para a tabela de métricas
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metrics_server_id ON orchestrator_instance_metrics(server_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metrics_recorded_at ON orchestrator_instance_metrics(recorded_at)"
             )
 
             # Tabela de histórico de rebalanceamentos
@@ -530,6 +582,45 @@ class StreamOrchestrator:
             result = cursor.fetchone()
             if not result:
                 raise HTTPException(status_code=404, detail="Instância não encontrada")
+
+            instance_id = result[0]
+
+            # Armazenar métricas de sistema se fornecidas
+            if heartbeat.system_metrics:
+                metrics = heartbeat.system_metrics
+                
+                # Extrair valores de load average da lista
+                load_avg_1m = load_avg_5m = load_avg_15m = None
+                if metrics.load_average and len(metrics.load_average) >= 3:
+                    load_avg_1m = metrics.load_average[0]
+                    load_avg_5m = metrics.load_average[1]
+                    load_avg_15m = metrics.load_average[2]
+                
+                cursor.execute(
+                    """
+                    INSERT INTO orchestrator_instance_metrics 
+                    (server_id, cpu_percent, memory_percent, memory_used_gb,
+                     memory_total_gb, disk_percent, disk_free_gb, disk_total_gb,
+                     load_average_1m, load_average_5m, load_average_15m, 
+                     uptime_seconds, recorded_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                """,
+                    (
+                        heartbeat.server_id,
+                        metrics.cpu_percent,
+                        metrics.memory_percent,
+                        metrics.memory_used_gb,
+                        metrics.memory_total_gb,
+                        metrics.disk_percent,
+                        metrics.disk_free_gb,
+                        metrics.disk_total_gb,
+                        load_avg_1m,
+                        load_avg_5m,
+                        load_avg_15m,
+                        metrics.uptime_seconds,
+                    ),
+                )
+                logger.debug(f"Métricas de sistema armazenadas para {heartbeat.server_id}")
 
             # Atualizar cache local
             if heartbeat.server_id in self.active_instances:
@@ -1472,6 +1563,186 @@ async def diagnostic_check(request: DiagnosticRequest):
     except Exception as e:
         logger.error(f"Erro no diagnóstico para {request.server_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Erro no diagnóstico: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/instances/{server_id}/metrics")
+async def get_instance_metrics(server_id: str, hours: int = 24):
+    """Obtém métricas de performance de uma instância específica."""
+    conn = orchestrator.get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        # Verificar se a instância existe
+        cursor.execute(
+            "SELECT id FROM orchestrator_instances WHERE server_id = %s",
+            (server_id,)
+        )
+        
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Instância não encontrada")
+
+        # Obter métricas das últimas N horas
+        cursor.execute(
+            """
+            SELECT 
+                cpu_percent,
+                memory_percent,
+                disk_percent,
+                load_average_1m,
+                load_average_5m,
+                load_average_15m,
+                uptime_seconds,
+                recorded_at
+            FROM orchestrator_instance_metrics 
+            WHERE server_id = %s 
+                AND recorded_at >= NOW() - INTERVAL '%s hours'
+            ORDER BY recorded_at DESC
+            LIMIT 1000
+        """,
+            (server_id, hours)
+        )
+
+        metrics = cursor.fetchall()
+        
+        if not metrics:
+            return {
+                "server_id": server_id,
+                "metrics": [],
+                "summary": "Nenhuma métrica encontrada para o período especificado"
+            }
+
+        # Calcular estatísticas resumidas
+        cpu_values = [m['cpu_percent'] for m in metrics if m['cpu_percent'] is not None]
+        memory_values = [m['memory_percent'] for m in metrics if m['memory_percent'] is not None]
+        disk_values = [m['disk_percent'] for m in metrics if m['disk_percent'] is not None]
+        
+        summary = {
+            "total_records": len(metrics),
+            "time_range_hours": hours,
+            "latest_record": metrics[0]['recorded_at'].isoformat() if metrics else None,
+            "oldest_record": metrics[-1]['recorded_at'].isoformat() if metrics else None
+        }
+        
+        if cpu_values:
+            summary["cpu"] = {
+                "avg": round(sum(cpu_values) / len(cpu_values), 2),
+                "min": round(min(cpu_values), 2),
+                "max": round(max(cpu_values), 2)
+            }
+            
+        if memory_values:
+            summary["memory"] = {
+                "avg": round(sum(memory_values) / len(memory_values), 2),
+                "min": round(min(memory_values), 2),
+                "max": round(max(memory_values), 2)
+            }
+            
+        if disk_values:
+            summary["disk"] = {
+                "avg": round(sum(disk_values) / len(disk_values), 2),
+                "min": round(min(disk_values), 2),
+                "max": round(max(disk_values), 2)
+            }
+
+        return {
+            "server_id": server_id,
+            "metrics": [dict(metric) for metric in metrics],
+            "summary": summary
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao obter métricas de {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao obter métricas: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/metrics/overview")
+async def get_metrics_overview():
+    """Obtém visão geral das métricas de todas as instâncias ativas."""
+    conn = orchestrator.get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        # Obter métricas mais recentes de cada instância ativa
+        cursor.execute(
+            """
+            WITH latest_metrics AS (
+                SELECT DISTINCT ON (server_id) 
+                    server_id,
+                    cpu_percent,
+                    memory_percent,
+                    disk_percent,
+                    load_average_1m,
+                    recorded_at
+                FROM orchestrator_instance_metrics 
+                WHERE recorded_at >= NOW() - INTERVAL '1 hour'
+                ORDER BY server_id, recorded_at DESC
+            )
+            SELECT 
+                oi.server_id,
+                oi.ip,
+                oi.port,
+                oi.current_streams,
+                oi.max_streams,
+                oi.status,
+                oi.last_heartbeat,
+                lm.cpu_percent,
+                lm.memory_percent,
+                lm.disk_percent,
+                lm.load_average_1m,
+                lm.recorded_at as metrics_timestamp
+            FROM orchestrator_instances oi
+            LEFT JOIN latest_metrics lm ON oi.server_id = lm.server_id
+            WHERE oi.status = 'active'
+            ORDER BY oi.server_id
+        """
+        )
+
+        instances = cursor.fetchall()
+        
+        overview = {
+            "total_instances": len(instances),
+            "instances_with_metrics": len([i for i in instances if i['cpu_percent'] is not None]),
+            "timestamp": datetime.now().isoformat(),
+            "instances": []
+        }
+        
+        for instance in instances:
+            instance_data = {
+                "server_id": instance['server_id'],
+                "ip": instance['ip'],
+                "port": instance['port'],
+                "streams": {
+                    "current": instance['current_streams'],
+                    "max": instance['max_streams'],
+                    "utilization_percent": round((instance['current_streams'] / instance['max_streams']) * 100, 1) if instance['max_streams'] > 0 else 0
+                },
+                "status": instance['status'],
+                "last_heartbeat": instance['last_heartbeat'].isoformat() if instance['last_heartbeat'] else None,
+                "metrics": None
+            }
+            
+            if instance['cpu_percent'] is not None:
+                instance_data["metrics"] = {
+                    "cpu_percent": instance['cpu_percent'],
+                    "memory_percent": instance['memory_percent'],
+                    "disk_percent": instance['disk_percent'],
+                    "load_average_1m": instance['load_average_1m'],
+                    "timestamp": instance['metrics_timestamp'].isoformat() if instance['metrics_timestamp'] else None
+                }
+            
+            overview["instances"].append(instance_data)
+
+        return overview
+
+    except Exception as e:
+        logger.error(f"Erro ao obter visão geral das métricas: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao obter visão geral: {e}")
     finally:
         cursor.close()
         conn.close()

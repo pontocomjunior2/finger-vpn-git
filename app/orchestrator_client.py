@@ -21,6 +21,14 @@ import time
 import aiohttp
 import json
 
+# Import psutil for system metrics
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    logger.warning("psutil não está disponível. Métricas de sistema não serão coletadas.")
+
 logger = logging.getLogger(__name__)
 
 class OrchestratorClient:
@@ -121,6 +129,54 @@ class OrchestratorClient:
             logger.error(f"Erro ao registrar instância: {e}")
             return False
     
+    def _collect_system_metrics(self) -> Optional[Dict[str, Any]]:
+        """Coleta métricas de sistema usando psutil."""
+        if not PSUTIL_AVAILABLE:
+            return None
+        
+        try:
+            # CPU usage (percentage)
+            cpu_percent = psutil.cpu_percent(interval=1)
+            
+            # Memory usage
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            memory_used_gb = memory.used / (1024**3)
+            memory_total_gb = memory.total / (1024**3)
+            
+            # Disk usage
+            disk = psutil.disk_usage('/')
+            disk_percent = disk.percent
+            disk_free_gb = disk.free / (1024**3)
+            disk_total_gb = disk.total / (1024**3)
+            
+            # Load average (if available)
+            load_average = None
+            if hasattr(psutil, 'getloadavg'):
+                try:
+                    load_average = list(psutil.getloadavg())
+                except (OSError, AttributeError):
+                    pass
+            
+            # System uptime
+            boot_time = psutil.boot_time()
+            uptime_seconds = time.time() - boot_time
+            
+            return {
+                "cpu_percent": round(cpu_percent, 2),
+                "memory_percent": round(memory_percent, 2),
+                "memory_used_gb": round(memory_used_gb, 2),
+                "memory_total_gb": round(memory_total_gb, 2),
+                "disk_percent": round(disk_percent, 2),
+                "disk_free_gb": round(disk_free_gb, 2),
+                "disk_total_gb": round(disk_total_gb, 2),
+                "load_average": load_average,
+                "uptime_seconds": round(uptime_seconds, 2)
+            }
+        except Exception as e:
+            logger.warning(f"Erro ao coletar métricas de sistema: {e}")
+            return None
+    
     async def send_heartbeat(self) -> bool:
         """Envia heartbeat para o orquestrador."""
         if not self.is_registered:
@@ -133,6 +189,11 @@ class OrchestratorClient:
                 "current_streams": self.current_streams,
                 "status": "active"
             }
+            
+            # Adicionar métricas de sistema se disponíveis
+            system_metrics = self._collect_system_metrics()
+            if system_metrics:
+                data["system_metrics"] = system_metrics
             
             response = await self._make_request("POST", "/heartbeat", data)
             
