@@ -956,6 +956,9 @@ HEARTBEAT_INTERVAL_SECS = 60  # Enviar heartbeat a cada 1 minuto
 # Variável global para controle da pausa do Shazam (RESTAURADO)
 shazam_pause_until_timestamp = 0.0
 
+# Variável global para armazenar last_songs
+last_songs = {}
+
 
 # Classe StreamConnectionTracker (RESTAURADO)
 class StreamConnectionTracker:
@@ -2315,8 +2318,9 @@ async def main():
         )
 
     async def reload_streams():
-        global STREAMS
+        global STREAMS, last_songs
         all_streams = load_streams()
+        last_songs = load_last_songs()  # Carregar last_songs
         logger.info("Streams recarregados.")
         if "update_streams_in_db" in globals():
             update_streams_in_db(
@@ -2748,6 +2752,8 @@ async def reload_streams_dynamic(assigned_stream_ids):
         logger.error(f"Erro durante sincronização dinâmica: {e}")
         # Em caso de erro, fazer reload completo como fallback
         logger.info("Executando reload completo como fallback...")
+        # Recarregar last_songs antes do fallback
+        last_songs = load_last_songs()
         await reload_streams()
 
 
