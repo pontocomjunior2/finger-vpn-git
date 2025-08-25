@@ -2406,6 +2406,7 @@ async def main():
     # Adicionar tarefa de heartbeat do orquestrador se habilitado
     orchestrator_heartbeat_task = None
     orchestrator_sync_task = None
+    orchestrator_alerts_task = None
     if USE_ORCHESTRATOR and orchestrator_client and DISTRIBUTE_LOAD:
         orchestrator_heartbeat_task = register_task(
             asyncio.create_task(orchestrator_heartbeat_loop())
@@ -2417,6 +2418,12 @@ async def main():
             asyncio.create_task(orchestrator_sync_loop())
         )
         logger.info("Tarefa de sincronização dinâmica do orquestrador iniciada")
+
+        # Adicionar tarefa de alertas do orquestrador
+        orchestrator_alerts_task = register_task(
+            asyncio.create_task(orchestrator_alerts_loop())
+        )
+        logger.info("Tarefa de alertas do orquestrador iniciada")
 
     if "send_data_to_db" in globals():
         send_data_task = register_task(asyncio.create_task(send_data_to_db()))
@@ -2440,6 +2447,8 @@ async def main():
         tasks_to_gather.append(orchestrator_heartbeat_task)
     if orchestrator_sync_task:
         tasks_to_gather.append(orchestrator_sync_task)
+    if orchestrator_alerts_task:
+        tasks_to_gather.append(orchestrator_alerts_task)
 
     alert_task = register_task(asyncio.create_task(check_and_alert_persistent_errors()))
     # json_sync_task removida - não é mais necessária com o orquestrador
@@ -2612,9 +2621,90 @@ async def orchestrator_sync_loop():
             import traceback
 
             logger.error(f"[SYNC] Traceback: {traceback.format_exc()}")
+
+            # Registrar erro no sistema de alertas
+            if orchestrator_client:
+                orchestrator_client.record_operation_result("sync_loop", False, str(e))
+
             await asyncio.sleep(
                 5
             )  # Aguardar menos tempo em caso de erro para recuperação mais rápida
+
+
+async def orchestrator_alerts_loop():
+    """Loop para verificação periódica de alertas e geração de relatórios."""
+    logger.info("Iniciando loop de verificação de alertas do orquestrador")
+
+    while not shutdown_event.is_set():
+        try:
+            if orchestrator_client and orchestrator_client.is_registered:
+                # Obter resumo de alertas das últimas 24 horas
+                alert_summary = orchestrator_client.get_alert_summary(hours=24)
+
+                if alert_summary.get("total_alerts", 0) > 0:
+                    logger.warning(
+                        f"[ALERTS] Resumo de alertas (24h): {alert_summary['total_alerts']} alertas"
+                    )
+
+                    # Log detalhado dos alertas por tipo
+                    for alert_type, count in alert_summary.get(
+                        "alerts_by_type", {}
+                    ).items():
+                        logger.warning(f"[ALERTS] {alert_type}: {count} ocorrências")
+
+                    # Log dos alertas mais recentes
+                    recent_alerts = alert_summary.get("recent_alerts", [])
+                    if recent_alerts:
+                        logger.warning(
+                            f"[ALERTS] Últimos {len(recent_alerts)} alertas:"
+                        )
+                        for alert in recent_alerts[
+                            -5:
+                        ]:  # Mostrar apenas os 5 mais recentes
+                            logger.warning(
+                                f"[ALERTS]   - {alert['timestamp']}: {alert['type']} - {alert['message']} ({alert['severity']})"
+                            )
+
+                    # Verificar se há padrões críticos
+                    if alert_summary.get("critical_patterns", 0) > 0:
+                        logger.error(
+                            f"[ALERTS] CRÍTICO: {alert_summary['critical_patterns']} padrões críticos detectados!"
+                        )
+
+                        # Enviar alerta por email para padrões críticos
+                        try:
+                            subject = f"[CRÍTICO] Padrões de erro detectados - Instância {SERVER_ID}"
+                            body = f"""Padrões críticos de erro detectados na instância {SERVER_ID}:
+
+Resumo de alertas (24h):
+- Total de alertas: {alert_summary['total_alerts']}
+- Padrões críticos: {alert_summary['critical_patterns']}
+
+Alertas por tipo:
+{chr(10).join([f'- {t}: {c}' for t, c in alert_summary.get('alerts_by_type', {}).items()])}
+
+Últimos alertas:
+{chr(10).join([f'- {a["timestamp"]}: {a["type"]} - {a["message"]}' for a in recent_alerts[-3:]])}
+
+Verifique o sistema imediatamente."""
+                            send_email_alert(subject, body)
+                            logger.info(f"[ALERTS] Email de alerta crítico enviado")
+                        except Exception as email_err:
+                            logger.error(
+                                f"[ALERTS] Erro ao enviar email de alerta crítico: {email_err}"
+                            )
+                else:
+                    logger.debug(f"[ALERTS] Nenhum alerta nas últimas 24 horas")
+
+            # Verificar alertas a cada 5 minutos
+            await asyncio.sleep(300)
+
+        except asyncio.CancelledError:
+            logger.info("[ALERTS] Loop de verificação de alertas cancelado")
+            break
+        except Exception as e:
+            logger.error(f"[ALERTS] Erro no loop de verificação de alertas: {e}")
+            await asyncio.sleep(60)  # Aguardar 1 minuto em caso de erro
 
 
 async def handle_stream_change_notification(change_type, stream_data=None):
