@@ -925,22 +925,28 @@ def check_log_table():
             except Exception:
                 prev_autocommit = False
 
-            # Salvar lock_timeout atual e aumentar temporariamente para DDL
+            # Salvar lock_timeout e statement_timeout atuais e aumentar temporariamente para DDL
             prev_lock_timeout = None
+            prev_statement_timeout = None
             try:
                 with conn.cursor() as c:
                     c.execute("SHOW lock_timeout")
                     prev_lock_timeout = c.fetchone()[0]
-                    c.execute("SET lock_timeout = '60000'")  # 60s
+                    c.execute("SHOW statement_timeout")
+                    prev_statement_timeout = c.fetchone()[0]
+                    c.execute("SET lock_timeout = '300000'")  # 5min
+                    c.execute("SET statement_timeout = '300000'")  # 5min para DDL
             except Exception as e:
-                logger.warning(f"Não foi possível ajustar lock_timeout: {e}")
+                logger.warning(f"Não foi possível ajustar timeouts: {e}")
 
             lock_acquired = False
             try:
+                logger.debug("Tentando adquirir advisory lock...")
                 # Tentar obter um bloqueio consultivo (sem aguardar)
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
                     lock_acquired = cursor.fetchone()[0]
+                logger.debug(f"Lock adquirido: {lock_acquired}")
 
                 if not lock_acquired:
                     logger.warning(
@@ -948,6 +954,7 @@ def check_log_table():
                     )
                     return False
 
+                logger.debug("Iniciando criação da tabela IF NOT EXISTS...")
                 # Criar tabela se não existir (sem checagem prévia para reduzir janelas de corrida)
                 create_table_sql = f"""
 CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
@@ -970,7 +977,9 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                 """
                 with conn.cursor() as cursor:
                     cursor.execute(create_table_sql)
+                logger.debug("Criação da tabela concluída.")
 
+                logger.debug("Adicionando coluna identified_by IF NOT EXISTS...")
                 # Garantir coluna 'identified_by'
                 with conn.cursor() as cursor:
                     add_sql = (
@@ -978,7 +987,9 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                         "ADD COLUMN IF NOT EXISTS identified_by VARCHAR(10);"
                     )
                     cursor.execute(add_sql)
+                logger.debug("Adição de coluna identified_by concluída.")
 
+                logger.debug("Removendo coluna identified_by_server IF EXISTS...")
                 # Remover coluna obsoleta 'identified_by_server' se existir
                 with conn.cursor() as cursor:
                     drop_sql = (
@@ -986,10 +997,12 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                         "DROP COLUMN IF EXISTS identified_by_server;"
                     )
                     cursor.execute(drop_sql)
+                logger.debug("Remoção de coluna identified_by_server concluída.")
 
                 logger.info(
                     f"Tabela de logs '{DB_TABLE_NAME}' verificada/ajustada com sucesso!"
                 )
+                logger.debug("Verificação da tabela concluída com sucesso.")
                 return True
 
             except psycopg2.errors.LockNotAvailable as e:
@@ -1009,13 +1022,18 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                     pass
                 return False
             finally:
-                # Restaurar lock_timeout anterior
+                logger.debug("Restaurando timeouts...")
+                # Restaurar timeouts anteriores
                 try:
-                    if prev_lock_timeout is not None:
-                        with conn.cursor() as c:
+                    with conn.cursor() as c:
+                        if prev_lock_timeout is not None:
                             c.execute(f"SET lock_timeout = '{prev_lock_timeout}'")
+                        if prev_statement_timeout is not None:
+                            c.execute(f"SET statement_timeout = '{prev_statement_timeout}'")
                 except Exception as e:
-                    logger.debug(f"Falha ao restaurar lock_timeout: {e}")
+                    logger.debug(f"Falha ao restaurar timeouts: {e}")
+                else:
+                    logger.debug("Timeouts restaurados.")
 
                 # Liberar o bloqueio consultivo
                 try:
@@ -1804,17 +1822,16 @@ async def process_stream(stream, last_songs):
             cycle_count += 1
             logger.info(f"Processando streaming: {name} (ciclo {cycle_count})")
 
-            # CORREÇÃO: Verificar lock a cada 3 ciclos ao invés de todo ciclo
-            # Isso reduz overhead e race conditions
-            if cycle_count % 3 == 1:  # Verificar a cada 3 ciclos
-                has_lock = await asyncio.to_thread(
-                    acquire_stream_lock, stream_key, SERVER_ID
+            # CORREÇÃO: Renovar lock a cada ciclo para garantir estabilidade
+            # Isso evita que o lock expire durante o processamento
+            has_lock = await asyncio.to_thread(
+                acquire_stream_lock, stream_key, SERVER_ID
+            )
+            if not has_lock:
+                logger.warning(
+                    f"Stream {name} ({stream_key}) perdeu lock. Encerrando processamento."
                 )
-                if not has_lock:
-                    logger.warning(
-                        f"Stream {name} ({stream_key}) perdeu lock. Encerrando processamento."
-                    )
-                    break
+                break
 
             current_segment_path = await capture_stream_segment(
                 name, url, duration=None
@@ -2812,8 +2829,11 @@ async def main():
         rotation_task = register_task(asyncio.create_task(check_rotation_schedule()))
         tasks.append(rotation_task)
 
-    # Evitar criação duplicada de tasks de streams; streams já foram agendados anteriormente
-    tasks_to_gather.extend(tasks)
+    # Adicionar tasks de streams apenas se não foram adicionadas anteriormente
+    # Isso evita a criação duplicada de tasks
+    if tasks:
+        logger.info(f"Adicionando {len(tasks)} tasks de streams existentes ao gather")
+        tasks_to_gather.extend(tasks)
 
     try:
         await asyncio.gather(*tasks_to_gather, return_exceptions=True)
