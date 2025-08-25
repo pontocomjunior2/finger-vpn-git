@@ -132,7 +132,7 @@ except ImportError:
     # Considerar logar um aviso se SFTP for o método escolhido
 
 # Carregar variáveis de ambiente
-load_dotenv(dotenv_path=".env")
+load_dotenv(dotenv_path="app/.env")
 
 # Configuração para distribuição de carga entre servidores
 SERVER_ID = os.getenv("SERVER_ID", socket.gethostname())  # ID único para cada servidor
@@ -389,14 +389,28 @@ def clean_string(text: str) -> str:
 
     # Remove acentos
     text = unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII")
-    
+
     # Remove conteúdo entre parênteses (incluindo os parênteses)
     text = re.sub(r"\([^)]*\)", "", text)
     text = re.sub(r"\[[^\]]*\]", "", text)
-    
+
     # Remove palavras comuns que podem variar
-    common_words = ["ao vivo", "live", "remix", "version", "feat", "ft", "featuring", "cover", 
-                    "extended", "radio edit", "original mix", "remastered", "official", "video"]
+    common_words = [
+        "ao vivo",
+        "live",
+        "remix",
+        "version",
+        "feat",
+        "ft",
+        "featuring",
+        "cover",
+        "extended",
+        "radio edit",
+        "original mix",
+        "remastered",
+        "official",
+        "video",
+    ]
     for word in common_words:
         text = re.sub(r"\b" + word + r"\b", "", text, flags=re.IGNORECASE)
 
@@ -409,11 +423,13 @@ def clean_string(text: str) -> str:
     return text
 
 
-def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = None) -> bool:
+def check_recent_insertion(
+    name: str, song_title: str, artist: str, isrc: str = None
+) -> bool:
     """
     Verifica se já existe uma inserção recente para este stream/música usando ISRC como identificador principal.
     Se o ISRC não estiver disponível, utiliza a verificação por similaridade de título e artista.
-    
+
     Utiliza uma abordagem mais robusta para detecção de duplicatas:
     1. Verificação prioritária por ISRC (identificador único internacional)
     2. Normalização avançada de strings como fallback (remoção de parênteses, palavras comuns, etc)
@@ -428,7 +444,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
             # Aumentar a janela de verificação para capturar mais duplicatas potenciais
             # 7200 segundos = 2 horas (dobro da janela anterior)
             window_start = datetime.now() - timedelta(seconds=7200)
-            
+
             # Se temos um ISRC válido, usamos ele como critério principal de verificação
             if isrc and isrc != "ISRC não disponível" and isrc.strip() != "":
                 cursor.execute(
@@ -443,7 +459,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
                     """,
                     (name, isrc, window_start),
                 )
-                
+
                 results = cursor.fetchall()
                 if results:
                     # Encontrou duplicata por ISRC
@@ -453,7 +469,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
                         f"(original: {first_match[3]} por {first_match[4]} em {first_match[1]} {first_match[2]})"
                     )
                     return True
-            
+
             # Se não temos ISRC ou não encontramos por ISRC, fazemos a verificação por título e artista
             cursor.execute(
                 """
@@ -474,7 +490,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
             # Limpar strings de entrada
             clean_input_title = clean_string(song_title)
             clean_input_artist = clean_string(artist)
-            
+
             # Verificação de strings vazias após limpeza
             if not clean_input_title or not clean_input_artist:
                 logger.warning(
@@ -492,7 +508,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
 
                 clean_db_title = clean_string(db_title)
                 clean_db_artist = clean_string(db_artist)
-                
+
                 # Verificação de strings vazias após limpeza para dados do DB
                 if not clean_db_title or not clean_db_artist:
                     if not clean_db_title:
@@ -514,41 +530,50 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
                         f"(ID: {db_id}, criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
                     )
                     return True
-                
+
                 # Cálculo de similaridade de título usando diferentes métodos
                 title_exact_match = clean_input_title == clean_db_title
-                title_contains = clean_input_title in clean_db_title or clean_db_title in clean_input_title
-                
+                title_contains = (
+                    clean_input_title in clean_db_title
+                    or clean_db_title in clean_input_title
+                )
+
                 # Verificação de prefixo/sufixo mais robusta
                 title_prefix_match = False
                 title_suffix_match = False
-                
+
                 if len(clean_input_title) >= 5 and len(clean_db_title) >= 5:
                     # Verificar os primeiros 5 caracteres
                     title_prefix_match = clean_input_title[:5] == clean_db_title[:5]
                     # Verificar os últimos 5 caracteres
                     title_suffix_match = clean_input_title[-5:] == clean_db_title[-5:]
-                
+
                 # Cálculo de similaridade de artista
                 artist_exact_match = clean_input_artist == clean_db_artist
-                artist_contains = clean_input_artist in clean_db_artist or clean_db_artist in clean_input_artist
-                
+                artist_contains = (
+                    clean_input_artist in clean_db_artist
+                    or clean_db_artist in clean_input_artist
+                )
+
                 # Verificação de prefixo para artista
                 artist_prefix_match = False
                 if len(clean_input_artist) >= 3 and len(clean_db_artist) >= 3:
                     artist_prefix_match = clean_input_artist[:3] == clean_db_artist[:3]
-                
+
                 # Níveis de similaridade
-                high_similarity = (title_exact_match or (title_contains and (title_prefix_match or title_suffix_match))) and \
-                                 (artist_exact_match or artist_contains)
-                
-                medium_similarity = (title_contains or title_prefix_match or title_suffix_match) and \
-                                  (artist_contains or artist_prefix_match)
+                high_similarity = (
+                    title_exact_match
+                    or (title_contains and (title_prefix_match or title_suffix_match))
+                ) and (artist_exact_match or artist_contains)
+
+                medium_similarity = (
+                    title_contains or title_prefix_match or title_suffix_match
+                ) and (artist_contains or artist_prefix_match)
 
                 # Ajustar threshold baseado no tempo decorrido e nível de similaridade
                 if high_similarity:
                     # Alta similaridade: janela de 120 minutos (7200 segundos)
-                    if time_diff < 7200:  
+                    if time_diff < 7200:
                         logger.info(
                             f"Duplicata ALTA SIMILARIDADE detectada: {song_title} - {artist} em {name} "
                             f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
@@ -556,7 +581,7 @@ def check_recent_insertion(name: str, song_title: str, artist: str, isrc: str = 
                         return True
                 elif medium_similarity:
                     # Média similaridade: janela de 60 minutos (3600 segundos)
-                    if time_diff < 3600:  
+                    if time_diff < 3600:
                         logger.info(
                             f"Duplicata MÉDIA SIMILARIDADE detectada: {song_title} - {artist} em {name} "
                             f"(similar a: '{db_title}' - '{db_artist}' criado há {int(time_diff/60)}min atrás - {SERVER_ID})"
@@ -867,7 +892,9 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                 return True
 
             except psycopg2.errors.LockNotAvailable as e:
-                logger.warning(f"Operação atingiu lock_timeout durante DDL/verificação: {e}")
+                logger.warning(
+                    f"Operação atingiu lock_timeout durante DDL/verificação: {e}"
+                )
                 try:
                     conn.rollback()
                 except Exception:
@@ -890,7 +917,9 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                         if prev_lock_timeout is not None:
                             c.execute(f"SET lock_timeout = '{prev_lock_timeout}'")
                         if prev_statement_timeout is not None:
-                            c.execute(f"SET statement_timeout = '{prev_statement_timeout}'")
+                            c.execute(
+                                f"SET statement_timeout = '{prev_statement_timeout}'"
+                            )
                 except Exception as e:
                     logger.debug(f"Falha ao restaurar timeouts: {e}")
                 else:
@@ -2329,7 +2358,9 @@ async def main():
         else:
             # Modo sem distribuição - processar todos os streams
             assigned_streams = all_streams
-            logger.info("Modo de distribuição desativado - processando todos os streams")
+            logger.info(
+                "Modo de distribuição desativado - processando todos os streams"
+            )
 
         # Cancelar todas as tarefas existentes
         for task in tasks:
@@ -2345,8 +2376,6 @@ async def main():
             f"{len(tasks)} tasks criadas para {len(assigned_streams)} streams atribuídos."
         )
         STREAMS = assigned_streams
-
-
 
     # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
     if DISTRIBUTE_LOAD:
@@ -2378,7 +2407,7 @@ async def main():
             asyncio.create_task(orchestrator_heartbeat_loop())
         )
         logger.info("Tarefa de heartbeat do orquestrador iniciada")
-        
+
         # Adicionar tarefa de sincronização dinâmica do orquestrador
         orchestrator_sync_task = register_task(
             asyncio.create_task(orchestrator_sync_loop())
@@ -2465,32 +2494,43 @@ async def orchestrator_heartbeat_loop():
             if orchestrator_client:
                 # Usar heartbeat aprimorado com verificação de consistência
                 result = await orchestrator_client.enhanced_heartbeat()
-                
-                if result.get('status') == 'success':
-                    logger.debug(f"Heartbeat aprimorado enviado - Instância {SERVER_ID}")
-                    
+
+                if result.get("status") == "success":
+                    logger.debug(
+                        f"Heartbeat aprimorado enviado - Instância {SERVER_ID}"
+                    )
+
                     # Log detalhado da verificação de consistência
-                    consistency_check = result.get('consistency_check', {})
-                    if consistency_check.get('status') == 'inconsistent':
-                        logger.warning(f"[HEARTBEAT] Inconsistência detectada: {consistency_check}")
-                        
+                    consistency_check = result.get("consistency_check", {})
+                    if consistency_check.get("status") == "inconsistent":
+                        logger.warning(
+                            f"[HEARTBEAT] Inconsistência detectada: {consistency_check}"
+                        )
+
                         # Se houve auto-recuperação, recarregar streams dinamicamente
-                        if consistency_check.get('action_taken') == 'auto_recovery':
-                            logger.info("[HEARTBEAT] Executando reload_streams_dynamic após auto-recuperação")
+                        if consistency_check.get("action_taken") == "auto_recovery":
+                            logger.info(
+                                "[HEARTBEAT] Executando reload_streams_dynamic após auto-recuperação"
+                            )
                             try:
                                 await reload_streams_dynamic()
                             except Exception as reload_err:
-                                logger.error(f"[HEARTBEAT] Erro ao recarregar streams após auto-recuperação: {reload_err}")
-                    
-                    elif consistency_check.get('status') == 'consistent':
-                        logger.debug(f"[HEARTBEAT] Estados sincronizados - Local: {consistency_check.get('local_streams', 0)}, Orquestrador: {consistency_check.get('orchestrator_streams', 0)}")
-                
+                                logger.error(
+                                    f"[HEARTBEAT] Erro ao recarregar streams após auto-recuperação: {reload_err}"
+                                )
+
+                    elif consistency_check.get("status") == "consistent":
+                        logger.debug(
+                            f"[HEARTBEAT] Estados sincronizados - Local: {consistency_check.get('local_streams', 0)}, Orquestrador: {consistency_check.get('orchestrator_streams', 0)}"
+                        )
+
                 else:
                     logger.error(f"[HEARTBEAT] Falha no heartbeat aprimorado: {result}")
 
         except Exception as e:
             logger.error(f"Erro no heartbeat aprimorado do orquestrador: {e}")
             import traceback
+
             logger.error(f"[HEARTBEAT] Traceback: {traceback.format_exc()}")
 
         finally:
@@ -2502,37 +2542,45 @@ async def orchestrator_sync_loop():
     """Loop para sincronização dinâmica de streams com o orquestrador a cada 3 segundos."""
     global STREAMS, tasks, last_songs
     last_assigned_streams = set()
-    
+
     logger.info("Iniciando loop de sincronização dinâmica do orquestrador")
-    
+
     while not shutdown_event.is_set():
         try:
             logger.info("[SYNC] Executando ciclo de sincronização dinâmica")
-            
+
             if orchestrator_client:
                 logger.info(f"[SYNC] orchestrator_client existe: {orchestrator_client}")
-                logger.info(f"[SYNC] is_registered: {orchestrator_client.is_registered}")
-                
+                logger.info(
+                    f"[SYNC] is_registered: {orchestrator_client.is_registered}"
+                )
+
                 if orchestrator_client.is_registered:
-                    logger.info("[SYNC] Cliente do orquestrador registrado, solicitando streams")
-                    
+                    logger.info(
+                        "[SYNC] Cliente do orquestrador registrado, solicitando streams"
+                    )
+
                     # Solicitar streams atuais do orquestrador
-                    current_assigned_stream_ids = await orchestrator_client.request_streams()
+                    current_assigned_stream_ids = (
+                        await orchestrator_client.request_streams()
+                    )
                     current_assigned_streams = set(current_assigned_stream_ids)
-                    
-                    logger.info(f"[SYNC] Streams recebidos do orquestrador: {current_assigned_streams}")
+
+                    logger.info(
+                        f"[SYNC] Streams recebidos do orquestrador: {current_assigned_streams}"
+                    )
                     logger.info(f"[SYNC] Streams anteriores: {last_assigned_streams}")
-                    
+
                     # Verificar se houve mudanças nos assignments
                     if current_assigned_streams != last_assigned_streams:
                         logger.info(
                             f"[SYNC] Mudança detectada nos assignments: {len(current_assigned_streams)} streams atribuídos"
                         )
-                        
+
                         # Recarregar streams dinamicamente
                         await reload_streams_dynamic(current_assigned_stream_ids)
                         last_assigned_streams = current_assigned_streams
-                        
+
                         logger.info(
                             f"[SYNC] Sincronização dinâmica concluída: {len(STREAMS)} streams ativos"
                         )
@@ -2541,47 +2589,60 @@ async def orchestrator_sync_loop():
                             f"[SYNC] Nenhuma mudança nos assignments: {len(current_assigned_streams)} streams"
                         )
                 else:
-                    logger.info(f"[SYNC] Cliente do orquestrador não registrado. is_registered={orchestrator_client.is_registered}")
+                    logger.info(
+                        f"[SYNC] Cliente do orquestrador não registrado. is_registered={orchestrator_client.is_registered}"
+                    )
             else:
                 logger.info("[SYNC] orchestrator_client é None")
-            
+
             logger.info("[SYNC] Aguardando 3 segundos antes da próxima verificação")
-            await asyncio.sleep(3)  # Verificar a cada 3 segundos para resposta mais rápida
-            
+            await asyncio.sleep(
+                3
+            )  # Verificar a cada 3 segundos para resposta mais rápida
+
         except asyncio.CancelledError:
             logger.info("[SYNC] Loop de sincronização do orquestrador cancelado")
             break
         except Exception as e:
             logger.error(f"[SYNC] Erro no loop de sincronização do orquestrador: {e}")
             import traceback
+
             logger.error(f"[SYNC] Traceback: {traceback.format_exc()}")
-            await asyncio.sleep(5)  # Aguardar menos tempo em caso de erro para recuperação mais rápida
+            await asyncio.sleep(
+                5
+            )  # Aguardar menos tempo em caso de erro para recuperação mais rápida
 
 
 async def handle_stream_change_notification(change_type, stream_data=None):
     """Handle notificações em tempo real de mudanças de streams.
-    
+
     Args:
         change_type: Tipo de mudança ('assignment_changed', 'stream_updated', 'stream_added', 'stream_removed')
         stream_data: Dados do stream (opcional, dependendo do tipo de mudança)
     """
     try:
         logger.info(f"Notificação de mudança recebida: {change_type}")
-        
-        if change_type == 'assignment_changed':
+
+        if change_type == "assignment_changed":
             # Forçar sincronização imediata
             if orchestrator_client and orchestrator_client.is_registered:
-                current_assigned_stream_ids = await orchestrator_client.request_streams()
+                current_assigned_stream_ids = (
+                    await orchestrator_client.request_streams()
+                )
                 await reload_streams_dynamic(current_assigned_stream_ids)
-                logger.info("Sincronização imediata concluída devido a mudança de assignment")
-        
-        elif change_type in ['stream_updated', 'stream_added', 'stream_removed']:
+                logger.info(
+                    "Sincronização imediata concluída devido a mudança de assignment"
+                )
+
+        elif change_type in ["stream_updated", "stream_added", "stream_removed"]:
             # Recarregar todos os streams do banco de dados
             if orchestrator_client and orchestrator_client.is_registered:
-                current_assigned_stream_ids = await orchestrator_client.request_streams()
+                current_assigned_stream_ids = (
+                    await orchestrator_client.request_streams()
+                )
                 await reload_streams_dynamic(current_assigned_stream_ids)
                 logger.info(f"Streams recarregados devido a {change_type}")
-        
+
     except Exception as e:
         logger.error(f"Erro ao processar notificação de mudança: {e}")
 
@@ -2589,54 +2650,64 @@ async def handle_stream_change_notification(change_type, stream_data=None):
 async def reload_streams_dynamic(assigned_stream_ids):
     """Recarrega streams dinamicamente sem reinicializar todo o sistema."""
     global STREAMS, tasks, last_songs
-    
+
     try:
-        logger.info(f"[RELOAD_DYNAMIC] Iniciando reload dinâmico com {len(assigned_stream_ids)} streams atribuídos: {assigned_stream_ids}")
-        
+        logger.info(
+            f"[RELOAD_DYNAMIC] Iniciando reload dinâmico com {len(assigned_stream_ids)} streams atribuídos: {assigned_stream_ids}"
+        )
+
         # Carregar todos os streams disponíveis
         all_streams = load_streams()
         if not all_streams:
             logger.error("[RELOAD_DYNAMIC] Falha ao carregar streams do banco de dados")
             return
-        
-        logger.info(f"[RELOAD_DYNAMIC] {len(all_streams)} streams carregados do banco de dados")
-        
+
+        logger.info(
+            f"[RELOAD_DYNAMIC] {len(all_streams)} streams carregados do banco de dados"
+        )
+
         # Converter IDs para string para compatibilidade
         assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
-        
+
         # Filtrar streams atribuídos
         new_assigned_streams = [
             stream
             for stream in all_streams
             if stream.get("index", "") in assigned_stream_ids_str
         ]
-        
-        logger.info(f"[RELOAD_DYNAMIC] {len(new_assigned_streams)} streams filtrados para esta instância")
-        
+
+        logger.info(
+            f"[RELOAD_DYNAMIC] {len(new_assigned_streams)} streams filtrados para esta instância"
+        )
+
         # Identificar streams que precisam ser removidos
         current_stream_ids = {stream.get("index", "") for stream in STREAMS}
         new_stream_ids = {stream.get("index", "") for stream in new_assigned_streams}
-        
+
         streams_to_remove = current_stream_ids - new_stream_ids
         streams_to_add = new_stream_ids - current_stream_ids
-        
+
         logger.info(f"[RELOAD_DYNAMIC] Análise de mudanças:")
         logger.info(f"[RELOAD_DYNAMIC]   - Streams atuais: {current_stream_ids}")
         logger.info(f"[RELOAD_DYNAMIC]   - Novos streams: {new_stream_ids}")
         logger.info(f"[RELOAD_DYNAMIC]   - Para remover: {streams_to_remove}")
         logger.info(f"[RELOAD_DYNAMIC]   - Para adicionar: {streams_to_add}")
-        
+
         # Cancelar tarefas de streams removidos
         if streams_to_remove:
-            logger.info(f"[RELOAD_DYNAMIC] Removendo {len(streams_to_remove)} streams: {streams_to_remove}")
+            logger.info(
+                f"[RELOAD_DYNAMIC] Removendo {len(streams_to_remove)} streams: {streams_to_remove}"
+            )
             tasks_to_cancel = []
             for i, task in enumerate(tasks):
                 if i < len(STREAMS):
                     stream_id = STREAMS[i].get("index", "")
                     if stream_id in streams_to_remove:
                         tasks_to_cancel.append(task)
-                        logger.debug(f"[RELOAD_DYNAMIC] Marcando tarefa do stream {stream_id} para cancelamento")
-            
+                        logger.debug(
+                            f"[RELOAD_DYNAMIC] Marcando tarefa do stream {stream_id} para cancelamento"
+                        )
+
             logger.info(f"[RELOAD_DYNAMIC] Cancelando {len(tasks_to_cancel)} tarefas")
             for task in tasks_to_cancel:
                 if not task.done():
@@ -2644,29 +2715,35 @@ async def reload_streams_dynamic(assigned_stream_ids):
                     logger.debug(f"[RELOAD_DYNAMIC] Tarefa cancelada")
                 if task in tasks:
                     tasks.remove(task)
-        
+
         # Adicionar tarefas para novos streams
         if streams_to_add:
-            logger.info(f"[RELOAD_DYNAMIC] Adicionando {len(streams_to_add)} novos streams: {streams_to_add}")
+            logger.info(
+                f"[RELOAD_DYNAMIC] Adicionando {len(streams_to_add)} novos streams: {streams_to_add}"
+            )
             for stream in new_assigned_streams:
                 stream_id = stream.get("index", "")
                 if stream_id in streams_to_add:
                     stream_name = stream.get("name", "Unknown")
                     stream_url = stream.get("url", "Unknown")
-                    logger.debug(f"[RELOAD_DYNAMIC] Criando tarefa para stream {stream_id} ({stream_name}) - URL: {stream_url}")
+                    logger.debug(
+                        f"[RELOAD_DYNAMIC] Criando tarefa para stream {stream_id} ({stream_name}) - URL: {stream_url}"
+                    )
                     task = asyncio.create_task(process_stream(stream, last_songs))
                     register_task(task)
                     tasks.append(task)
-                    logger.debug(f"[RELOAD_DYNAMIC] Tarefa criada e registrada para stream {stream_id}")
-        
+                    logger.debug(
+                        f"[RELOAD_DYNAMIC] Tarefa criada e registrada para stream {stream_id}"
+                    )
+
         # Atualizar lista global de streams
         STREAMS = new_assigned_streams
-        
+
         logger.info(
             f"Sincronização dinâmica concluída: {len(STREAMS)} streams ativos, "
             f"{len(streams_to_remove)} removidos, {len(streams_to_add)} adicionados"
         )
-        
+
     except Exception as e:
         logger.error(f"Erro durante sincronização dinâmica: {e}")
         # Em caso de erro, fazer reload completo como fallback
