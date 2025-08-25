@@ -1,0 +1,23 @@
+
+# PATCH PARA CORREÇÃO DO ERRO DE HEARTBEAT
+# Adicionar esta correção na função send_heartbeat() no fingerv7.py
+
+# PROBLEMA: SERVER_ID pode ser string, mas está sendo usado em operação matemática
+# LINHA PROBLEMÁTICA (aproximadamente linha 2396):
+# (int(s.get("index", 0)) % TOTAL_SERVERS) == (SERVER_ID - 1)
+
+# SOLUÇÃO: Converter SERVER_ID para int quando necessário
+# SUBSTITUIR a linha problemática por:
+
+# Garantir que SERVER_ID seja tratado como int para operações matemáticas
+try:
+    server_id_int = int(SERVER_ID) if isinstance(SERVER_ID, str) and SERVER_ID.isdigit() else 1
+except (ValueError, TypeError):
+    server_id_int = 1
+
+# Usar server_id_int na operação matemática:
+(int(s.get("index", 0)) % TOTAL_SERVERS) == (server_id_int - 1)
+
+# OU ALTERNATIVA MAIS SIMPLES:
+# Se SERVER_ID for sempre string, usar hash consistente:
+# hash(SERVER_ID) % TOTAL_SERVERS == int(s.get("index", 0)) % TOTAL_SERVERS

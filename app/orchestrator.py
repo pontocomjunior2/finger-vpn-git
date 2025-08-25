@@ -93,6 +93,11 @@ class StreamRelease(BaseModel):
     server_id: str
     stream_ids: List[int]
 
+class DiagnosticRequest(BaseModel):
+    server_id: str
+    local_streams: List[int]  # Lista de stream IDs que a instância acredita ter
+    local_stream_count: int
+
 # Função de ciclo de vida da aplicação
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1073,6 +1078,120 @@ async def get_stream_assignments():
     except Exception as e:
         logger.error(f"Erro ao listar atribuições: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao listar atribuições: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.post("/diagnostic")
+async def diagnostic_check(request: DiagnosticRequest):
+    """Endpoint de diagnóstico para comparar estado local com o orquestrador."""
+    conn = orchestrator.get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    
+    try:
+        # Obter streams atribuídos pelo orquestrador para esta instância
+        cursor.execute("""
+            SELECT stream_id FROM orchestrator_stream_assignments 
+            WHERE server_id = %s AND status = 'active'
+            ORDER BY stream_id
+        """, (request.server_id,))
+        
+        orchestrator_streams = [row['stream_id'] for row in cursor.fetchall()]
+        
+        # Obter informações da instância
+        cursor.execute("""
+            SELECT current_streams, max_streams, status, last_heartbeat
+            FROM orchestrator_instances 
+            WHERE server_id = %s
+        """, (request.server_id,))
+        
+        instance_info = cursor.fetchone()
+        if not instance_info:
+            raise HTTPException(status_code=404, detail=f"Instância {request.server_id} não encontrada")
+        
+        # Comparar estados
+        local_streams_set = set(request.local_streams)
+        orchestrator_streams_set = set(orchestrator_streams)
+        
+        # Identificar inconsistências
+        streams_only_local = local_streams_set - orchestrator_streams_set
+        streams_only_orchestrator = orchestrator_streams_set - local_streams_set
+        streams_in_sync = local_streams_set & orchestrator_streams_set
+        
+        # Verificar contagens
+        count_mismatch = request.local_stream_count != len(orchestrator_streams)
+        orchestrator_count_mismatch = instance_info['current_streams'] != len(orchestrator_streams)
+        
+        # Determinar status de sincronização
+        is_synchronized = (
+            len(streams_only_local) == 0 and 
+            len(streams_only_orchestrator) == 0 and 
+            not count_mismatch and 
+            not orchestrator_count_mismatch
+        )
+        
+        # Calcular tempo desde último heartbeat
+        last_heartbeat = instance_info['last_heartbeat']
+        heartbeat_age_seconds = None
+        if last_heartbeat:
+            heartbeat_age_seconds = (datetime.now() - last_heartbeat).total_seconds()
+        
+        result = {
+            'server_id': request.server_id,
+            'timestamp': datetime.now().isoformat(),
+            'is_synchronized': is_synchronized,
+            'synchronization_status': 'OK' if is_synchronized else 'INCONSISTENT',
+            'local_state': {
+                'stream_count': request.local_stream_count,
+                'streams': sorted(request.local_streams)
+            },
+            'orchestrator_state': {
+                'stream_count': len(orchestrator_streams),
+                'streams': sorted(orchestrator_streams),
+                'instance_current_streams': instance_info['current_streams']
+            },
+            'inconsistencies': {
+                'streams_only_in_local': sorted(list(streams_only_local)),
+                'streams_only_in_orchestrator': sorted(list(streams_only_orchestrator)),
+                'count_mismatch': count_mismatch,
+                'orchestrator_count_mismatch': orchestrator_count_mismatch
+            },
+            'streams_in_sync': sorted(list(streams_in_sync)),
+            'instance_info': {
+                'status': instance_info['status'],
+                'max_streams': instance_info['max_streams'],
+                'last_heartbeat': last_heartbeat.isoformat() if last_heartbeat else None,
+                'heartbeat_age_seconds': heartbeat_age_seconds
+            },
+            'recommendations': []
+        }
+        
+        # Adicionar recomendações baseadas nas inconsistências
+        if streams_only_local:
+            result['recommendations'].append(f"Instância tem {len(streams_only_local)} streams não reconhecidos pelo orquestrador")
+        
+        if streams_only_orchestrator:
+            result['recommendations'].append(f"Orquestrador tem {len(streams_only_orchestrator)} streams não processados pela instância")
+        
+        if count_mismatch:
+            result['recommendations'].append("Contagem local de streams não confere com orquestrador")
+        
+        if orchestrator_count_mismatch:
+            result['recommendations'].append("Contagem do orquestrador não confere com assignments ativos")
+        
+        if heartbeat_age_seconds and heartbeat_age_seconds > 120:
+            result['recommendations'].append(f"Último heartbeat há {heartbeat_age_seconds:.0f} segundos - possível problema de conectividade")
+        
+        if not is_synchronized:
+            result['recommendations'].append("Recomenda-se executar reload_streams_dynamic ou verificação de consistência")
+        
+        logger.info(f"Diagnóstico para {request.server_id}: {'SINCRONIZADO' if is_synchronized else 'INCONSISTENTE'}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Erro no diagnóstico para {request.server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro no diagnóstico: {e}")
     finally:
         cursor.close()
         conn.close()

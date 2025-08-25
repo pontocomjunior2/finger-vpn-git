@@ -2455,22 +2455,43 @@ async def heartbeat_loop():
 
 async def orchestrator_heartbeat_loop():
     """
-    Loop de heartbeat para manter comunicação com o orquestrador central
+    Loop de heartbeat aprimorado para manter comunicação com o orquestrador central
+    Inclui verificação de consistência automática
     """
-    logger.info("Iniciando loop de heartbeat do orquestrador")
+    logger.info("Iniciando loop de heartbeat aprimorado do orquestrador")
 
     while not shutdown_event.is_set():
         try:
             if orchestrator_client:
-                # Enviar heartbeat para o orquestrador
-                await orchestrator_client.send_heartbeat()
-                logger.debug(
-                    f"Heartbeat enviado para orquestrador - Instância {SERVER_ID}"
-                )
+                # Usar heartbeat aprimorado com verificação de consistência
+                result = await orchestrator_client.enhanced_heartbeat()
+                
+                if result.get('status') == 'success':
+                    logger.debug(f"Heartbeat aprimorado enviado - Instância {SERVER_ID}")
+                    
+                    # Log detalhado da verificação de consistência
+                    consistency_check = result.get('consistency_check', {})
+                    if consistency_check.get('status') == 'inconsistent':
+                        logger.warning(f"[HEARTBEAT] Inconsistência detectada: {consistency_check}")
+                        
+                        # Se houve auto-recuperação, recarregar streams dinamicamente
+                        if consistency_check.get('action_taken') == 'auto_recovery':
+                            logger.info("[HEARTBEAT] Executando reload_streams_dynamic após auto-recuperação")
+                            try:
+                                await reload_streams_dynamic()
+                            except Exception as reload_err:
+                                logger.error(f"[HEARTBEAT] Erro ao recarregar streams após auto-recuperação: {reload_err}")
+                    
+                    elif consistency_check.get('status') == 'consistent':
+                        logger.debug(f"[HEARTBEAT] Estados sincronizados - Local: {consistency_check.get('local_streams', 0)}, Orquestrador: {consistency_check.get('orchestrator_streams', 0)}")
+                
+                else:
+                    logger.error(f"[HEARTBEAT] Falha no heartbeat aprimorado: {result}")
 
         except Exception as e:
-            logger.error(f"Erro no heartbeat do orquestrador: {e}")
-            # Em caso de erro, tentar reconectar na próxima iteração
+            logger.error(f"Erro no heartbeat aprimorado do orquestrador: {e}")
+            import traceback
+            logger.error(f"[HEARTBEAT] Traceback: {traceback.format_exc()}")
 
         finally:
             # Aguardar 30 segundos antes do próximo heartbeat
@@ -2570,11 +2591,15 @@ async def reload_streams_dynamic(assigned_stream_ids):
     global STREAMS, tasks, last_songs
     
     try:
+        logger.info(f"[RELOAD_DYNAMIC] Iniciando reload dinâmico com {len(assigned_stream_ids)} streams atribuídos: {assigned_stream_ids}")
+        
         # Carregar todos os streams disponíveis
         all_streams = load_streams()
         if not all_streams:
-            logger.error("Falha ao carregar streams do banco de dados")
+            logger.error("[RELOAD_DYNAMIC] Falha ao carregar streams do banco de dados")
             return
+        
+        logger.info(f"[RELOAD_DYNAMIC] {len(all_streams)} streams carregados do banco de dados")
         
         # Converter IDs para string para compatibilidade
         assigned_stream_ids_str = [str(id) for id in assigned_stream_ids]
@@ -2586,6 +2611,8 @@ async def reload_streams_dynamic(assigned_stream_ids):
             if stream.get("index", "") in assigned_stream_ids_str
         ]
         
+        logger.info(f"[RELOAD_DYNAMIC] {len(new_assigned_streams)} streams filtrados para esta instância")
+        
         # Identificar streams que precisam ser removidos
         current_stream_ids = {stream.get("index", "") for stream in STREAMS}
         new_stream_ids = {stream.get("index", "") for stream in new_assigned_streams}
@@ -2593,31 +2620,44 @@ async def reload_streams_dynamic(assigned_stream_ids):
         streams_to_remove = current_stream_ids - new_stream_ids
         streams_to_add = new_stream_ids - current_stream_ids
         
+        logger.info(f"[RELOAD_DYNAMIC] Análise de mudanças:")
+        logger.info(f"[RELOAD_DYNAMIC]   - Streams atuais: {current_stream_ids}")
+        logger.info(f"[RELOAD_DYNAMIC]   - Novos streams: {new_stream_ids}")
+        logger.info(f"[RELOAD_DYNAMIC]   - Para remover: {streams_to_remove}")
+        logger.info(f"[RELOAD_DYNAMIC]   - Para adicionar: {streams_to_add}")
+        
         # Cancelar tarefas de streams removidos
         if streams_to_remove:
-            logger.info(f"Removendo {len(streams_to_remove)} streams: {streams_to_remove}")
+            logger.info(f"[RELOAD_DYNAMIC] Removendo {len(streams_to_remove)} streams: {streams_to_remove}")
             tasks_to_cancel = []
             for i, task in enumerate(tasks):
                 if i < len(STREAMS):
                     stream_id = STREAMS[i].get("index", "")
                     if stream_id in streams_to_remove:
                         tasks_to_cancel.append(task)
+                        logger.debug(f"[RELOAD_DYNAMIC] Marcando tarefa do stream {stream_id} para cancelamento")
             
+            logger.info(f"[RELOAD_DYNAMIC] Cancelando {len(tasks_to_cancel)} tarefas")
             for task in tasks_to_cancel:
                 if not task.done():
                     task.cancel()
+                    logger.debug(f"[RELOAD_DYNAMIC] Tarefa cancelada")
                 if task in tasks:
                     tasks.remove(task)
         
         # Adicionar tarefas para novos streams
         if streams_to_add:
-            logger.info(f"Adicionando {len(streams_to_add)} novos streams: {streams_to_add}")
+            logger.info(f"[RELOAD_DYNAMIC] Adicionando {len(streams_to_add)} novos streams: {streams_to_add}")
             for stream in new_assigned_streams:
                 stream_id = stream.get("index", "")
                 if stream_id in streams_to_add:
+                    stream_name = stream.get("name", "Unknown")
+                    stream_url = stream.get("url", "Unknown")
+                    logger.debug(f"[RELOAD_DYNAMIC] Criando tarefa para stream {stream_id} ({stream_name}) - URL: {stream_url}")
                     task = asyncio.create_task(process_stream(stream, last_songs))
                     register_task(task)
                     tasks.append(task)
+                    logger.debug(f"[RELOAD_DYNAMIC] Tarefa criada e registrada para stream {stream_id}")
         
         # Atualizar lista global de streams
         STREAMS = new_assigned_streams

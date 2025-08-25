@@ -14,10 +14,12 @@ import logging
 import os
 import socket
 from typing import List, Optional, Dict, Any
+from collections import deque
+from datetime import datetime, timedelta
+import time
 
 import aiohttp
 import json
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,20 @@ class OrchestratorClient:
         # Detectar IP e porta local
         self.local_ip = self._get_local_ip()
         self.local_port = int(os.getenv('LOCAL_PORT', 8000))
+        
+        # Controle de sincronização
+        self.last_consistency_check = 0
+        self.consistency_check_interval = 30  # Verificar consistência a cada 30 segundos
+        self.sync_failures = 0
+        self.max_sync_failures = 3  # Máximo de falhas antes de tentar re-registro
+        
+        # Sistema de alertas proativos
+        self.alert_history = deque(maxlen=100)  # Histórico dos últimos 100 alertas
+        self.error_patterns = deque(maxlen=50)  # Padrões de erro dos últimos 50 eventos
+        self.last_alert_time = {}
+        self.alert_cooldown = 300  # 5 minutos entre alertas do mesmo tipo
+        self.consecutive_failures = 0
+        self.failure_threshold = 5  # Alertar após 5 falhas consecutivas
         
     def _get_local_ip(self) -> str:
         """Detecta o IP local da máquina."""
@@ -297,7 +313,389 @@ class OrchestratorClient:
             "max_streams": self.max_streams,
             "current_streams": self.current_streams,
             "assigned_streams": self.assigned_streams,
-            "heartbeat_active": self.heartbeat_task is not None and not self.heartbeat_task.done()
+            "heartbeat_active": self.heartbeat_task is not None and not self.heartbeat_task.done(),
+            "sync_failures": getattr(self, 'sync_failures', 0),
+            "last_consistency_check": getattr(self, 'last_consistency_check', 0)
+        }
+    
+    async def verify_consistency(self) -> Dict[str, Any]:
+        """Verifica a consistência entre o estado local e o orquestrador."""
+        import time
+        
+        current_time = time.time()
+        if current_time - self.last_consistency_check < self.consistency_check_interval:
+            return {'status': 'skipped', 'reason': 'interval_not_reached'}
+        
+        self.last_consistency_check = current_time
+        
+        try:
+            # Obter status da instância no orquestrador
+            response = await self._make_request('GET', f'/instances/{self.server_id}')
+            
+            if response.get('status') == 'success' and 'data' in response:
+                orchestrator_data = response['data']
+                
+                # Comparar estados
+                local_streams = set(self.assigned_streams)
+                orchestrator_streams = set(orchestrator_data.get('assigned_streams', []))
+                
+                inconsistencies = {
+                    'local_only': list(local_streams - orchestrator_streams),
+                    'orchestrator_only': list(orchestrator_streams - local_streams),
+                    'current_streams_mismatch': self.current_streams != orchestrator_data.get('current_streams', 0)
+                }
+                
+                has_inconsistency = (
+                    inconsistencies['local_only'] or 
+                    inconsistencies['orchestrator_only'] or 
+                    inconsistencies['current_streams_mismatch']
+                )
+                
+                if has_inconsistency:
+                    logger.warning(f"[CONSISTENCY] Inconsistência detectada: {inconsistencies}")
+                    self.sync_failures += 1
+                    
+                    # Tentar auto-recuperação
+                    if self.sync_failures <= self.max_sync_failures:
+                        logger.info(f"[CONSISTENCY] Tentando auto-recuperação ({self.sync_failures}/{self.max_sync_failures})")
+                        await self._auto_recover(orchestrator_data)
+                    else:
+                        logger.error(f"[CONSISTENCY] Máximo de falhas atingido, necessário re-registro")
+                        await self._force_reregister()
+                    
+                    return {
+                        'status': 'inconsistent',
+                        'inconsistencies': inconsistencies,
+                        'sync_failures': self.sync_failures,
+                        'action_taken': 'auto_recovery' if self.sync_failures <= self.max_sync_failures else 'force_reregister'
+                    }
+                else:
+                    # Reset contador de falhas em caso de sucesso
+                    if self.sync_failures > 0:
+                        logger.info(f"[CONSISTENCY] Sincronização restaurada, resetando contador de falhas")
+                        self.sync_failures = 0
+                    
+                    return {
+                        'status': 'consistent',
+                        'local_streams': len(local_streams),
+                        'orchestrator_streams': len(orchestrator_streams)
+                    }
+            else:
+                logger.error(f"[CONSISTENCY] Erro ao verificar status no orquestrador: {response}")
+                return {'status': 'error', 'reason': f'orchestrator_response_error'}
+                
+        except Exception as e:
+            logger.error(f"[CONSISTENCY] Erro durante verificação: {e}")
+            return {'status': 'error', 'reason': str(e)}
+    
+    async def _auto_recover(self, orchestrator_data: Dict[str, Any]) -> None:
+        """Tenta recuperar automaticamente a sincronização."""
+        try:
+            # Atualizar estado local com dados do orquestrador
+            orchestrator_streams = orchestrator_data.get('assigned_streams', [])
+            orchestrator_current = orchestrator_data.get('current_streams', 0)
+            
+            logger.info(f"[AUTO_RECOVER] Sincronizando estado local com orquestrador")
+            logger.info(f"[AUTO_RECOVER] Local: {self.assigned_streams} -> Orquestrador: {orchestrator_streams}")
+            
+            self.assigned_streams = orchestrator_streams.copy()
+            self.current_streams = orchestrator_current
+            
+            logger.info(f"[AUTO_RECOVER] Estado local atualizado com sucesso")
+            
+        except Exception as e:
+            logger.error(f"[AUTO_RECOVER] Erro durante auto-recuperação: {e}")
+            raise
+    
+    async def _force_reregister(self) -> None:
+        """Força um novo registro no orquestrador."""
+        try:
+            logger.info(f"[FORCE_REREGISTER] Iniciando re-registro forçado")
+            
+            # Resetar estado
+            self.is_registered = False
+            self.assigned_streams = []
+            self.current_streams = 0
+            self.sync_failures = 0
+            
+            # Tentar novo registro
+            success = await self.register()
+            if success:
+                logger.info(f"[FORCE_REREGISTER] Re-registro bem-sucedido")
+            else:
+                logger.error(f"[FORCE_REREGISTER] Falha no re-registro")
+                
+        except Exception as e:
+            logger.error(f"[FORCE_REREGISTER] Erro durante re-registro: {e}")
+    
+    async def enhanced_heartbeat(self) -> Dict[str, Any]:
+        """Heartbeat aprimorado com verificação de estado de streams."""
+        try:
+            # Enviar heartbeat normal
+            heartbeat_success = await self.send_heartbeat()
+            
+            # Registrar resultado da operação de heartbeat
+            self.record_operation_result('heartbeat', heartbeat_success, None if heartbeat_success else 'Falha no heartbeat básico')
+            
+            if not heartbeat_success:
+                return {'status': 'heartbeat_failed'}
+            
+            # Verificar consistência periodicamente
+            consistency_result = await self.verify_consistency()
+            
+            # Registrar resultado da verificação de consistência
+            consistency_success = consistency_result.get('status') == 'consistent'
+            self.record_operation_result('consistency_check', consistency_success, 
+                                       'Inconsistência detectada' if not consistency_success else None)
+            
+            return {
+                'status': 'success',
+                'heartbeat': 'sent',
+                'consistency_check': consistency_result
+            }
+            
+        except Exception as e:
+            logger.error(f"[ENHANCED_HEARTBEAT] Erro: {e}")
+            self.record_operation_result('enhanced_heartbeat', False, str(e))
+            return {'status': 'error', 'reason': str(e)}
+    
+    async def run_diagnostic(self, local_streams: List[int], local_stream_count: int) -> Dict[str, Any]:
+        """
+        Executa diagnóstico completo comparando estado local com o orquestrador.
+        
+        Args:
+            local_streams: Lista de IDs de streams que a instância acredita ter
+            local_stream_count: Contagem local de streams
+            
+        Returns:
+            Dict com resultado detalhado do diagnóstico
+        """
+        try:
+            data = {
+                "server_id": self.server_id,
+                "local_streams": local_streams,
+                "local_stream_count": local_stream_count
+            }
+            
+            response = await self._make_request('POST', '/diagnostic', data)
+            
+            logger.info(f"[DIAGNOSTIC] Diagnóstico executado para {self.server_id}: {response.get('synchronization_status', 'UNKNOWN')}")
+            
+            # Log detalhado das inconsistências se houver
+            if not response.get('is_synchronized', True):
+                inconsistencies = response.get('inconsistencies', {})
+                logger.warning(f"[DIAGNOSTIC] Inconsistências detectadas para {self.server_id}:")
+                
+                if inconsistencies.get('streams_only_in_local'):
+                    logger.warning(f"[DIAGNOSTIC] Streams apenas locais: {inconsistencies['streams_only_in_local']}")
+                
+                if inconsistencies.get('streams_only_in_orchestrator'):
+                    logger.warning(f"[DIAGNOSTIC] Streams apenas no orquestrador: {inconsistencies['streams_only_in_orchestrator']}")
+                
+                if inconsistencies.get('count_mismatch'):
+                    logger.warning(f"[DIAGNOSTIC] Contagem local ({local_stream_count}) != orquestrador ({response.get('orchestrator_state', {}).get('stream_count', 0)})")
+                
+                recommendations = response.get('recommendations', [])
+                if recommendations:
+                    logger.info(f"[DIAGNOSTIC] Recomendações: {'; '.join(recommendations)}")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"[DIAGNOSTIC] Erro ao executar diagnóstico para {self.server_id}: {e}")
+            return {
+                 'server_id': self.server_id,
+                 'error': str(e),
+                 'is_synchronized': False,
+                 'synchronization_status': 'ERROR'
+             }
+    
+    def _record_alert(self, alert_type: str, message: str, severity: str = 'WARNING') -> None:
+        """
+        Registra um alerta no histórico para análise de padrões.
+        
+        Args:
+            alert_type: Tipo do alerta (e.g., 'SYNC_FAILURE', 'CONNECTION_ERROR')
+            message: Mensagem detalhada do alerta
+            severity: Severidade do alerta ('INFO', 'WARNING', 'ERROR', 'CRITICAL')
+        """
+        alert = {
+            'timestamp': datetime.now(),
+            'type': alert_type,
+            'message': message,
+            'severity': severity,
+            'server_id': self.server_id
+        }
+        
+        self.alert_history.append(alert)
+        
+        # Log do alerta
+        log_level = getattr(logging, severity, logging.WARNING)
+        logger.log(log_level, f"[ALERT-{alert_type}] {message}")
+    
+    def _should_send_alert(self, alert_type: str) -> bool:
+        """
+        Verifica se um alerta deve ser enviado baseado no cooldown.
+        
+        Args:
+            alert_type: Tipo do alerta
+            
+        Returns:
+            True se o alerta deve ser enviado
+        """
+        current_time = time.time()
+        last_alert = self.last_alert_time.get(alert_type, 0)
+        
+        if current_time - last_alert >= self.alert_cooldown:
+            self.last_alert_time[alert_type] = current_time
+            return True
+        
+        return False
+    
+    def _analyze_error_patterns(self) -> List[Dict[str, Any]]:
+        """
+        Analisa padrões de erro no histórico de alertas.
+        
+        Returns:
+            Lista de padrões detectados
+        """
+        patterns = []
+        
+        if len(self.alert_history) < 5:
+            return patterns
+        
+        # Analisar últimos 30 minutos
+        cutoff_time = datetime.now() - timedelta(minutes=30)
+        recent_alerts = [alert for alert in self.alert_history if alert['timestamp'] > cutoff_time]
+        
+        if len(recent_alerts) >= 5:
+            patterns.append({
+                'type': 'HIGH_FREQUENCY_ALERTS',
+                'description': f'{len(recent_alerts)} alertas nos últimos 30 minutos',
+                'severity': 'WARNING',
+                'recommendation': 'Investigar causa raiz dos problemas frequentes'
+            })
+        
+        # Analisar tipos de erro mais comuns
+        error_types = {}
+        for alert in recent_alerts:
+            alert_type = alert['type']
+            error_types[alert_type] = error_types.get(alert_type, 0) + 1
+        
+        for error_type, count in error_types.items():
+            if count >= 3:
+                patterns.append({
+                    'type': 'RECURRING_ERROR',
+                    'description': f'Erro {error_type} ocorreu {count} vezes recentemente',
+                    'severity': 'ERROR',
+                    'recommendation': f'Investigar problema específico com {error_type}'
+                })
+        
+        return patterns
+    
+    def _check_proactive_alerts(self) -> None:
+        """
+        Verifica condições para alertas proativos.
+        """
+        try:
+            # Verificar falhas consecutivas
+            if self.consecutive_failures >= self.failure_threshold:
+                if self._should_send_alert('CONSECUTIVE_FAILURES'):
+                    self._record_alert(
+                        'CONSECUTIVE_FAILURES',
+                        f'{self.consecutive_failures} falhas consecutivas detectadas para {self.server_id}',
+                        'ERROR'
+                    )
+            
+            # Analisar padrões de erro
+            patterns = self._analyze_error_patterns()
+            for pattern in patterns:
+                if self._should_send_alert(pattern['type']):
+                    self._record_alert(
+                        pattern['type'],
+                        f"{pattern['description']} - {pattern['recommendation']}",
+                        pattern['severity']
+                    )
+            
+            # Verificar se há muitos alertas de sincronização
+            sync_alerts = [alert for alert in self.alert_history 
+                          if 'SYNC' in alert['type'] and 
+                          alert['timestamp'] > datetime.now() - timedelta(hours=1)]
+            
+            if len(sync_alerts) >= 3:
+                if self._should_send_alert('SYNC_DEGRADATION'):
+                    self._record_alert(
+                        'SYNC_DEGRADATION',
+                        f'Degradação na sincronização detectada: {len(sync_alerts)} problemas na última hora',
+                        'WARNING'
+                    )
+        
+        except Exception as e:
+            logger.error(f"[PROACTIVE_ALERTS] Erro ao verificar alertas proativos: {e}")
+    
+    def record_operation_result(self, operation: str, success: bool, error_message: str = None) -> None:
+        """
+        Registra o resultado de uma operação para análise de padrões.
+        
+        Args:
+            operation: Nome da operação (e.g., 'heartbeat', 'stream_request')
+            success: Se a operação foi bem-sucedida
+            error_message: Mensagem de erro se aplicável
+        """
+        if success:
+            self.consecutive_failures = 0
+        else:
+            self.consecutive_failures += 1
+            
+            # Registrar erro no padrão
+            error_info = {
+                'timestamp': datetime.now(),
+                'operation': operation,
+                'error': error_message or 'Unknown error'
+            }
+            self.error_patterns.append(error_info)
+            
+            # Registrar alerta se necessário
+            self._record_alert(
+                f'{operation.upper()}_FAILURE',
+                f'Falha na operação {operation}: {error_message or "Erro desconhecido"}',
+                'ERROR'
+            )
+        
+        # Verificar alertas proativos
+        self._check_proactive_alerts()
+    
+    def get_alert_summary(self, hours: int = 24) -> Dict[str, Any]:
+        """
+        Retorna um resumo dos alertas das últimas horas.
+        
+        Args:
+            hours: Número de horas para analisar
+            
+        Returns:
+            Resumo dos alertas
+        """
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        recent_alerts = [alert for alert in self.alert_history if alert['timestamp'] > cutoff_time]
+        
+        # Contar por tipo e severidade
+        by_type = {}
+        by_severity = {}
+        
+        for alert in recent_alerts:
+            alert_type = alert['type']
+            severity = alert['severity']
+            
+            by_type[alert_type] = by_type.get(alert_type, 0) + 1
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+        
+        return {
+            'total_alerts': len(recent_alerts),
+            'by_type': by_type,
+            'by_severity': by_severity,
+            'consecutive_failures': self.consecutive_failures,
+            'recent_patterns': self._analyze_error_patterns(),
+            'period_hours': hours
         }
 
 # Função de conveniência para criar cliente
