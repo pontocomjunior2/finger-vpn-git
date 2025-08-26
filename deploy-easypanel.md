@@ -59,12 +59,13 @@ TZ=America/Sao_Paulo
 ### 1. **Criar Nova Aplicação**
 - Nome: `enhanced-orchestrator`
 - Tipo: `Docker`
-- Repositório: Seu repositório Git
+- Repositório: `https://github.com/pontocomjunior2/finger-vpn-git.git`
 
 ### 2. **Configurar Build**
 - **Dockerfile**: `Dockerfile.easypanel`
 - **Context**: `.` (raiz do projeto)
 - **Branch**: `orchestrator-v1`
+- **Build Command**: (deixar vazio - usa o Dockerfile)
 
 ### 3. **Configurar Portas**
 - **Porta da Aplicação**: `8000`
@@ -74,8 +75,22 @@ TZ=America/Sao_Paulo
 - Adicionar seu domínio personalizado
 - Ou usar o domínio fornecido pelo EasyPanel
 
-### 5. **Adicionar Variáveis de Ambiente**
-Copie todas as variáveis do arquivo `.env.easypanel` para o painel do EasyPanel.
+### 5. **Adicionar Variáveis de Ambiente OBRIGATÓRIAS**
+```env
+# ALTERE ESTAS VARIÁVEIS!
+DB_PASSWORD=SuaSenhaSegura123!
+SECRET_KEY=sua_chave_secreta_muito_segura_de_pelo_menos_32_caracteres_aqui
+
+# Configurações de rede (localhost porque está no mesmo container)
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=orchestrator
+DB_USER=orchestrator_user
+REDIS_HOST=localhost
+REDIS_PORT=6379
+ORCHESTRATOR_HOST=0.0.0.0
+ORCHESTRATOR_PORT=8000
+```
 
 ## 🔍 Verificação Pós-Deploy
 

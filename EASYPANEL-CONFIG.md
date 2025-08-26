@@ -51,7 +51,10 @@ TZ=America/Sao_Paulo
 
 ## 🐳 Configuração do Deploy
 
+### Repository: `https://github.com/pontocomjunior2/finger-vpn-git.git`
+### Branch: `orchestrator-v1`
 ### Dockerfile: `Dockerfile.easypanel`
+### Build Context: `.` (raiz do projeto)
 ### Porta: `8000`
 ### Health Check: `/health`
 
