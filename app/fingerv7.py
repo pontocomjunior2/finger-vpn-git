@@ -1,33 +1,30 @@
-import subprocess
-import psycopg2
-import time
-import os
-import shutil
-import uuid
-from datetime import datetime, timedelta, timezone
-from shazamio import Shazam
-from aiohttp import (
-    ClientConnectorError,
-    ClientResponseError,
-    ClientTimeout,
-    ClientError,
-)
 import asyncio
+import datetime as dt  # Usar alias para evitar conflito com variável datetime
 import json
 import logging
-from logging.handlers import TimedRotatingFileHandler
-import schedule
-import threading
-import sys
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
-import signal
-import socket
+import os
 import platform
+import shutil
+import signal
+import smtplib
+import socket
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from ftplib import FTP, error_perm
-import datetime as dt  # Usar alias para evitar conflito com variável datetime
+from logging.handlers import TimedRotatingFileHandler
+
+import psycopg2
+import schedule
+from aiohttp import (ClientConnectorError, ClientError, ClientResponseError,
+                     ClientTimeout)
+from dotenv import load_dotenv
+from shazamio import Shazam
 
 try:
     import pytz
@@ -43,8 +40,8 @@ except ImportError:
     # sys.exit(1)
 import psycopg2.errors  # Para capturar UniqueViolation
 import psycopg2.extras  # Para DictCursor
-from db_pool import get_db_pool
 from async_queue import insert_queue
+from db_pool import get_db_pool
 
 # Definir diretório de segmentos global
 SEGMENTS_DIR = os.getenv("SEGMENTS_DIR", "C:/DATARADIO/segments")
@@ -156,22 +153,26 @@ MAX_STREAMS = int(
     os.getenv("MAX_STREAMS", "10")
 )  # Número máximo de streams por instância
 
-# Importar cliente do orquestrador se habilitado
+# Importar cliente resiliente do orquestrador se habilitado
 orchestrator_client = None
 if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
     try:
-        from orchestrator_client import create_orchestrator_client
+        from resilient_worker_client import create_resilient_worker_client
 
-        orchestrator_client = create_orchestrator_client(
+        orchestrator_client = create_resilient_worker_client(
             orchestrator_url=ORCHESTRATOR_URL,
             server_id=SERVER_ID,
             max_streams=MAX_STREAMS,
+            circuit_failure_threshold=5,
+            circuit_recovery_timeout=60,
+            retry_max_attempts=3,
+            retry_base_delay=1.0
         )
         logger.info(
-            f"Cliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}"
+            f"Cliente resiliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}"
         )
     except ImportError as e:
-        logger.error(f"Erro ao importar cliente do orquestrador: {e}")
+        logger.error(f"Erro ao importar cliente resiliente do orquestrador: {e}")
         logger.warning("Fallback para modo sem orquestrador")
         USE_ORCHESTRATOR = False
 
@@ -381,8 +382,8 @@ def clean_string(text: str) -> str:
     - Remove palavras comuns que podem variar (Ao Vivo, Remix, etc)
     - Remove parênteses e seu conteúdo
     """
-    import unicodedata
     import re
+    import unicodedata
 
     if not text:
         return ""
@@ -1946,24 +1947,15 @@ async def monitor_shutdown():
 
     # CORREÇÃO CRÍTICA: Liberar streams imediatamente ao parar a instância
     global STREAMS
-    if orchestrator_client and STREAMS:
+    if orchestrator_client:
         try:
-            # Liberar todos os streams atribuídos
-            stream_ids = [
-                stream.get("index", stream.get("name", "")) for stream in STREAMS
-            ]
-            if stream_ids:
-                logger.info(
-                    f"Liberando {len(stream_ids)} streams antes do shutdown: {stream_ids}"
-                )
-                await orchestrator_client.release_streams(stream_ids)
-
-                # Zerar a contagem local de streams
-                orchestrator_client.update_stream_count(0)
-                STREAMS = []
-                logger.info("[SHUTDOWN] Streams liberados e current_streams zerado")
+            # Usar o método shutdown do cliente resiliente que libera streams automaticamente
+            logger.info("Executando shutdown do cliente resiliente do orquestrador")
+            await orchestrator_client.shutdown()
+            STREAMS = []
+            logger.info("[SHUTDOWN] Cliente resiliente encerrado e streams liberados")
         except Exception as e:
-            logger.error(f"Erro ao liberar streams durante shutdown: {e}")
+            logger.error(f"Erro ao executar shutdown do cliente resiliente: {e}")
 
     # Cancelar todas as tarefas ativas
     for task in active_tasks:
@@ -2402,10 +2394,8 @@ async def main():
         )
         STREAMS = assigned_streams
 
-        # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client
-        if orchestrator_client:
-            orchestrator_client.update_stream_count(len(STREAMS))
-            logger.info(f"[RELOAD] current_streams sincronizado: {len(STREAMS)}")
+        # Nota: Cliente resiliente gerencia contagem de streams internamente
+        logger.info(f"[RELOAD] Streams carregados: {len(STREAMS)}")
 
     # CORREÇÃO: Chamar reload_streams() para garantir distribuição correta na inicialização
     if DISTRIBUTE_LOAD:
@@ -2420,10 +2410,7 @@ async def main():
             tasks.append(task)
         logger.info(f"{len(tasks)} tasks criadas para todos os {len(STREAMS)} streams.")
 
-        # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client mesmo sem distribuição
-        if orchestrator_client:
-            orchestrator_client.update_stream_count(len(STREAMS))
-            logger.info(f"[INIT] current_streams sincronizado: {len(STREAMS)}")
+        # Nota: Cliente resiliente gerencia contagem de streams internamente
 
     # Criar e registrar todas as tarefas necessárias
     # monitor_task removida - não é mais necessária com o orquestrador
@@ -2515,8 +2502,7 @@ async def main():
                     await orchestrator_client.release_streams(
                         list(orchestrator_client.assigned_streams)
                     )
-                orchestrator_client.update_stream_count(0)
-                logger.info("Streams liberados e contagem zerada durante finalização")
+                logger.info("Streams liberados durante finalização")
             except Exception as release_error:
                 logger.error(
                     f"Erro ao liberar streams durante finalização: {release_error}"
@@ -2544,7 +2530,6 @@ def stop_and_restart():
                         list(orchestrator_client.assigned_streams)
                     )
                 )
-            orchestrator_client.update_stream_count(0)
             logger.info("Streams liberados antes do restart")
         except Exception as release_error:
             logger.error(f"Erro ao liberar streams antes do restart: {release_error}")
@@ -2578,40 +2563,20 @@ async def orchestrator_heartbeat_loop():
     while not shutdown_event.is_set():
         try:
             if orchestrator_client:
-                # Usar heartbeat aprimorado com verificação de consistência
-                result = await orchestrator_client.enhanced_heartbeat()
+                # Enviar heartbeat usando cliente resiliente
+                success = await orchestrator_client.send_heartbeat()
 
-                if result.get("status") == "success":
-                    logger.debug(
-                        f"Heartbeat aprimorado enviado - Instância {SERVER_ID}"
-                    )
-
-                    # Log detalhado da verificação de consistência
-                    consistency_check = result.get("consistency_check", {})
-                    if consistency_check.get("status") == "inconsistent":
-                        logger.warning(
-                            f"[HEARTBEAT] Inconsistência detectada: {consistency_check}"
-                        )
-
-                        # Se houve auto-recuperação, recarregar streams dinamicamente
-                        if consistency_check.get("action_taken") == "auto_recovery":
-                            logger.info(
-                                "[HEARTBEAT] Executando reload_streams_dynamic após auto-recuperação"
-                            )
-                            try:
-                                await reload_streams_dynamic()
-                            except Exception as reload_err:
-                                logger.error(
-                                    f"[HEARTBEAT] Erro ao recarregar streams após auto-recuperação: {reload_err}"
-                                )
-
-                    elif consistency_check.get("status") == "consistent":
-                        logger.debug(
-                            f"[HEARTBEAT] Estados sincronizados - Local: {consistency_check.get('local_streams', 0)}, Orquestrador: {consistency_check.get('orchestrator_streams', 0)}"
-                        )
-
+                if success:
+                    logger.debug(f"Heartbeat enviado com sucesso - Instância {SERVER_ID}")
                 else:
-                    logger.error(f"[HEARTBEAT] Falha no heartbeat aprimorado: {result}")
+                    logger.warning(f"[HEARTBEAT] Falha no heartbeat - pode estar em modo local")
+                    
+                # Verificar status do cliente para detectar modo local
+                health_status = await orchestrator_client.health_check()
+                if health_status.get('local_mode_active'):
+                    logger.info(f"[HEARTBEAT] Cliente em modo local - continuando operação")
+                elif not health_status.get('orchestrator_available'):
+                    logger.warning(f"[HEARTBEAT] Orquestrador indisponível - ativando modo local")
 
         except Exception as e:
             logger.error(f"Erro no heartbeat aprimorado do orquestrador: {e}")
@@ -2908,9 +2873,8 @@ async def reload_streams_dynamic(assigned_stream_ids):
 
         # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client
         if orchestrator_client:
-            orchestrator_client.update_stream_count(len(STREAMS))
             logger.info(
-                f"[RELOAD_DYNAMIC] current_streams sincronizado: {len(STREAMS)}"
+                f"[RELOAD_DYNAMIC] Streams atualizados: {len(STREAMS)}"
             )
 
         logger.info(

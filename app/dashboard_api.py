@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-import os
-import json
-import time
 import asyncio
 import hashlib
-from datetime import datetime, timezone, timedelta
+import json
+import logging
+import os
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
+from db_pool import db_pool
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from db_pool import db_pool
-import logging
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)

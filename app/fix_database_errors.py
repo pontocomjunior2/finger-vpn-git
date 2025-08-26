@@ -9,10 +9,11 @@ Autor: Sistema de Correção Automática
 Data: 2025-08-23
 """
 
+import logging
 import os
 import sys
+
 import psycopg2
-import logging
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

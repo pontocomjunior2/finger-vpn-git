@@ -1,0 +1,43 @@
+# Systemd service template for Orchestrator System
+# Place this file in /etc/systemd/system/orchestrator-${ENVIRONMENT}.service
+
+[Unit]
+Description=Orchestrator System (${ENVIRONMENT})
+Documentation=https://github.com/your-org/orchestrator
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${DEPLOYMENT_PATH}
+Environment=ENVIRONMENT=${ENVIRONMENT}
+EnvironmentFile=${DEPLOYMENT_PATH}/.env.${ENVIRONMENT}
+
+# Start command
+ExecStart=/usr/bin/docker-compose -f docker-compose.${ENVIRONMENT}.yml up -d
+
+# Stop command
+ExecStop=/usr/bin/docker-compose -f docker-compose.${ENVIRONMENT}.yml down
+
+# Reload command
+ExecReload=/usr/bin/docker-compose -f docker-compose.${ENVIRONMENT}.yml restart
+
+# Health check
+ExecStartPost=/bin/bash -c 'sleep 30 && python ${DEPLOYMENT_PATH}/health_check.py --environment ${ENVIRONMENT} --wait 120'
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Security settings
+User=orchestrator
+Group=orchestrator
+NoNewPrivileges=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

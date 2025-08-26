@@ -5,9 +5,10 @@ Simula heartbeats para as instâncias registradas para mantê-las ativas.
 
 import os
 import sys
-import requests
 import time
 from datetime import datetime
+
+import requests
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

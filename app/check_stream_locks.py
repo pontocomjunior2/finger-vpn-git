@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import psycopg2
-from dotenv import load_dotenv
 import os
 from datetime import datetime
+
+import psycopg2
+from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
 load_dotenv()

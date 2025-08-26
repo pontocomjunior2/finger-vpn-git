@@ -1,0 +1,424 @@
+# Dockerfile para Orchestrator Stream Balancing - EasyPanel Deploy
+FROM python:3.11-slim
+
+# Metadados
+LABEL maintainer="Orchestrator Team"
+LABEL version="1.0.0"
+LABEL description="Enhanced Stream Orchestrator with Load Balancing and Resilience"
+
+# Variáveis de ambiente
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+ENV PORT=8000
+
+# Instalar dependências do sistema
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Criar usuário não-root para segurança
+RUN useradd --create-home --shell /bin/bash orchestrator
+
+# Criar diretório da aplicação
+WORKDIR /app
+
+# Copiar requirements primeiro para cache de layers
+COPY requirements.txt .
+
+# Instalar dependências Python
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY app/ ./app/
+COPY config/ ./config/
+COPY scripts/ ./scripts/
+
+# Criar diretórios necessários
+RUN mkdir -p /app/logs /app/data /app/tmp && \
+    chown -R orchestrator:orchestrator /app
+
+# Copiar script de inicialização
+COPY <<EOF /app/start.sh
+#!/bin/bash
+set -e
+
+echo "Starting Enhanced Stream Orchestrator..."
+
+# Verificar variáveis de ambiente obrigatórias
+if [ -z "\$DB_HOST" ]; then
+    echo "ERROR: DB_HOST environment variable is required"
+    exit 1
+fi
+
+if [ -z "\$DB_NAME" ]; then
+    echo "ERROR: DB_NAME environment variable is required"
+    exit 1
+fi
+
+if [ -z "\$DB_USER" ]; then
+    echo "ERROR: DB_USER environment variable is required"
+    exit 1
+fi
+
+if [ -z "\$DB_PASSWORD" ]; then
+    echo "ERROR: DB_PASSWORD environment variable is required"
+    exit 1
+fi
+
+# Configurações padrão
+export DB_PORT=\${DB_PORT:-5432}
+export ORCHESTRATOR_PORT=\${PORT:-8000}
+export LOG_LEVEL=\${LOG_LEVEL:-INFO}
+export MAX_WORKERS=\${MAX_WORKERS:-4}
+
+# Configurações de performance
+export IMBALANCE_THRESHOLD=\${IMBALANCE_THRESHOLD:-0.2}
+export MAX_STREAM_DIFFERENCE=\${MAX_STREAM_DIFFERENCE:-2}
+export HEARTBEAT_TIMEOUT=\${HEARTBEAT_TIMEOUT:-300}
+export MAX_RETRY_ATTEMPTS=\${MAX_RETRY_ATTEMPTS:-3}
+
+# Aguardar banco de dados
+echo "Waiting for database connection..."
+python -c "
+import psycopg2
+import time
+import os
+import sys
+
+max_attempts = 30
+attempt = 0
+
+while attempt < max_attempts:
+    try:
+        conn = psycopg2.connect(
+            host=os.environ['DB_HOST'],
+            port=int(os.environ['DB_PORT']),
+            database=os.environ['DB_NAME'],
+            user=os.environ['DB_USER'],
+            password=os.environ['DB_PASSWORD']
+        )
+        conn.close()
+        print('Database connection successful!')
+        break
+    except Exception as e:
+        attempt += 1
+        print(f'Database connection attempt {attempt}/{max_attempts} failed: {e}')
+        if attempt >= max_attempts:
+            print('Failed to connect to database after maximum attempts')
+            sys.exit(1)
+        time.sleep(2)
+"
+
+# Executar migrações se necessário
+if [ "\$RUN_MIGRATIONS" = "true" ]; then
+    echo "Running database migrations..."
+    python app/database_migrations.py
+fi
+
+# Executar testes de saúde se solicitado
+if [ "\$RUN_HEALTH_CHECK" = "true" ]; then
+    echo "Running health checks..."
+    python app/health_check.py
+fi
+
+# Iniciar aplicação
+echo "Starting orchestrator on port \$ORCHESTRATOR_PORT..."
+exec python app/main_orchestrator.py
+EOF
+
+# Tornar script executável
+RUN chmod +x /app/start.sh
+
+# Criar script principal do orchestrator
+COPY <<EOF /app/app/main_orchestrator.py
+#!/usr/bin/env python3
+"""
+Main Orchestrator Application Entry Point
+"""
+
+import asyncio
+import logging
+import os
+import signal
+import sys
+from datetime import datetime
+
+# Adicionar diretório app ao path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from integration_system import IntegratedOrchestrator
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+# Configurar logging
+logging.basicConfig(
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('/app/logs/orchestrator.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# Configuração do banco de dados
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST'),
+    'port': int(os.getenv('DB_PORT', '5432')),
+    'database': os.getenv('DB_NAME'),
+    'user': os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD')
+}
+
+# Instância global do orchestrator
+orchestrator = None
+
+# FastAPI app
+app = FastAPI(
+    title="Enhanced Stream Orchestrator",
+    description="Stream orchestrator with load balancing and resilience",
+    version="1.0.0"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+async def startup_event():
+    """Inicializar orchestrator na startup"""
+    global orchestrator
+    
+    logger.info("Starting Enhanced Stream Orchestrator...")
+    
+    try:
+        orchestrator = IntegratedOrchestrator(DB_CONFIG)
+        success = await orchestrator.start_system()
+        
+        if not success:
+            logger.error("Failed to start orchestrator system")
+            raise Exception("Orchestrator startup failed")
+        
+        logger.info("Enhanced Stream Orchestrator started successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to start orchestrator: {e}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown graceful do orchestrator"""
+    global orchestrator
+    
+    logger.info("Shutting down Enhanced Stream Orchestrator...")
+    
+    if orchestrator:
+        await orchestrator.stop_system()
+    
+    logger.info("Enhanced Stream Orchestrator stopped")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        status = await orchestrator.get_system_status()
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "system_status": status
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
+
+@app.get("/metrics")
+async def get_metrics():
+    """Endpoint para métricas do sistema"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        status = await orchestrator.get_system_status()
+        return status
+    except Exception as e:
+        logger.error(f"Failed to get metrics: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+
+@app.post("/instances/{server_id}/register")
+async def register_instance(server_id: str, ip: str, port: int, max_streams: int):
+    """Registrar nova instância worker"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        result = await orchestrator.register_instance(server_id, ip, port, max_streams)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to register instance {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+@app.post("/instances/{server_id}/heartbeat")
+async def process_heartbeat(server_id: str, heartbeat_data: dict):
+    """Processar heartbeat de instância"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        result = await orchestrator.process_heartbeat(server_id, heartbeat_data)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to process heartbeat for {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Heartbeat processing failed: {str(e)}")
+
+@app.post("/instances/{server_id}/assign-streams")
+async def assign_streams(server_id: str, requested_count: int):
+    """Atribuir streams para instância"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        result = await orchestrator.assign_streams(server_id, requested_count)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to assign streams to {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Stream assignment failed: {str(e)}")
+
+@app.post("/instances/{server_id}/failure")
+async def handle_instance_failure(server_id: str):
+    """Lidar com falha de instância"""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    
+    try:
+        result = await orchestrator.handle_instance_failure(server_id)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to handle failure for {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failure handling failed: {str(e)}")
+
+def signal_handler(signum, frame):
+    """Handler para sinais de sistema"""
+    logger.info(f"Received signal {signum}, shutting down...")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    # Configurar handlers de sinal
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Configurações do servidor
+    port = int(os.getenv('ORCHESTRATOR_PORT', '8000'))
+    host = os.getenv('ORCHESTRATOR_HOST', '0.0.0.0')
+    workers = int(os.getenv('MAX_WORKERS', '1'))
+    
+    logger.info(f"Starting server on {host}:{port} with {workers} workers")
+    
+    # Iniciar servidor
+    uvicorn.run(
+        "main_orchestrator:app",
+        host=host,
+        port=port,
+        workers=workers,
+        log_level=os.getenv('LOG_LEVEL', 'info').lower(),
+        access_log=True
+    )
+EOF
+
+# Criar script de health check
+COPY <<EOF /app/app/health_check.py
+#!/usr/bin/env python3
+"""
+Health Check Script for Orchestrator
+"""
+
+import asyncio
+import sys
+import os
+import logging
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from integration_system import IntegratedOrchestrator
+
+async def main():
+    """Executar health check"""
+    db_config = {
+        'host': os.getenv('DB_HOST'),
+        'port': int(os.getenv('DB_PORT', '5432')),
+        'database': os.getenv('DB_NAME'),
+        'user': os.getenv('DB_USER'),
+        'password': os.getenv('DB_PASSWORD')
+    }
+    
+    try:
+        orchestrator = IntegratedOrchestrator(db_config)
+        success = await orchestrator.initialize_components()
+        
+        if success:
+            print("✓ Health check passed")
+            return 0
+        else:
+            print("✗ Health check failed")
+            return 1
+            
+    except Exception as e:
+        print(f"✗ Health check error: {e}")
+        return 1
+
+if __name__ == "__main__":
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)
+EOF
+
+# Criar requirements.txt se não existir
+COPY <<EOF /app/requirements.txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+pydantic==2.5.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+prometheus-client==0.19.0
+structlog==23.2.0
+tenacity==8.2.3
+circuitbreaker==1.4.0
+redis==5.0.1
+celery==5.3.4
+sqlalchemy==2.0.23
+alembic==1.13.1
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+mypy==1.7.1
+EOF
+
+# Mudar para usuário não-root
+USER orchestrator
+
+# Expor porta
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python /app/app/health_check.py || exit 1
+
+# Comando padrão
+CMD ["/app/start.sh"]

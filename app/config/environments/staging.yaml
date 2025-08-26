@@ -1,0 +1,29 @@
+# Staging Environment Configuration
+
+database:
+  host: staging-db.internal
+  port: 5432
+  database: orchestrator_staging
+  username: orchestrator_user
+  password: "${DB_PASSWORD}"  # Will be replaced by deployment script
+  pool_size: 8
+  timeout: 20
+  retry_attempts: 3
+
+orchestrator:
+  host: "0.0.0.0"
+  port: 8000
+  max_instances: 5
+  heartbeat_interval: 30
+  rebalance_threshold: 0.25
+  emergency_timeout: 180
+  api_timeout: 20
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  alert_webhook: "${STAGING_WEBHOOK_URL}"
+  log_level: "INFO"
+  retention_days: 14
+
+debug: false

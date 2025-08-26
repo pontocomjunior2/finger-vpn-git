@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import psycopg2
 import os
-from dotenv import load_dotenv
 from pathlib import Path
+
+import psycopg2
+from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
 root_env_file = Path(__file__).parent.parent / ".env"

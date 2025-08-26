@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import requests
 import json
 import time
 from datetime import datetime
+
+import requests
+
 
 def test_orchestrator_registration():
     """Testa o registro de uma instância no orquestrador"""

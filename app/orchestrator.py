@@ -13,18 +13,18 @@ Data: 2025
 import asyncio
 import logging
 import os
-import time
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from pydantic import BaseModel
 
 # Configuração de logging (deve vir antes de qualquer uso do logger)
 logging.basicConfig(
@@ -39,6 +39,26 @@ try:
 except ImportError:
     HAS_PSUTIL = False
     logger.warning("psutil não encontrado. Métricas de sistema não estarão disponíveis.")
+
+# Import enhanced orchestrator for smart load balancing
+try:
+    from enhanced_orchestrator import EnhancedStreamOrchestrator
+    from load_balancer_config import create_load_balance_config
+    from smart_load_balancer import LoadBalanceConfig, RebalanceReason
+    HAS_SMART_BALANCER = True
+except ImportError as e:
+    HAS_SMART_BALANCER = False
+    logger.warning(f"Smart load balancer não disponível: {e}")
+
+# Import resilient orchestrator for enhanced failure handling
+try:
+    from resilient_orchestrator import (FailureRecoveryConfig, HeartbeatConfig,
+                                        ResilientOrchestrator,
+                                        SystemHealthStatus)
+    HAS_RESILIENT_ORCHESTRATOR = True
+except ImportError as e:
+    HAS_RESILIENT_ORCHESTRATOR = False
+    logger.warning(f"Resilient orchestrator não disponível: {e}")
 
 # Carregar variáveis de ambiente
 # Primeiro tenta carregar do .env da raiz do projeto
@@ -129,15 +149,20 @@ class DiagnosticRequest(BaseModel):
 # Função de ciclo de vida da aplicação
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gerencia o ciclo de vida da aplicação FastAPI."""
+    """Gerencia o ciclo de vida da aplicação FastAPI com monitoramento resiliente."""
     # Startup
-    logger.info("Iniciando orquestrador...")
+    logger.info("Iniciando orquestrador com monitoramento resiliente...")
     orchestrator = StreamOrchestrator()
     orchestrator.create_tables()
 
     # Iniciar tarefas em background usando as funções independentes
     cleanup_task_handle = asyncio.create_task(cleanup_task())
     failover_task_handle = asyncio.create_task(failover_monitor_task())
+    
+    # Start resilient monitoring if available
+    if orchestrator.resilient_orchestrator:
+        await orchestrator.resilient_orchestrator.start_monitoring()
+        logger.info("Resilient monitoring started")
 
     # Armazenar referência do orquestrador no app
     app.state.orchestrator = orchestrator
@@ -147,6 +172,12 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("Encerrando orquestrador...")
+        
+        # Stop resilient monitoring
+        if orchestrator.resilient_orchestrator:
+            await orchestrator.resilient_orchestrator.stop_monitoring()
+            logger.info("Resilient monitoring stopped")
+        
         cleanup_task_handle.cancel()
         failover_task_handle.cancel()
 
@@ -177,9 +208,64 @@ class StreamOrchestrator:
         self.db_config = DB_CONFIG
         self.active_instances: Dict[str, dict] = {}
         self.stream_assignments: Dict[int, str] = {}  # stream_id -> server_id
+        
+        # Initialize enhanced orchestrator for smart load balancing
+        if HAS_SMART_BALANCER:
+            try:
+                # Create configuration from environment variables
+                config = create_load_balance_config()
+                self.enhanced_orchestrator = EnhancedStreamOrchestrator(self.db_config, config)
+                logger.info("Smart load balancer initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize smart load balancer: {e}")
+                self.enhanced_orchestrator = None
+        else:
+            self.enhanced_orchestrator = None
+        
+        # Initialize resilient orchestrator for enhanced failure handling
+        if HAS_RESILIENT_ORCHESTRATOR:
+            try:
+                # Create heartbeat and recovery configurations from environment
+                heartbeat_config = HeartbeatConfig(
+                    timeout_seconds=int(os.getenv("HEARTBEAT_TIMEOUT", 300)),
+                    warning_threshold_seconds=int(os.getenv("HEARTBEAT_WARNING_THRESHOLD", 120)),
+                    max_missed_heartbeats=int(os.getenv("MAX_MISSED_HEARTBEATS", 3)),
+                    check_interval_seconds=int(os.getenv("HEARTBEAT_CHECK_INTERVAL", 30)),
+                    emergency_threshold_seconds=int(os.getenv("EMERGENCY_THRESHOLD", 600))
+                )
+                
+                recovery_config = FailureRecoveryConfig(
+                    max_retry_attempts=int(os.getenv("MAX_RETRY_ATTEMPTS", 3)),
+                    retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", 5)),
+                    exponential_backoff=os.getenv("EXPONENTIAL_BACKOFF", "true").lower() == "true",
+                    circuit_breaker_threshold=int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", 5)),
+                    circuit_breaker_timeout_seconds=int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", 60)),
+                    emergency_recovery_enabled=os.getenv("EMERGENCY_RECOVERY_ENABLED", "true").lower() == "true"
+                )
+                
+                self.resilient_orchestrator = ResilientOrchestrator(
+                    self.db_config, heartbeat_config, recovery_config
+                )
+                logger.info("Resilient orchestrator initialized successfully")
+                
+
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize resilient orchestrator: {e}")
+                self.resilient_orchestrator = None
+        else:
+            self.resilient_orchestrator = None
 
     def get_db_connection(self):
         """Obtém conexão com o banco de dados."""
+        # Use resilient orchestrator connection if available
+        if self.resilient_orchestrator:
+            try:
+                return self.resilient_orchestrator.get_db_connection()
+            except Exception as e:
+                logger.warning(f"Resilient connection failed, falling back to basic: {e}")
+        
+        # Fallback to basic connection
         try:
             conn = psycopg2.connect(**self.db_config)
             conn.autocommit = True
@@ -569,6 +655,15 @@ class StreamOrchestrator:
         cursor = conn.cursor()
 
         try:
+            # Update heartbeat in resilient orchestrator if available
+            if self.resilient_orchestrator:
+                self.resilient_orchestrator.instance_heartbeats[heartbeat.server_id] = datetime.now()
+                
+                # If instance was previously failed, attempt recovery
+                if heartbeat.server_id in self.resilient_orchestrator.failed_instances:
+                    logger.info(f"Received heartbeat from previously failed instance {heartbeat.server_id}")
+                    # The resilient orchestrator will handle recovery in its monitoring loop
+            
             cursor.execute(
                 """
                 UPDATE orchestrator_instances 
@@ -1019,14 +1114,19 @@ class StreamOrchestrator:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         try:
-            # Buscar todas as instâncias ativas
+            # Buscar todas as instâncias ativas com suas cargas atuais
             cursor.execute(
                 """
-                SELECT server_id, max_streams
-                FROM orchestrator_instances 
-                WHERE status = 'active' 
-                  AND last_heartbeat > NOW() - INTERVAL '1 minute'
-                ORDER BY server_id
+                SELECT 
+                    oi.server_id, 
+                    oi.max_streams,
+                    COALESCE(COUNT(osa.stream_id), 0) as current_streams
+                FROM orchestrator_instances oi
+                LEFT JOIN orchestrator_stream_assignments osa ON oi.server_id = osa.server_id AND osa.status = 'active'
+                WHERE oi.status = 'active' 
+                  AND oi.last_heartbeat > NOW() - INTERVAL '1 minute'
+                GROUP BY oi.server_id, oi.max_streams
+                ORDER BY oi.server_id
             """
             )
 
@@ -1038,27 +1138,13 @@ class StreamOrchestrator:
                 )
                 return
 
-            # Buscar todos os streams atribuídos
-            cursor.execute(
-                """
-                SELECT stream_id, server_id
-                FROM orchestrator_stream_assignments
-                WHERE status = 'active'
-                ORDER BY stream_id
-            """
-            )
-
-            current_assignments = cursor.fetchall()
-
-            if not current_assignments:
+            # Calcular estatísticas atuais
+            total_capacity = sum(instance["max_streams"] for instance in active_instances)
+            total_streams = sum(instance["current_streams"] for instance in active_instances)
+            
+            if total_streams == 0:
                 logger.info("Nenhum stream atribuído encontrado")
                 return
-
-            # Calcular distribuição ideal
-            total_capacity = sum(
-                instance["max_streams"] for instance in active_instances
-            )
-            total_streams = len(current_assignments)
 
             if total_streams > total_capacity:
                 logger.error(
@@ -1066,90 +1152,173 @@ class StreamOrchestrator:
                 )
                 return
 
-            # Calcular quantos streams cada instância deve ter
+            # Calcular distribuição ideal baseada na capacidade proporcional
             target_distribution = {}
             remaining_streams = total_streams
+            
+            # Primeira passada: distribuição proporcional
+            for instance in active_instances:
+                server_id = instance["server_id"]
+                max_streams = instance["max_streams"]
+                
+                # Calcular proporção baseada na capacidade
+                proportion = max_streams / total_capacity
+                ideal_count = int(total_streams * proportion)
+                
+                # Garantir que não exceda a capacidade da instância
+                target_count = min(ideal_count, max_streams, remaining_streams)
+                target_distribution[server_id] = target_count
+                remaining_streams -= target_count
+            
+            # Segunda passada: distribuir streams restantes
+            if remaining_streams > 0:
+                # Ordenar instâncias por capacidade disponível
+                available_instances = [
+                    (server_id, instance["max_streams"] - target_distribution[server_id])
+                    for instance in active_instances
+                    for server_id in [instance["server_id"]]
+                    if target_distribution[server_id] < instance["max_streams"]
+                ]
+                available_instances.sort(key=lambda x: x[1], reverse=True)
+                
+                for server_id, available_capacity in available_instances:
+                    if remaining_streams <= 0:
+                        break
+                    
+                    additional = min(remaining_streams, available_capacity)
+                    target_distribution[server_id] += additional
+                    remaining_streams -= additional
 
-            for i, instance in enumerate(active_instances):
-                if i == len(active_instances) - 1:
-                    # Última instância recebe os streams restantes
-                    target_distribution[instance["server_id"]] = remaining_streams
-                else:
-                    # Distribuição proporcional baseada na capacidade
-                    proportion = instance["max_streams"] / total_capacity
-                    target_count = min(
-                        int(total_streams * proportion),
-                        remaining_streams,
-                        instance["max_streams"],
-                    )
-                    target_distribution[instance["server_id"]] = target_count
-                    remaining_streams -= target_count
+            logger.info(f"Distribuição alvo calculada: {target_distribution}")
+            
+            # Verificar se rebalanceamento é necessário
+            current_distribution = {instance["server_id"]: instance["current_streams"] for instance in active_instances}
+            
+            # Calcular diferença
+            needs_rebalancing = False
+            for server_id in target_distribution:
+                current = current_distribution.get(server_id, 0)
+                target = target_distribution[server_id]
+                if abs(current - target) > 1:  # Tolerância de 1 stream
+                    needs_rebalancing = True
+                    break
+            
+            if not needs_rebalancing:
+                logger.info("Sistema já está balanceado, rebalanceamento desnecessário")
+                return
 
-            logger.info(f"Distribuição alvo: {target_distribution}")
-
-            # Liberar todos os streams atuais
+            # Buscar todos os streams atribuídos
             cursor.execute(
-                "DELETE FROM orchestrator_stream_assignments WHERE status = 'active'"
+                """
+                SELECT stream_id, server_id
+                FROM orchestrator_stream_assignments
+                WHERE status = 'active'
+                ORDER BY assigned_at ASC
+            """
             )
 
-            # Redistribuir streams de acordo com a distribuição alvo
-            assignments = []
-            stream_index = 0
-
-            for server_id, target_count in target_distribution.items():
-                for _ in range(target_count):
-                    if stream_index < len(current_assignments):
-                        stream_id = current_assignments[stream_index]["stream_id"]
-                        assignments.append((stream_id, server_id))
-                        stream_index += 1
-
-            # Executar novas atribuições
-            if assignments:
-                cursor.executemany(
-                    """
-                    INSERT INTO orchestrator_stream_assignments 
-                    (stream_id, server_id, assigned_at, status)
-                    VALUES (%s, %s, CURRENT_TIMESTAMP, 'active')
-                """,
-                    assignments,
-                )
-
-                # Atualizar contadores das instâncias
+            current_assignments = cursor.fetchall()
+            
+            # Implementar rebalanceamento incremental
+            # 1. Identificar instâncias que precisam liberar streams
+            streams_to_move = []
+            
+            for instance in active_instances:
+                server_id = instance["server_id"]
+                current = current_distribution[server_id]
+                target = target_distribution[server_id]
+                
+                if current > target:
+                    # Esta instância precisa liberar streams
+                    excess = current - target
+                    
+                    # Buscar streams desta instância para mover
+                    instance_streams = [
+                        assignment["stream_id"] for assignment in current_assignments
+                        if assignment["server_id"] == server_id
+                    ][:excess]
+                    
+                    streams_to_move.extend(instance_streams)
+            
+            # 2. Reatribuir streams para instâncias que precisam de mais
+            if streams_to_move:
+                # Primeiro, liberar os streams que serão movidos
                 cursor.execute(
-                    """
-                    UPDATE orchestrator_instances 
-                    SET current_streams = (
-                        SELECT COUNT(*) 
-                        FROM orchestrator_stream_assignments 
-                        WHERE server_id = orchestrator_instances.server_id 
-                          AND status = 'active'
-                    )
-                    WHERE status = 'active'
-                """
+                    "DELETE FROM orchestrator_stream_assignments WHERE stream_id = ANY(%s)",
+                    (streams_to_move,)
                 )
-
-                # Log da nova distribuição
-                cursor.execute(
-                    """
-                    SELECT 
-                        oi.server_id,
-                        oi.current_streams,
-                        oi.max_streams
-                    FROM orchestrator_instances oi
-                    WHERE oi.status = 'active'
-                    ORDER BY oi.server_id
-                """
-                )
-
-                final_distribution = cursor.fetchall()
-                logger.info(f"Rebalanceamento concluído. Nova distribuição:")
-                for dist in final_distribution:
-                    logger.info(
-                        f"  {dist['server_id']}: {dist['current_streams']}/{dist['max_streams']} streams"
+                
+                # Redistribuir para instâncias que precisam
+                new_assignments = []
+                stream_index = 0
+                
+                for instance in active_instances:
+                    server_id = instance["server_id"]
+                    current = current_distribution[server_id]
+                    target = target_distribution[server_id]
+                    
+                    if current < target:
+                        # Esta instância precisa receber streams
+                        needed = target - current
+                        
+                        for _ in range(needed):
+                            if stream_index < len(streams_to_move):
+                                stream_id = streams_to_move[stream_index]
+                                new_assignments.append((stream_id, server_id))
+                                stream_index += 1
+                
+                # Executar novas atribuições
+                if new_assignments:
+                    cursor.executemany(
+                        """
+                        INSERT INTO orchestrator_stream_assignments 
+                        (stream_id, server_id, assigned_at, status)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP, 'active')
+                    """,
+                        new_assignments,
                     )
+                    
+                    logger.info(f"Movidos {len(new_assignments)} streams durante rebalanceamento")
+
+            # Atualizar contadores das instâncias
+            cursor.execute(
+                """
+                UPDATE orchestrator_instances 
+                SET current_streams = (
+                    SELECT COUNT(*) 
+                    FROM orchestrator_stream_assignments 
+                    WHERE server_id = orchestrator_instances.server_id 
+                      AND status = 'active'
+                )
+                WHERE status = 'active'
+            """
+            )
+            
+            conn.commit()
+
+            # Log da nova distribuição
+            cursor.execute(
+                """
+                SELECT 
+                    oi.server_id,
+                    oi.current_streams,
+                    oi.max_streams
+                FROM orchestrator_instances oi
+                WHERE oi.status = 'active'
+                ORDER BY oi.server_id
+            """
+            )
+
+            final_distribution = cursor.fetchall()
+            logger.info(f"Rebalanceamento concluído. Nova distribuição:")
+            for dist in final_distribution:
+                logger.info(
+                    f"  {dist['server_id']}: {dist['current_streams']}/{dist['max_streams']} streams"
+                )
 
         except Exception as e:
             logger.error(f"Erro no rebalanceamento completo: {e}")
+            conn.rollback()
             raise
         finally:
             cursor.close()
@@ -1266,6 +1435,165 @@ class StreamOrchestrator:
         finally:
             cursor.close()
             conn.close()
+
+    def smart_rebalance(self, reason: str = "manual") -> dict:
+        """
+        Perform intelligent rebalancing using smart load balancer.
+        
+        Args:
+            reason: Reason for rebalancing (manual, new_instance, instance_failure, etc.)
+            
+        Returns:
+            Dictionary with rebalancing results
+        """
+        if not self.enhanced_orchestrator:
+            logger.warning("Smart load balancer not available, falling back to basic rebalancing")
+            try:
+                self.rebalance_all_streams()
+                return {
+                    "status": "completed",
+                    "method": "basic",
+                    "message": "Basic rebalancing completed successfully"
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "method": "basic",
+                    "error": str(e)
+                }
+        
+        try:
+            # Map string reason to enum
+            reason_mapping = {
+                "manual": RebalanceReason.MANUAL,
+                "new_instance": RebalanceReason.NEW_INSTANCE,
+                "instance_failure": RebalanceReason.INSTANCE_FAILURE,
+                "load_imbalance": RebalanceReason.LOAD_IMBALANCE,
+                "performance_degradation": RebalanceReason.PERFORMANCE_DEGRADATION
+            }
+            
+            rebalance_reason = reason_mapping.get(reason, RebalanceReason.MANUAL)
+            
+            # Execute smart rebalancing
+            result = self.enhanced_orchestrator.intelligent_rebalance(rebalance_reason)
+            
+            return {
+                "status": "completed" if result.success else "error",
+                "method": "smart",
+                "reason": result.reason.value,
+                "streams_moved": result.streams_moved,
+                "instances_affected": result.instances_affected,
+                "execution_time_ms": result.execution_time_ms,
+                "migrations": len(result.migrations),
+                "error": result.error_message
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in smart rebalancing: {e}")
+            return {
+                "status": "error",
+                "method": "smart",
+                "error": str(e)
+            }
+
+    def check_load_balance(self) -> dict:
+        """
+        Check current load balance status and detect imbalances.
+        
+        Returns:
+            Dictionary with load balance analysis
+        """
+        if not self.enhanced_orchestrator:
+            return {
+                "status": "unavailable",
+                "message": "Smart load balancer not available"
+            }
+        
+        try:
+            consistency_report = self.enhanced_orchestrator.verify_system_consistency()
+            return {
+                "status": "success",
+                "consistent": consistency_report["consistent"],
+                "needs_rebalancing": consistency_report.get("needs_rebalancing", False),
+                "reason": consistency_report.get("reason", ""),
+                "statistics": consistency_report.get("statistics", {}),
+                "instances": consistency_report.get("instances", [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking load balance: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    def handle_instance_failure_smart(self, server_id: str) -> dict:
+        """
+        Handle instance failure using smart load balancing.
+        
+        Args:
+            server_id: ID of the failed server
+            
+        Returns:
+            Dictionary with failure handling results
+        """
+        if not self.enhanced_orchestrator:
+            logger.warning("Smart load balancer not available, using basic failure handling")
+            try:
+                self.handle_orphaned_streams()
+                return {
+                    "status": "completed",
+                    "method": "basic",
+                    "message": f"Basic failure handling completed for {server_id}"
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "method": "basic",
+                    "error": str(e)
+                }
+        
+        try:
+            result = self.enhanced_orchestrator.handle_instance_failure(server_id)
+            
+            return {
+                "status": "completed" if result.success else "error",
+                "method": "smart",
+                "server_id": server_id,
+                "streams_redistributed": result.streams_moved,
+                "instances_affected": result.instances_affected,
+                "execution_time_ms": result.execution_time_ms,
+                "error": result.error_message
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in smart failure handling: {e}")
+            return {
+                "status": "error",
+                "method": "smart",
+                "error": str(e)
+            }
+
+    def get_load_balancer_stats(self) -> dict:
+        """Get load balancer statistics and performance metrics"""
+        if not self.enhanced_orchestrator:
+            return {
+                "status": "unavailable",
+                "message": "Smart load balancer not available"
+            }
+        
+        try:
+            stats = self.enhanced_orchestrator.get_load_balancer_statistics()
+            return {
+                "status": "success",
+                "statistics": stats
+            }
+        except Exception as e:
+            logger.error(f"Error getting load balancer stats: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
 
 
 # Instância global do orquestrador
@@ -1600,154 +1928,236 @@ async def get_instance_metrics(server_id: str, hours: int = 24):
                 recorded_at
             FROM orchestrator_instance_metrics 
             WHERE server_id = %s 
-                AND recorded_at >= NOW() - INTERVAL '%s hours'
+              AND recorded_at > NOW() - INTERVAL '%s hours'
             ORDER BY recorded_at DESC
-            LIMIT 1000
-        """,
+            """,
             (server_id, hours)
         )
 
         metrics = cursor.fetchall()
-        
-        if not metrics:
-            return {
-                "server_id": server_id,
-                "metrics": [],
-                "summary": "Nenhuma métrica encontrada para o período especificado"
-            }
-
-        # Calcular estatísticas resumidas
-        cpu_values = [m['cpu_percent'] for m in metrics if m['cpu_percent'] is not None]
-        memory_values = [m['memory_percent'] for m in metrics if m['memory_percent'] is not None]
-        disk_values = [m['disk_percent'] for m in metrics if m['disk_percent'] is not None]
-        
-        summary = {
-            "total_records": len(metrics),
-            "time_range_hours": hours,
-            "latest_record": metrics[0]['recorded_at'].isoformat() if metrics else None,
-            "oldest_record": metrics[-1]['recorded_at'].isoformat() if metrics else None
-        }
-        
-        if cpu_values:
-            summary["cpu"] = {
-                "avg": round(sum(cpu_values) / len(cpu_values), 2),
-                "min": round(min(cpu_values), 2),
-                "max": round(max(cpu_values), 2)
-            }
-            
-        if memory_values:
-            summary["memory"] = {
-                "avg": round(sum(memory_values) / len(memory_values), 2),
-                "min": round(min(memory_values), 2),
-                "max": round(max(memory_values), 2)
-            }
-            
-        if disk_values:
-            summary["disk"] = {
-                "avg": round(sum(disk_values) / len(disk_values), 2),
-                "min": round(min(disk_values), 2),
-                "max": round(max(disk_values), 2)
-            }
-
         return {
             "server_id": server_id,
             "metrics": [dict(metric) for metric in metrics],
-            "summary": summary
+            "count": len(metrics)
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Erro ao obter métricas de {server_id}: {e}")
+        logger.error(f"Erro ao obter métricas para {server_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao obter métricas: {e}")
     finally:
         cursor.close()
         conn.close()
 
 
-@app.get("/metrics/overview")
-async def get_metrics_overview():
-    """Obtém visão geral das métricas de todas as instâncias ativas."""
-    conn = orchestrator.get_db_connection()
-    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+# Smart Load Balancing Endpoints
+
+@app.post("/rebalance/smart")
+async def smart_rebalance_endpoint(reason: str = "manual"):
+    """
+    Trigger intelligent rebalancing using smart load balancer.
+    
+    Args:
+        reason: Reason for rebalancing (manual, new_instance, instance_failure, load_imbalance, performance_degradation)
+    """
+    try:
+        result = orchestrator.smart_rebalance(reason)
+        return result
+    except Exception as e:
+        logger.error(f"Error in smart rebalance endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Smart rebalancing failed: {e}")
+
+
+@app.get("/rebalance/check")
+async def check_load_balance_endpoint():
+    """Check current load balance status and detect imbalances."""
+    try:
+        result = orchestrator.check_load_balance()
+        return result
+    except Exception as e:
+        logger.error(f"Error checking load balance: {e}")
+        raise HTTPException(status_code=500, detail=f"Load balance check failed: {e}")
+
+
+@app.post("/instances/{server_id}/failure")
+async def handle_instance_failure_endpoint(server_id: str):
+    """Handle instance failure using smart load balancing."""
+    try:
+        result = orchestrator.handle_instance_failure_smart(server_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error handling instance failure: {e}")
+        raise HTTPException(status_code=500, detail=f"Instance failure handling failed: {e}")
+
+
+@app.get("/rebalance/stats")
+async def get_load_balancer_stats_endpoint():
+    """Get load balancer statistics and performance metrics."""
+    try:
+        result = orchestrator.get_load_balancer_stats()
+        return result
+    except Exception as e:
+        logger.error(f"Error getting load balancer stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get load balancer stats: {e}")
+
+
+# Resilient Orchestrator Endpoints
+
+@app.get("/resilience/status")
+async def get_resilience_status():
+    """Get comprehensive resilience and health status."""
+    if not orchestrator.resilient_orchestrator:
+        raise HTTPException(status_code=503, detail="Resilient orchestrator not available")
+    
+    try:
+        status = orchestrator.resilient_orchestrator.get_resilience_status()
+        return status
+    except Exception as e:
+        logger.error(f"Error getting resilience status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get resilience status: {e}")
+
+
+@app.post("/resilience/recovery/{server_id}")
+async def force_instance_recovery(server_id: str):
+    """Force recovery attempt for a specific failed instance."""
+    if not orchestrator.resilient_orchestrator:
+        raise HTTPException(status_code=503, detail="Resilient orchestrator not available")
+    
+    try:
+        result = await orchestrator.resilient_orchestrator.force_instance_recovery(server_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error forcing instance recovery: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to force instance recovery: {e}")
+
+
+@app.post("/resilience/emergency/{server_id}")
+async def trigger_emergency_recovery(server_id: str, reason: str = "Manual trigger"):
+    """Manually trigger emergency recovery for an instance."""
+    if not orchestrator.resilient_orchestrator:
+        raise HTTPException(status_code=503, detail="Resilient orchestrator not available")
+    
+    try:
+        result = await orchestrator.resilient_orchestrator.trigger_emergency_recovery(server_id, reason)
+        return result
+    except Exception as e:
+        logger.error(f"Error triggering emergency recovery: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger emergency recovery: {e}")
+
+
+@app.get("/resilience/health")
+async def get_system_health():
+    """Get current system health status."""
+    if not orchestrator.resilient_orchestrator:
+        return {"status": "basic", "message": "Resilient orchestrator not available"}
+    
+    try:
+        status = orchestrator.resilient_orchestrator.get_resilience_status()
+        return {
+            "system_health": status["system_health"],
+            "last_health_check": status["last_health_check"],
+            "active_instances": status["active_instances"],
+            "failed_instances": status["failed_instances"],
+            "critical_failures": status["critical_failures"]
+        }
+    except Exception as e:
+        logger.error(f"Error getting system health: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get system health: {e}")
+
+
+@app.post("/rebalance/basic")
+async def basic_rebalance_endpoint():
+    """Trigger basic rebalancing (fallback method)."""
+    try:
+        orchestrator.rebalance_all_streams()
+        return {
+            "status": "completed",
+            "method": "basic",
+            "message": "Basic rebalancing completed successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error in basic rebalance: {e}")
+        raise HTTPException(status_code=500, detail=f"Basic rebalancing failed: {e}")
+
+
+# Background Tasks for Smart Load Balancing
+
+async def smart_rebalance_monitor_task():
+    """Background task to monitor and trigger automatic rebalancing."""
+    while True:
+        try:
+            if orchestrator.enhanced_orchestrator:
+                # Check if rebalancing is needed
+                result = orchestrator.check_load_balance()
+                
+                if result.get("status") == "success" and result.get("needs_rebalancing"):
+                    logger.info(f"Automatic rebalancing triggered: {result.get('reason')}")
+                    
+                    # Trigger automatic rebalancing
+                    rebalance_result = orchestrator.smart_rebalance("load_imbalance")
+                    
+                    if rebalance_result.get("status") == "completed":
+                        logger.info(
+                            f"Automatic rebalancing completed: "
+                            f"{rebalance_result.get('streams_moved', 0)} streams moved"
+                        )
+                    else:
+                        logger.error(f"Automatic rebalancing failed: {rebalance_result.get('error')}")
+            
+            # Wait before next check (configurable interval)
+            await asyncio.sleep(int(os.getenv("SMART_REBALANCE_INTERVAL", "300")))  # 5 minutes default
+            
+        except Exception as e:
+            logger.error(f"Error in smart rebalance monitor: {e}")
+            await asyncio.sleep(60)  # Wait 1 minute on error
+
+
+# Update lifespan to include smart rebalance monitor and resilient monitoring
+@asynccontextmanager
+async def enhanced_lifespan(app: FastAPI):
+    """Enhanced lifespan manager with smart rebalancing and resilient monitoring."""
+    # Startup
+    logger.info("Starting enhanced orchestrator with resilient monitoring...")
+    orchestrator.create_tables()
+
+    # Start background tasks
+    cleanup_task_handle = asyncio.create_task(cleanup_task())
+    failover_task_handle = asyncio.create_task(failover_monitor_task())
+    smart_rebalance_task_handle = asyncio.create_task(smart_rebalance_monitor_task())
+    
+    # Start resilient monitoring if available
+    if orchestrator.resilient_orchestrator:
+        await orchestrator.resilient_orchestrator.start_monitoring()
+        logger.info("Resilient monitoring started")
+
+    # Store orchestrator reference
+    app.state.orchestrator = orchestrator
 
     try:
-        # Obter métricas mais recentes de cada instância ativa
-        cursor.execute(
-            """
-            WITH latest_metrics AS (
-                SELECT DISTINCT ON (server_id) 
-                    server_id,
-                    cpu_percent,
-                    memory_percent,
-                    disk_percent,
-                    load_average_1m,
-                    recorded_at
-                FROM orchestrator_instance_metrics 
-                WHERE recorded_at >= NOW() - INTERVAL '1 hour'
-                ORDER BY server_id, recorded_at DESC
-            )
-            SELECT 
-                oi.server_id,
-                oi.ip,
-                oi.port,
-                oi.current_streams,
-                oi.max_streams,
-                oi.status,
-                oi.last_heartbeat,
-                lm.cpu_percent,
-                lm.memory_percent,
-                lm.disk_percent,
-                lm.load_average_1m,
-                lm.recorded_at as metrics_timestamp
-            FROM orchestrator_instances oi
-            LEFT JOIN latest_metrics lm ON oi.server_id = lm.server_id
-            WHERE oi.status = 'active'
-            ORDER BY oi.server_id
-        """
-        )
-
-        instances = cursor.fetchall()
-        
-        overview = {
-            "total_instances": len(instances),
-            "instances_with_metrics": len([i for i in instances if i['cpu_percent'] is not None]),
-            "timestamp": datetime.now().isoformat(),
-            "instances": []
-        }
-        
-        for instance in instances:
-            instance_data = {
-                "server_id": instance['server_id'],
-                "ip": instance['ip'],
-                "port": instance['port'],
-                "streams": {
-                    "current": instance['current_streams'],
-                    "max": instance['max_streams'],
-                    "utilization_percent": round((instance['current_streams'] / instance['max_streams']) * 100, 1) if instance['max_streams'] > 0 else 0
-                },
-                "status": instance['status'],
-                "last_heartbeat": instance['last_heartbeat'].isoformat() if instance['last_heartbeat'] else None,
-                "metrics": None
-            }
-            
-            if instance['cpu_percent'] is not None:
-                instance_data["metrics"] = {
-                    "cpu_percent": instance['cpu_percent'],
-                    "memory_percent": instance['memory_percent'],
-                    "disk_percent": instance['disk_percent'],
-                    "load_average_1m": instance['load_average_1m'],
-                    "timestamp": instance['metrics_timestamp'].isoformat() if instance['metrics_timestamp'] else None
-                }
-            
-            overview["instances"].append(instance_data)
-
-        return overview
-
-    except Exception as e:
-        logger.error(f"Erro ao obter visão geral das métricas: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro ao obter visão geral: {e}")
+        yield
     finally:
-        cursor.close()
-        conn.close()
+        # Shutdown
+        logger.info("Shutting down enhanced orchestrator...")
+        
+        # Stop resilient monitoring
+        if orchestrator.resilient_orchestrator:
+            await orchestrator.resilient_orchestrator.stop_monitoring()
+            logger.info("Resilient monitoring stopped")
+        
+        cleanup_task_handle.cancel()
+        failover_task_handle.cancel()
+        smart_rebalance_task_handle.cancel()
+
+        for task in [cleanup_task_handle, failover_task_handle, smart_rebalance_task_handle]:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+# Replace the original lifespan with enhanced version
+app.router.lifespan_context = enhanced_lifespan
 
 
 async def cleanup_task():

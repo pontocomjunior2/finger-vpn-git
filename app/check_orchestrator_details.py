@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import requests
 import json
-import psycopg2
 import os
-from dotenv import load_dotenv
 from datetime import datetime
+
+import psycopg2
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
 

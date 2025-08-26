@@ -4,10 +4,11 @@ Verifica o status dos heartbeats das instâncias.
 """
 
 import os
+from datetime import datetime, timedelta
+
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
 
 # Carregar variáveis de ambiente
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')

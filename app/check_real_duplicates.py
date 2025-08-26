@@ -7,8 +7,9 @@ ao definido em DUPLICATE_PREVENTION_WINDOW_SECONDS.
 """
 
 import os
-import psycopg2
 from datetime import datetime, timedelta
+
+import psycopg2
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

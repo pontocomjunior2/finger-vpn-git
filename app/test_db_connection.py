@@ -4,9 +4,11 @@ Script para testar conexão com banco de dados
 """
 
 import os
-import psycopg2
 from pathlib import Path
+
+import psycopg2
 from dotenv import load_dotenv
+
 
 def test_connection():
     # Carregar .env da raiz

@@ -1,0 +1,130 @@
+groups:
+  - name: orchestrator_alerts
+    rules:
+      - alert: OrchestratorDown
+        expr: up{job="orchestrator"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Orchestrator service is down"
+          description: "The orchestrator service has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(orchestrator_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second for the last 5 minutes."
+
+      - alert: DatabaseConnectionsHigh
+        expr: orchestrator_db_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connections are at {{ $value }}, approaching the limit."
+
+      - alert: LoadImbalance
+        expr: orchestrator_load_balance_score < 0.7
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Load imbalance detected"
+          description: "Load balance score is {{ $value }}, indicating uneven distribution."
+
+      - alert: InstanceHeartbeatMissing
+        expr: time() - orchestrator_instance_last_heartbeat > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance heartbeat missing"
+          description: "Instance {{ $labels.instance_id }} has not sent a heartbeat for over 5 minutes."
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(orchestrator_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time"
+          description: "95th percentile response time is {{ $value }}s, which is above the 5s threshold."
+
+      - alert: LowActiveInstances
+        expr: orchestrator_active_instances < 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low number of active instances"
+          description: "Only {{ $value }} instances are active, which may affect system reliability."
+
+      - alert: DatabaseDeadlock
+        expr: increase(orchestrator_db_deadlocks_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database deadlock detected"
+          description: "{{ $value }} database deadlocks detected in the last 5 minutes."
+
+      - alert: StreamAssignmentFailure
+        expr: increase(orchestrator_stream_assignment_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream assignment failures"
+          description: "{{ $value }} stream assignment failures in the last 5 minutes."
+
+      - alert: ConsistencyCheckFailure
+        expr: orchestrator_consistency_check_failures > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Consistency check failure"
+          description: "System consistency check has failed {{ $value }} times."
+
+  - name: system_alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 85% for more than 5 minutes."
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% for more than 10 minutes."
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is below 10% on {{ $labels.mountpoint }}."
+
+      - alert: ContainerRestarting
+        expr: increase(kube_pod_container_status_restarts_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarting"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour."

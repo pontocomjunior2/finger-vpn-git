@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import psycopg2
 
+
 def check_streams_structure():
     conn = psycopg2.connect(
         host='104.234.173.96',

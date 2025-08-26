@@ -6,11 +6,12 @@ Simula o cenário completo para verificar se a correção funciona.
 
 import asyncio
 import json
+import os
+
 import psycopg2
 import psycopg2.extras
-from orchestrator_client import create_orchestrator_client
-import os
 from dotenv import load_dotenv
+from orchestrator_client import create_orchestrator_client
 
 load_dotenv()
 

@@ -4,9 +4,10 @@ Teste simples para verificar as melhorias do orquestrador.
 """
 
 import asyncio
-import aiohttp
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+import aiohttp
 
 # Configuração de logging
 logging.basicConfig(

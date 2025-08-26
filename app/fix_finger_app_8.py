@@ -6,6 +6,7 @@ Libera todos os streams e reatribui para que sejam registrados corretamente.
 
 import os
 import sys
+
 import psycopg2
 import psycopg2.extras
 import requests

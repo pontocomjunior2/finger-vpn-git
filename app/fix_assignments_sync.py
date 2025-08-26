@@ -3,13 +3,14 @@
 Script para sincronizar assignments com os contadores das instances.
 """
 
+import json
 import os
 import sys
+
 import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
 import requests
-import json
+from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')

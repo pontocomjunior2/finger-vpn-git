@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-import psycopg2
-import os
-from dotenv import load_dotenv
-import requests
 import json
+import os
+
+import psycopg2
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
 

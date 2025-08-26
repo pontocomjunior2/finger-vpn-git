@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import psycopg2
 import os
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
+
+import psycopg2
+from dotenv import load_dotenv
 
 load_dotenv()
 

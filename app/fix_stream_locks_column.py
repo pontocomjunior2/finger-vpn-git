@@ -4,10 +4,11 @@ Script para corrigir o tipo de dados da coluna server_id na tabela stream_locks
 Converte de INTEGER para VARCHAR(100) para aceitar IDs de servidor como strings
 """
 
-import psycopg2
-import os
-from dotenv import load_dotenv
 import logging
+import os
+
+import psycopg2
+from dotenv import load_dotenv
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

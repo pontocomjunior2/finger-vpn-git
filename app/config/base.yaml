@@ -1,0 +1,30 @@
+# Base Configuration Template
+# This file contains default settings that can be overridden by environment-specific configs
+
+database:
+  host: localhost
+  port: 5432
+  database: orchestrator
+  username: postgres
+  password: ""
+  pool_size: 10
+  timeout: 30
+  retry_attempts: 3
+
+orchestrator:
+  host: "0.0.0.0"
+  port: 8000
+  max_instances: 10
+  heartbeat_interval: 30
+  rebalance_threshold: 0.2
+  emergency_timeout: 300
+  api_timeout: 30
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  alert_webhook: null
+  log_level: "INFO"
+  retention_days: 30
+
+debug: false

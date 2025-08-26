@@ -5,9 +5,10 @@ Verifica se as instâncias estão respeitando o limite de MAX_STREAMS.
 """
 
 import os
+
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 
 # Carregar variáveis de ambiente
 load_dotenv()

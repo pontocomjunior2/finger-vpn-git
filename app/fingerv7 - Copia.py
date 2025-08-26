@@ -1,28 +1,31 @@
-import subprocess
-import psycopg2
-import time
-import os
-import shutil
-import uuid
-from datetime import datetime, timedelta, timezone
-from shazamio import Shazam
-from aiohttp import ClientConnectorError, ClientResponseError, ClientTimeout, ClientError
 import asyncio
+import datetime as dt  # Usar alias para evitar conflito com variável datetime
 import json
 import logging
-from logging.handlers import TimedRotatingFileHandler
-import schedule
-import threading
-import sys
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
-import signal
-import socket
+import os
 import platform
+import shutil
+import signal
+import smtplib
+import socket
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from ftplib import FTP, error_perm
-import datetime as dt # Usar alias para evitar conflito com variável datetime
+from logging.handlers import TimedRotatingFileHandler
+
+import psycopg2
+import schedule
+from aiohttp import (ClientConnectorError, ClientError, ClientResponseError,
+                     ClientTimeout)
+from dotenv import load_dotenv
+from shazamio import Shazam
+
 try:
     import pytz
     HAS_PYTZ = True
@@ -32,8 +35,8 @@ except ImportError:
     logger.critical("Biblioteca pytz não encontrada. O tratamento de fuso horário falhará. Instale com: pip install pytz")
     # Considerar sair se pytz for essencial
     # sys.exit(1)
-import psycopg2.errors # Para capturar UniqueViolation
-import psycopg2.extras # Para DictCursor
+import psycopg2.errors  # Para capturar UniqueViolation
+import psycopg2.extras  # Para DictCursor
 
 # Definir diretório de segmentos global
 SEGMENTS_DIR = os.getenv('SEGMENTS_DIR', 'C:/DATARADIO/segments')
@@ -93,9 +96,10 @@ except ImportError:
 
 # Importações para (S)FTP
 from ftplib import FTP
+
 try:
     import pysftp
-    from pysftp import CnOpts as pysftpCnOpts # Importar CnOpts explicitamente
+    from pysftp import CnOpts as pysftpCnOpts  # Importar CnOpts explicitamente
     HAS_PYSFTP = True
 except ImportError:
     HAS_PYSFTP = False

@@ -8,9 +8,10 @@ excede o limite de 10 caracteres da coluna identified_by.
 """
 
 import asyncio
-import asyncpg
 import logging
 from typing import Optional
+
+import asyncpg
 
 # Configuração de logging
 logging.basicConfig(

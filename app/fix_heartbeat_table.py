@@ -5,6 +5,7 @@ Converte server_id de INTEGER para VARCHAR(100)
 """
 
 import os
+
 import psycopg2
 from dotenv import load_dotenv
 

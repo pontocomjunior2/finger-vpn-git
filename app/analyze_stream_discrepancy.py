@@ -4,9 +4,10 @@ Análise da discrepância entre finger e orquestrador sobre streams atribuídos.
 """
 
 import os
+from datetime import datetime, timedelta
+
 import psycopg2
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
 
 # Carregar variáveis de ambiente
 load_dotenv()

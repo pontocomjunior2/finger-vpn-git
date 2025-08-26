@@ -4,12 +4,12 @@ Implementa um worker único para evitar concorrência em operações de INSERT
 """
 
 import asyncio
+import json
 import logging
 import time
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import json
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -344,8 +344,9 @@ class AsyncInsertQueue:
         # Usar lock para evitar processamento concorrente
         async with self.processing_lock:
             try:
-                from db_pool import get_db_pool
                 import random
+
+                from db_pool import get_db_pool
 
                 # Usar pool de conexões para inserção em lote
                 # Obter conexão com timeout mais longo

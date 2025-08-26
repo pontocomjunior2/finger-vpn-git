@@ -13,14 +13,12 @@ import os
 from typing import Optional
 
 # Import core functions and values from the main implementation
-from fingerv7 import (
-    consistent_hash,
-    acquire_stream_lock as _acquire_stream_lock,
-    release_stream_lock as _release_stream_lock,
-    get_assigned_server as _get_assigned_server,
-    SERVER_ID as _BASE_SERVER_ID,
-    TOTAL_SERVERS as _BASE_TOTAL_SERVERS,
-)
+from fingerv7 import SERVER_ID as _BASE_SERVER_ID
+from fingerv7 import TOTAL_SERVERS as _BASE_TOTAL_SERVERS
+from fingerv7 import acquire_stream_lock as _acquire_stream_lock
+from fingerv7 import consistent_hash
+from fingerv7 import get_assigned_server as _get_assigned_server
+from fingerv7 import release_stream_lock as _release_stream_lock
 
 
 def _to_int(value: object, default: int) -> int:

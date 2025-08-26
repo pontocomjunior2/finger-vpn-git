@@ -3,9 +3,10 @@
 Script para resetar o contador de streams de uma instância no orquestrador.
 """
 
-import requests
 import json
 from datetime import datetime
+
+import requests
 
 # Configurações
 ORCHESTRATOR_URL = "http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080"

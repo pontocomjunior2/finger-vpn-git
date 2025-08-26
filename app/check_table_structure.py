@@ -4,6 +4,7 @@ Script para verificar a estrutura das tabelas do orquestrador
 """
 
 import os
+
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv

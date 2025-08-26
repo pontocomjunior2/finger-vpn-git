@@ -4,9 +4,10 @@ Análise simplificada da discrepância entre finger e orquestrador.
 """
 
 import os
+from datetime import datetime
+
 import psycopg2
 from dotenv import load_dotenv
-from datetime import datetime
 
 # Carregar variáveis de ambiente
 load_dotenv()

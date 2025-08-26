@@ -4,6 +4,7 @@ Script para documentar as variáveis necessárias para instâncias fingerv7
 """
 
 import os
+
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

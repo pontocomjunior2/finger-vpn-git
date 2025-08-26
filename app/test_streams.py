@@ -1,5 +1,6 @@
 import psycopg2
 
+
 def test_streams():
     conn = psycopg2.connect(
         host='104.234.173.96',

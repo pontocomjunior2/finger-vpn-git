@@ -6,10 +6,11 @@ entre os IDs dos streams retornados pelo orquestrador e os IDs dos streams no fi
 
 import asyncio
 import json
-import psycopg2
-from orchestrator_client import create_orchestrator_client
 import os
+
+import psycopg2
 from dotenv import load_dotenv
+from orchestrator_client import create_orchestrator_client
 
 load_dotenv()
 

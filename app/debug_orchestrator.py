@@ -4,10 +4,11 @@ Script de debug para testar conectividade com o orquestrador
 """
 
 import asyncio
-import aiohttp
-import os
-from dotenv import load_dotenv
 import logging
+import os
+
+import aiohttp
+from dotenv import load_dotenv
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)

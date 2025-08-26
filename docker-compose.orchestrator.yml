@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  # Banco de dados PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: orchestrator-postgres
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator_user
+      POSTGRES_PASSWORD: orchestrator_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - orchestrator-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator_user -d orchestrator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis para cache e sessões
+  redis:
+    image: redis:7-alpine
+    container_name: orchestrator-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - orchestrator-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Orchestrator principal
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator.new
+    container_name: enhanced-orchestrator
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: orchestrator
+      DB_USER: orchestrator_user
+      DB_PASSWORD: orchestrator_pass
+      
+      # Application
+      ORCHESTRATOR_PORT: 8000
+      ORCHESTRATOR_HOST: 0.0.0.0
+      LOG_LEVEL: INFO
+      MAX_WORKERS: 1
+      
+      # Performance tuning
+      IMBALANCE_THRESHOLD: 0.2
+      MAX_STREAM_DIFFERENCE: 2
+      HEARTBEAT_TIMEOUT: 300
+      HEARTBEAT_WARNING_THRESHOLD: 120
+      MAX_MISSED_HEARTBEATS: 3
+      MAX_RETRY_ATTEMPTS: 3
+      RETRY_DELAY_SECONDS: 5
+      EXPONENTIAL_BACKOFF: "true"
+      
+      # Features
+      RUN_MIGRATIONS: "true"
+      RUN_HEALTH_CHECK: "true"
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+    ports:
+      - "8000:8000"
+    volumes:
+      - orchestrator_logs:/app/logs
+      - orchestrator_data:/app/data
+    networks:
+      - orchestrator-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/app/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Prometheus para métricas
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: orchestrator-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - orchestrator-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Grafana para dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: orchestrator-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - orchestrator-network
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  orchestrator_logs:
+  orchestrator_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  orchestrator-network:
+    driver: bridge

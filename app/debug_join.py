@@ -5,6 +5,7 @@ Debug do JOIN entre assignments e instances.
 
 import os
 import sys
+
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv

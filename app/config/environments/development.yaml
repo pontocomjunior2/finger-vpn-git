@@ -1,0 +1,26 @@
+# Development Environment Configuration
+
+database:
+  host: localhost
+  port: 5432
+  database: orchestrator_dev
+  username: postgres
+  password: "dev_password"
+  pool_size: 5
+  timeout: 10
+
+orchestrator:
+  host: "127.0.0.1"
+  port: 8000
+  max_instances: 3
+  heartbeat_interval: 15
+  rebalance_threshold: 0.3
+  emergency_timeout: 120
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  log_level: "DEBUG"
+  retention_days: 7
+
+debug: true

@@ -4,8 +4,9 @@ Script para verificar e diagnosticar problemas com a coluna heartbeat_at
 na tabela stream_locks
 """
 
-import psycopg2
 import os
+
+import psycopg2
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

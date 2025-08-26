@@ -4,9 +4,10 @@ Script para verificar se o orquestrador está recebendo conexões da instância 
 """
 
 import asyncio
-import aiohttp
 import os
 from datetime import datetime
+
+import aiohttp
 
 # Configurações
 ORCHESTRATOR_URL = os.getenv('ORCHESTRATOR_URL', 'http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080')

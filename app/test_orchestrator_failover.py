@@ -5,12 +5,13 @@ Testa o comportamento do orquestrador em situações de failover.
 """
 
 import asyncio
-import aiohttp
 import json
-import time
 import logging
-from typing import List, Dict
+import time
 from datetime import datetime
+from typing import Dict, List
+
+import aiohttp
 
 # Configurar logging
 logging.basicConfig(

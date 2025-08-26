@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import os
+from pathlib import Path
+
 import psycopg2
 import psycopg2.extras
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

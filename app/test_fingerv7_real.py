@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import asyncio
-import subprocess
-import time
 import os
 import signal
+import subprocess
+import time
+
 import psutil
 from dotenv import load_dotenv
 

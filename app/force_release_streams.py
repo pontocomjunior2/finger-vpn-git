@@ -4,8 +4,9 @@ Script para forçar a liberação de streams de uma instância parada
 """
 
 import os
-import psycopg2
 from datetime import datetime, timedelta
+
+import psycopg2
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente

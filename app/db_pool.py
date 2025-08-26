@@ -3,17 +3,18 @@ Módulo de Pool de Conexões PostgreSQL
 Resolve problemas de esgotamento de conexões e timeouts
 """
 
-import os
-import time
-import random
 import logging
+import os
+import random
 import threading
+import time
 import traceback
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
+
 import psycopg2
-from psycopg2 import pool
-from contextlib import contextmanager, asynccontextmanager
 from dotenv import load_dotenv
+from psycopg2 import pool
 
 # Carregar variáveis de ambiente
 load_dotenv(dotenv_path=".env")

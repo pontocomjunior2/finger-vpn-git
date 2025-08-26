@@ -6,22 +6,17 @@ This script tests the core functionality without requiring actual stream process
 
 import asyncio
 import json
-import sys
 import os
+import sys
 from datetime import datetime
 
 # Add the app directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import the functions we need to test
-from fingerv7_win import (
-    should_process_stream,
-    acquire_stream_lock,
-    release_stream_lock,
-    check_stream_ownership,
-    SERVER_ID,
-    TOTAL_SERVERS,
-)
+from fingerv7_win import (SERVER_ID, TOTAL_SERVERS, acquire_stream_lock,
+                          check_stream_ownership, release_stream_lock,
+                          should_process_stream)
 
 # Mock para funções de lock - simplificar para focar na lógica de distribuição
 # Vamos substituir as funções de lock com implementações mock simples

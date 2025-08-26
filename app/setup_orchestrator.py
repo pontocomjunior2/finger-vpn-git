@@ -9,12 +9,13 @@ Autor: Sistema de Fingerprinting
 Data: 2024
 """
 
-import os
-import sys
-import subprocess
 import logging
-import psycopg2
+import os
+import subprocess
+import sys
 from pathlib import Path
+
+import psycopg2
 from dotenv import load_dotenv
 
 # Configurar logging

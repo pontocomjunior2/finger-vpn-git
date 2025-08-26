@@ -5,10 +5,11 @@ Teste direto de inserção no banco de dados para debug.
 
 import os
 import sys
+from datetime import datetime
+
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-from datetime import datetime
 
 # Carregar variáveis de ambiente
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')

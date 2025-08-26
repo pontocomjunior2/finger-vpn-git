@@ -11,7 +11,6 @@ Este script testa:
 """
 
 import asyncio
-import aiohttp
 import json
 import logging
 import os
@@ -19,6 +18,8 @@ import sys
 import time
 from datetime import datetime
 from typing import Dict, List
+
+import aiohttp
 
 # Configurar logging
 logging.basicConfig(

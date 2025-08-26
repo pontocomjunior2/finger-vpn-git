@@ -4,10 +4,11 @@ Script para corrigir a coluna heartbeat_at na tabela stream_locks
 Este script verifica se a coluna existe e a adiciona se necessário
 """
 
-import psycopg2
-import os
-from dotenv import load_dotenv
 import logging
+import os
+
+import psycopg2
+from dotenv import load_dotenv
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -1,0 +1,28 @@
+# Test Environment Configuration
+
+database:
+  host: localhost
+  port: 5432
+  database: orchestrator_test
+  username: postgres
+  password: "test_password"
+  pool_size: 3
+  timeout: 5
+  retry_attempts: 1
+
+orchestrator:
+  host: "127.0.0.1"
+  port: 8001
+  max_instances: 2
+  heartbeat_interval: 5
+  rebalance_threshold: 0.5
+  emergency_timeout: 30
+  api_timeout: 5
+
+monitoring:
+  enabled: false
+  metrics_port: 9091
+  log_level: "DEBUG"
+  retention_days: 1
+
+debug: true

@@ -5,12 +5,13 @@ Monitor contínuo das atribuições de streams para identificar quando desaparec
 
 import os
 import sys
+import time
+from datetime import datetime
+
 import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
-import time
 import requests
-from datetime import datetime
+from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')

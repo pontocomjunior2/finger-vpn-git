@@ -1,0 +1,29 @@
+# Production Environment Configuration
+
+database:
+  host: prod-db-cluster.internal
+  port: 5432
+  database: orchestrator_prod
+  username: orchestrator_user
+  password: "${DB_PASSWORD}"  # Will be replaced by deployment script
+  pool_size: 15
+  timeout: 30
+  retry_attempts: 5
+
+orchestrator:
+  host: "0.0.0.0"
+  port: 8000
+  max_instances: 20
+  heartbeat_interval: 30
+  rebalance_threshold: 0.15
+  emergency_timeout: 300
+  api_timeout: 30
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  alert_webhook: "${PROD_WEBHOOK_URL}"
+  log_level: "WARNING"
+  retention_days: 90
+
+debug: false

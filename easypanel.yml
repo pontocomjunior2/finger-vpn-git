@@ -1,0 +1,171 @@
+# Configuração EasyPanel para Enhanced Stream Orchestrator
+name: enhanced-orchestrator
+services:
+  # Banco de dados PostgreSQL
+  - name: postgres
+    image: postgres:15-alpine
+    env:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - target: 5432
+        published: 5432
+        protocol: tcp
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator_user -d orchestrator"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Redis para cache
+  - name: redis
+    image: redis:7-alpine
+    ports:
+      - target: 6379
+        published: 6379
+        protocol: tcp
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Enhanced Stream Orchestrator
+  - name: orchestrator
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator.new
+    env:
+      # Database Configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: orchestrator
+      DB_USER: orchestrator_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      
+      # Application Configuration
+      ORCHESTRATOR_PORT: 8000
+      ORCHESTRATOR_HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_WORKERS: ${MAX_WORKERS:-1}
+      
+      # Performance Tuning
+      IMBALANCE_THRESHOLD: ${IMBALANCE_THRESHOLD:-0.2}
+      MAX_STREAM_DIFFERENCE: ${MAX_STREAM_DIFFERENCE:-2}
+      HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-300}
+      HEARTBEAT_WARNING_THRESHOLD: ${HEARTBEAT_WARNING_THRESHOLD:-120}
+      MAX_MISSED_HEARTBEATS: ${MAX_MISSED_HEARTBEATS:-3}
+      MAX_RETRY_ATTEMPTS: ${MAX_RETRY_ATTEMPTS:-3}
+      RETRY_DELAY_SECONDS: ${RETRY_DELAY_SECONDS:-5}
+      EXPONENTIAL_BACKOFF: ${EXPONENTIAL_BACKOFF:-true}
+      
+      # Feature Flags
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      RUN_HEALTH_CHECK: ${RUN_HEALTH_CHECK:-true}
+      
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY}
+      
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+    volumes:
+      - orchestrator_logs:/app/logs
+      - orchestrator_data:/app/data
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "python", "/app/app/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
+  # Prometheus para métricas (opcional)
+  - name: prometheus
+    image: prom/prometheus:latest
+    ports:
+      - target: 9090
+        published: 9090
+        protocol: tcp
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - orchestrator
+
+volumes:
+  postgres_data:
+  orchestrator_logs:
+  orchestrator_data:
+  prometheus_data:
+
+# Variáveis de ambiente necessárias
+env:
+  POSTGRES_PASSWORD:
+    description: "Senha do banco PostgreSQL"
+    required: true
+    
+  SECRET_KEY:
+    description: "Chave secreta para a aplicação"
+    required: true
+    
+  LOG_LEVEL:
+    description: "Nível de log (DEBUG, INFO, WARNING, ERROR)"
+    default: "INFO"
+    
+  MAX_WORKERS:
+    description: "Número máximo de workers"
+    default: "1"
+    
+  IMBALANCE_THRESHOLD:
+    description: "Threshold para detecção de desbalanceamento"
+    default: "0.2"
+    
+  MAX_STREAM_DIFFERENCE:
+    description: "Diferença máxima de streams entre instâncias"
+    default: "2"
+    
+  HEARTBEAT_TIMEOUT:
+    description: "Timeout para heartbeat em segundos"
+    default: "300"
+    
+  RUN_MIGRATIONS:
+    description: "Executar migrações na inicialização"
+    default: "true"
+
+# Configurações de deploy
+deploy:
+  replicas: 1
+  update_config:
+    parallelism: 1
+    delay: 10s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+    window: 120s
+
+# Configurações de rede
+networks:
+  default:
+    driver: bridge

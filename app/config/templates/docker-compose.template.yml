@@ -1,0 +1,138 @@
+# Docker Compose Template for Orchestrator System
+# This template is processed by the deployment script to generate environment-specific compose files
+
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: orchestrator-${ENVIRONMENT}
+    ports:
+      - "${ORCHESTRATOR_PORT}:${ORCHESTRATOR_PORT}"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DEBUG=${DEBUG}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_POOL_SIZE=${DB_POOL_SIZE}
+      - DB_TIMEOUT=${DB_TIMEOUT}
+      - DB_RETRY_ATTEMPTS=${DB_RETRY_ATTEMPTS}
+      - ORCHESTRATOR_HOST=${ORCHESTRATOR_HOST}
+      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT}
+      - MAX_INSTANCES=${MAX_INSTANCES}
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL}
+      - REBALANCE_THRESHOLD=${REBALANCE_THRESHOLD}
+      - EMERGENCY_TIMEOUT=${EMERGENCY_TIMEOUT}
+      - API_TIMEOUT=${API_TIMEOUT}
+      - MONITORING_ENABLED=${MONITORING_ENABLED}
+      - METRICS_PORT=${METRICS_PORT}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - RETENTION_DAYS=${RETENTION_DAYS}
+      - ALERT_WEBHOOK=${ALERT_WEBHOOK}
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/health_check.py", "--readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - database
+    networks:
+      - orchestrator-network
+
+  database:
+    image: postgres:13
+    container_name: postgres-${ENVIRONMENT}
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - orchestrator-network
+
+  # Monitoring services (conditional based on MONITORING_ENABLED)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-${ENVIRONMENT}
+    ports:
+      - "${METRICS_PORT}:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana-${ENVIRONMENT}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+    profiles:
+      - monitoring
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager-${ENVIRONMENT}
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    restart: unless-stopped
+    networks:
+      - orchestrator-network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  orchestrator-network:
+    driver: bridge

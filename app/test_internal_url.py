@@ -4,9 +4,10 @@ Script para testar conectividade com a URL interna do orquestrador no EasyPanel
 """
 
 import asyncio
-import aiohttp
 import os
 from datetime import datetime
+
+import aiohttp
 
 # URL interna do Docker
 ORCHESTRATOR_URL = "http://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host:8080"

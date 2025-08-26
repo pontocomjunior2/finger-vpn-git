@@ -4,10 +4,11 @@ Script para reiniciar o pool de conexões e forçar reconhecimento
 da coluna heartbeat_at
 """
 
-import psycopg2
 import os
-from dotenv import load_dotenv
 import time
+
+import psycopg2
+from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente
 load_dotenv(dotenv_path=".env")
