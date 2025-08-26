@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator.new
+    ports:
+      - "8000:8000"
+    environment:
+      # Database Configuration (conectar a banco externo)
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      
+      # Application Configuration
+      ORCHESTRATOR_PORT: 8000
+      ORCHESTRATOR_HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_WORKERS: ${MAX_WORKERS:-1}
+      
+      # Performance Tuning
+      IMBALANCE_THRESHOLD: ${IMBALANCE_THRESHOLD:-0.2}
+      MAX_STREAM_DIFFERENCE: ${MAX_STREAM_DIFFERENCE:-2}
+      HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-300}
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY}
+      
+      # Feature Flags
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      RUN_HEALTH_CHECK: ${RUN_HEALTH_CHECK:-true}
+      
+    volumes:
+      - orchestrator_logs:/app/logs
+      - orchestrator_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/app/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  orchestrator_logs:
+  orchestrator_data:
