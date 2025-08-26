@@ -6,9 +6,9 @@ services:
     image: postgres:15-alpine
     container_name: orchestrator-postgres
     environment:
-      POSTGRES_DB: ${DB_NAME:-orchestrator}
-      POSTGRES_USER: ${DB_USER:-orchestrator_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-orchestrator_pass}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -18,7 +18,7 @@ services:
     networks:
       - orchestrator-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-orchestrator_user} -d ${DB_NAME:-orchestrator}"]
+      test: ["CMD-SHELL", "pg_isready -U orchestrator_user -d orchestrator"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,9 +49,9 @@ services:
       # Database Configuration
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-orchestrator}
-      DB_USER: ${DB_USER:-orchestrator_user}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: orchestrator
+      DB_USER: orchestrator_user
+      DB_PASSWORD: ${DB_PASSWORD:-orchestrator_pass}
       
       # Application Configuration
       ORCHESTRATOR_PORT: 8000

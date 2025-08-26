@@ -31,19 +31,19 @@ Criamos múltiplos arquivos de configuração para diferentes cenários:
 1. **No EasyPanel, criar novo projeto**
 2. **Conectar ao repositório Git**
 3. **Selecionar `docker-compose.yml` como arquivo principal**
-4. **Configurar variáveis de ambiente:**
+4. **Configurar variáveis de ambiente no EasyPanel:**
 
 ```env
-# OBRIGATÓRIAS
-DB_PASSWORD=sua_senha_muito_segura
-SECRET_KEY=sua_chave_secreta_de_32_caracteres_ou_mais
+# OBRIGATÓRIAS (configurar no EasyPanel)
+DB_PASSWORD=orchestrator_pass_123
+SECRET_KEY=sua_chave_secreta_de_pelo_menos_32_caracteres_aqui
 
 # OPCIONAIS
 LOG_LEVEL=INFO
 MAX_WORKERS=1
-IMBALANCE_THRESHOLD=0.2
-MAX_STREAM_DIFFERENCE=2
 ```
+
+**IMPORTANTE**: O EasyPanel deve configurar essas variáveis na seção "Environment Variables" do projeto.
 
 ### Opção 2: Usando docker-compose.simple.yml (Banco Externo)
 

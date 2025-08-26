@@ -41,10 +41,7 @@ CREATE TABLE IF NOT EXISTS orchestrator.heartbeats (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     worker_instance_id UUID REFERENCES orchestrator.worker_instances(id) ON DELETE CASCADE,
     heartbeat_data JSONB,
-    received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Índice para consultas por worker e tempo
-    INDEX idx_heartbeats_worker_time (worker_instance_id, received_at DESC)
+    received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Tabela de eventos do sistema
@@ -54,11 +51,7 @@ CREATE TABLE IF NOT EXISTS orchestrator.system_events (
     event_data JSONB,
     severity VARCHAR(20) NOT NULL DEFAULT 'info',
     source VARCHAR(100),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Índice para consultas por tipo e tempo
-    INDEX idx_events_type_time (event_type, created_at DESC),
-    INDEX idx_events_severity_time (severity, created_at DESC)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Tabela de métricas de performance
@@ -68,10 +61,7 @@ CREATE TABLE IF NOT EXISTS orchestrator.performance_metrics (
     metric_value NUMERIC NOT NULL,
     metric_type VARCHAR(50) NOT NULL DEFAULT 'gauge',
     tags JSONB,
-    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Índice para consultas por métrica e tempo
-    INDEX idx_metrics_name_time (metric_name, recorded_at DESC)
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Tabela de configurações
@@ -165,6 +155,16 @@ CREATE INDEX IF NOT EXISTS idx_worker_instances_status ON orchestrator.worker_in
 CREATE INDEX IF NOT EXISTS idx_worker_instances_last_heartbeat ON orchestrator.worker_instances(last_heartbeat DESC);
 CREATE INDEX IF NOT EXISTS idx_streams_status ON orchestrator.streams(status);
 CREATE INDEX IF NOT EXISTS idx_streams_worker ON orchestrator.streams(worker_instance_id);
+
+-- Índices para heartbeats
+CREATE INDEX IF NOT EXISTS idx_heartbeats_worker_time ON orchestrator.heartbeats(worker_instance_id, received_at DESC);
+
+-- Índices para eventos
+CREATE INDEX IF NOT EXISTS idx_events_type_time ON orchestrator.system_events(event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_severity_time ON orchestrator.system_events(severity, created_at DESC);
+
+-- Índices para métricas
+CREATE INDEX IF NOT EXISTS idx_metrics_name_time ON orchestrator.performance_metrics(metric_name, recorded_at DESC);
 
 -- View para estatísticas do sistema
 CREATE OR REPLACE VIEW orchestrator.system_stats AS

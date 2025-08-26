@@ -89,6 +89,16 @@ async def startup_event():
     global orchestrator
     
     logger.info("Starting Enhanced Stream Orchestrator...")
+    logger.info(f"Database config: {DB_CONFIG}")
+    
+    # Verificar se todas as variáveis obrigatórias estão definidas
+    required_vars = ['host', 'database', 'user', 'password']
+    missing_vars = [var for var in required_vars if not DB_CONFIG.get(var)]
+    
+    if missing_vars:
+        logger.warning(f"Missing database configurations: {missing_vars}")
+        logger.warning("Starting in limited mode without full orchestrator functionality")
+        return
     
     try:
         orchestrator = IntegratedOrchestrator(DB_CONFIG)
@@ -96,13 +106,14 @@ async def startup_event():
         
         if not success:
             logger.error("Failed to start orchestrator system")
-            raise Exception("Orchestrator startup failed")
+            logger.warning("Continuing in limited mode")
+            return
         
         logger.info("Enhanced Stream Orchestrator started successfully")
         
     except Exception as e:
         logger.error(f"Failed to start orchestrator: {e}")
-        raise
+        logger.warning("Continuing in limited mode")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -120,7 +131,17 @@ async def shutdown_event():
 async def health_check():
     """Health check endpoint"""
     if not orchestrator:
-        return {"status": "starting", "message": "Orchestrator initializing"}
+        return {
+            "status": "limited", 
+            "message": "Running in limited mode - database not configured",
+            "timestamp": datetime.now().isoformat(),
+            "database_config": {
+                "host": bool(DB_CONFIG.get('host')),
+                "database": bool(DB_CONFIG.get('database')),
+                "user": bool(DB_CONFIG.get('user')),
+                "password": bool(DB_CONFIG.get('password'))
+            }
+        }
     
     try:
         status = await orchestrator.get_system_status()

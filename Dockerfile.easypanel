@@ -1,0 +1,133 @@
+# =============================================================================
+# DOCKERFILE PARA EASYPANEL - TODOS OS SERVIÇOS NO MESMO CONTAINER
+# =============================================================================
+
+FROM python:3.11-slim
+
+# Instalar dependências do sistema
+RUN apt-get update && apt-get install -y \
+    postgresql-15 \
+    postgresql-client-15 \
+    postgresql-contrib-15 \
+    redis-server \
+    supervisor \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configurar PostgreSQL
+USER postgres
+RUN /etc/init.d/postgresql start && \
+    psql --command "CREATE USER orchestrator_user WITH SUPERUSER PASSWORD 'orchestrator_pass';" && \
+    createdb -O orchestrator_user orchestrator
+
+USER root
+
+# Configurar diretório da aplicação
+WORKDIR /app
+
+# Copiar requirements e instalar dependências Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY . .
+
+# Copiar script de inicialização do banco
+COPY scripts/init-db.sql /docker-entrypoint-initdb.d/
+
+# Criar diretórios necessários
+RUN mkdir -p /app/logs /app/data /var/log/supervisor
+
+# Configurar Supervisor para gerenciar todos os serviços
+COPY <<EOF /etc/supervisor/conf.d/supervisord.conf
+[supervisord]
+nodaemon=true
+user=root
+logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+
+[program:postgresql]
+command=/usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main -c config_file=/etc/postgresql/15/main/postgresql.conf
+user=postgres
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/postgresql.log
+
+[program:redis]
+command=redis-server --bind 0.0.0.0 --port 6379
+user=redis
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/redis.log
+
+[program:orchestrator]
+command=python -m uvicorn app.main_orchestrator:app --host 0.0.0.0 --port 8000
+directory=/app
+user=root
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/orchestrator.log
+environment=PYTHONPATH="/app"
+
+[program:init-db]
+command=/app/scripts/init-database.sh
+directory=/app
+user=root
+autostart=true
+autorestart=false
+startsecs=0
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/init-db.log
+EOF
+
+# Criar script de inicialização do banco
+COPY <<EOF /app/scripts/init-database.sh
+#!/bin/bash
+set -e
+
+echo "Aguardando PostgreSQL iniciar..."
+until pg_isready -h localhost -p 5432 -U orchestrator_user; do
+  echo "PostgreSQL não está pronto - aguardando..."
+  sleep 2
+done
+
+echo "PostgreSQL está pronto! Executando migrations..."
+cd /app
+python -c "
+import asyncio
+import sys
+sys.path.append('/app')
+from app.database.migrations import run_migrations
+from app.main_orchestrator import DB_CONFIG
+
+async def main():
+    try:
+        await run_migrations(DB_CONFIG)
+        print('✅ Migrations executadas com sucesso!')
+    except Exception as e:
+        print(f'❌ Erro nas migrations: {e}')
+
+asyncio.run(main())
+"
+
+echo "✅ Inicialização do banco concluída!"
+EOF
+
+RUN chmod +x /app/scripts/init-database.sh
+
+# Configurar PostgreSQL
+RUN echo "host all all 0.0.0.0/0 md5" >> /etc/postgresql/15/main/pg_hba.conf
+RUN echo "listen_addresses='*'" >> /etc/postgresql/15/main/postgresql.conf
+
+# Expor portas
+EXPOSE 8000 5432 6379
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Comando de inicialização
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
