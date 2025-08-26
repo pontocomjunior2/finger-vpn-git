@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from integration_system import IntegratedOrchestrator
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Query
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
 except ImportError as e:
@@ -44,13 +44,19 @@ except ImportError as e:
     sys.exit(0)
 
 # Configurar logging
+log_handlers = [logging.StreamHandler()]
+
+# Adicionar file handler se diretório existir
+log_dir = os.getenv('LOG_DIR', '/app/logs')
+if os.path.exists(log_dir):
+    log_handlers.append(logging.FileHandler(f'{log_dir}/orchestrator.log'))
+elif os.path.exists('./logs'):
+    log_handlers.append(logging.FileHandler('./logs/orchestrator.log'))
+
 logging.basicConfig(
     level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('/app/logs/orchestrator.log')
-    ]
+    handlers=log_handlers
 )
 
 logger = logging.getLogger(__name__)
@@ -274,6 +280,254 @@ async def get_streams():
         logger.error(f"Failed to get streams: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get streams: {str(e)}")
 
+# ==========================================
+# WORKER MANAGEMENT API ENDPOINTS
+# ==========================================
+
+# Armazenamento em memória para workers (temporário)
+workers_registry = {}
+stream_assignments = {}
+
+@app.post("/api/workers/register")
+async def register_worker(worker_data: dict):
+    """Registrar um worker FingerV7"""
+    try:
+        instance_id = worker_data.get('instance_id')
+        if not instance_id:
+            raise HTTPException(status_code=400, detail="instance_id is required")
+        
+        # Registrar worker
+        workers_registry[instance_id] = {
+            **worker_data,
+            "registered_at": datetime.now().isoformat(),
+            "last_heartbeat": datetime.now().isoformat(),
+            "status": "active"
+        }
+        
+        logger.info(f"✅ Worker registered: {instance_id}")
+        
+        return {
+            "success": True,
+            "worker_id": instance_id,
+            "message": "Worker registered successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error registering worker: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/heartbeat")
+async def worker_heartbeat(heartbeat_data: dict):
+    """Receber heartbeat de worker"""
+    try:
+        worker_id = heartbeat_data.get('worker_instance_id')
+        if not worker_id:
+            raise HTTPException(status_code=400, detail="worker_instance_id is required")
+        
+        if worker_id not in workers_registry:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        
+        # Atualizar heartbeat
+        workers_registry[worker_id].update({
+            "last_heartbeat": datetime.now().isoformat(),
+            "status": heartbeat_data.get('status', 'active'),
+            "current_load": heartbeat_data.get('current_load', 0),
+            "available_capacity": heartbeat_data.get('available_capacity', 0),
+            "metrics": heartbeat_data.get('metrics', {})
+        })
+        
+        logger.debug(f"💓 Heartbeat received from {worker_id}")
+        
+        return {"success": True, "message": "Heartbeat received"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error processing heartbeat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/workers")
+async def list_workers():
+    """Listar workers registrados"""
+    try:
+        workers_list = []
+        for worker_id, worker_data in workers_registry.items():
+            workers_list.append({
+                "instance_id": worker_id,
+                "worker_type": worker_data.get('worker_type'),
+                "status": worker_data.get('status'),
+                "capacity": worker_data.get('capacity'),
+                "current_load": worker_data.get('current_load', 0),
+                "available_capacity": worker_data.get('available_capacity', 0),
+                "last_heartbeat": worker_data.get('last_heartbeat'),
+                "registered_at": worker_data.get('registered_at')
+            })
+        
+        return {
+            "workers": workers_list,
+            "total": len(workers_list)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error listing workers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/streams/assign")
+async def assign_streams(worker_id: str, capacity: int = 1, worker_type: str = "fingerv7"):
+    """Atribuir streams para um worker"""
+    try:
+        if worker_id not in workers_registry:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        
+        # Buscar streams disponíveis do PostgreSQL
+        import asyncpg
+        
+        conn = await asyncpg.connect(
+            host=POSTGRES_CONFIG['host'],
+            port=POSTGRES_CONFIG['port'],
+            database=POSTGRES_CONFIG['database'],
+            user=POSTGRES_CONFIG['user'],
+            password=POSTGRES_CONFIG['password']
+        )
+        
+        table_name = POSTGRES_CONFIG['table_name']
+        
+        # Buscar streams que não estão sendo processados
+        query = f"""
+        SELECT * FROM {table_name} 
+        WHERE id NOT IN (
+            SELECT DISTINCT stream_id::int 
+            FROM (VALUES {','.join([f"('{sid}')" for sid in stream_assignments.keys()])}) AS assigned(stream_id)
+            WHERE stream_id IS NOT NULL
+        )
+        ORDER BY RANDOM() 
+        LIMIT $1
+        """
+        
+        if not stream_assignments:
+            # Se não há assignments, buscar qualquer stream
+            query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT $1"
+        
+        results = await conn.fetch(query, capacity)
+        await conn.close()
+        
+        streams = []
+        for row in results:
+            stream_data = dict(row)
+            stream_id = str(stream_data['id'])
+            
+            # Marcar como atribuído
+            stream_assignments[stream_id] = {
+                "worker_id": worker_id,
+                "assigned_at": datetime.now().isoformat(),
+                "status": "assigned"
+            }
+            
+            streams.append({
+                "stream_id": stream_id,
+                "id": stream_data['id'],
+                "stream_url": stream_data.get('url'),
+                "url": stream_data.get('url'),
+                "name": stream_data.get('name'),
+                "metadata": {
+                    "cidade": stream_data.get('cidade'),
+                    "estado": stream_data.get('estado'),
+                    "regiao": stream_data.get('regiao'),
+                    "segmento": stream_data.get('segmento'),
+                    "frequencia": stream_data.get('frequencia')
+                }
+            })
+        
+        logger.info(f"📤 Assigned {len(streams)} streams to worker {worker_id}")
+        
+        return {
+            "streams": streams,
+            "total": len(streams),
+            "worker_id": worker_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error assigning streams: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/streams/update")
+async def update_stream_status(update_data: dict):
+    """Atualizar status de processamento de stream"""
+    try:
+        stream_id = update_data.get('stream_id')
+        worker_id = update_data.get('worker_instance_id')
+        status = update_data.get('status')
+        result = update_data.get('result', {})
+        
+        if not all([stream_id, worker_id, status]):
+            raise HTTPException(status_code=400, detail="stream_id, worker_instance_id, and status are required")
+        
+        # Atualizar assignment
+        if stream_id in stream_assignments:
+            stream_assignments[stream_id].update({
+                "status": status,
+                "updated_at": datetime.now().isoformat(),
+                "result": result
+            })
+            
+            # Se completado ou falhou, remover da lista de assignments
+            if status in ["completed", "failed", "cancelled"]:
+                logger.info(f"🎯 Stream {stream_id} {status} by worker {worker_id}")
+                # Manter por um tempo para histórico
+                stream_assignments[stream_id]["finished_at"] = datetime.now().isoformat()
+        
+        return {"success": True, "message": f"Stream {stream_id} status updated to {status}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error updating stream status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/metrics")
+async def get_orchestrator_metrics():
+    """Obter métricas do orchestrator"""
+    try:
+        # Calcular métricas dos workers
+        total_workers = len(workers_registry)
+        active_workers = sum(1 for w in workers_registry.values() if w.get('status') == 'active')
+        total_capacity = sum(w.get('capacity', 0) for w in workers_registry.values())
+        current_load = sum(w.get('current_load', 0) for w in workers_registry.values())
+        
+        # Métricas de streams
+        total_assignments = len(stream_assignments)
+        completed_streams = sum(1 for s in stream_assignments.values() if s.get('status') == 'completed')
+        failed_streams = sum(1 for s in stream_assignments.values() if s.get('status') == 'failed')
+        processing_streams = sum(1 for s in stream_assignments.values() if s.get('status') == 'processing')
+        
+        return {
+            "orchestrator": {
+                "status": "running",
+                "uptime": "N/A",  # TODO: calcular uptime real
+                "timestamp": datetime.now().isoformat()
+            },
+            "workers": {
+                "total": total_workers,
+                "active": active_workers,
+                "total_capacity": total_capacity,
+                "current_load": current_load,
+                "utilization_percent": round((current_load / max(1, total_capacity)) * 100, 2)
+            },
+            "streams": {
+                "total_assignments": total_assignments,
+                "completed": completed_streams,
+                "failed": failed_streams,
+                "processing": processing_streams,
+                "success_rate": round((completed_streams / max(1, completed_streams + failed_streams)) * 100, 2)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/")
 async def root():
     """Root endpoint with API documentation"""
@@ -290,7 +544,15 @@ async def root():
             "metrics": "/metrics",
             "postgres_test": "/postgres/test",
             "streams": "/streams",
-            "docs": "/docs"
+            "docs": "/docs",
+            "api": {
+                "workers_register": "/api/workers/register",
+                "workers_list": "/api/workers",
+                "heartbeat": "/api/heartbeat",
+                "streams_assign": "/api/streams/assign",
+                "streams_update": "/api/streams/update",
+                "api_metrics": "/api/metrics"
+            }
         }
     }
 

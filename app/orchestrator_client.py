@@ -5,6 +5,9 @@ Cliente do Orquestrador para Instâncias de Fingerprinting
 Este módulo fornece uma interface para as instâncias se comunicarem
 com o orquestrador central de distribuição de streams.
 
+VERSÃO ATUALIZADA: Integração com novo sistema de API endpoints
+Compatível com orchestrator v1.0.0 com endpoints /api/*
+
 Autor: Sistema de Fingerprinting
 Data: 2024
 """
@@ -51,6 +54,7 @@ class OrchestratorClient:
         self.is_registered = False
         self.heartbeat_task: Optional[asyncio.Task] = None
         self.session: Optional[aiohttp.ClientSession] = None
+        self.start_time = time.time()  # Para métricas de uptime
         
         # Detectar IP e porta local
         self.local_ip = self._get_local_ip()
@@ -69,6 +73,25 @@ class OrchestratorClient:
         self.alert_cooldown = 300  # 5 minutos entre alertas do mesmo tipo
         self.consecutive_failures = 0
         self.failure_threshold = 5  # Alertar após 5 falhas consecutivas
+        
+        logger.info(f"Cliente do orquestrador inicializado - Server ID: {self.server_id}, Max Streams: {self.max_streams}")
+
+    @classmethod
+    def from_env(cls, server_id: Optional[str] = None):
+        """
+        Cria cliente do orquestrador a partir de variáveis de ambiente.
+        Compatível com configuração existente do FingerV7.
+        """
+        orchestrator_url = os.getenv('ORCHESTRATOR_URL')
+        if not orchestrator_url:
+            raise ValueError("ORCHESTRATOR_URL não definida nas variáveis de ambiente")
+            
+        if not server_id:
+            server_id = os.getenv('INSTANCE_ID') or os.getenv('SERVER_ID') or f"fingerv7-{int(time.time())}"
+            
+        max_streams = int(os.getenv('WORKER_CAPACITY', os.getenv('MAX_STREAMS', '20')))
+        
+        return cls(orchestrator_url, server_id, max_streams)
         
     def _get_local_ip(self) -> str:
         """Detecta o IP local da máquina."""
@@ -106,18 +129,25 @@ class OrchestratorClient:
             raise Exception(f"Erro de conexão: {e}")
     
     async def register(self) -> bool:
-        """Registra esta instância no orquestrador."""
+        """Registra esta instância no orquestrador usando nova API."""
         try:
             data = {
-                "server_id": self.server_id,
-                "ip": self.local_ip,
-                "port": self.local_port,
-                "max_streams": self.max_streams
+                "instance_id": self.server_id,  # Novo formato da API
+                "worker_type": "fingerv7",
+                "capacity": self.max_streams,
+                "status": "active",
+                "metadata": {
+                    "version": "7.0",
+                    "ip": self.local_ip,
+                    "port": self.local_port,
+                    "capabilities": ["stream_processing", "fingerprinting", "audio_analysis"],
+                    "region": os.getenv('WORKER_REGION', 'default')
+                }
             }
             
-            response = await self._make_request("POST", "/register", data)
+            response = await self._make_request("POST", "/api/workers/register", data)
             
-            if response.get("status") == "registered":
+            if response.get("success"):
                 self.is_registered = True
                 logger.info(f"Instância {self.server_id} registrada com sucesso no orquestrador")
                 return True
@@ -178,26 +208,35 @@ class OrchestratorClient:
             return None
     
     async def send_heartbeat(self) -> bool:
-        """Envia heartbeat para o orquestrador."""
+        """Envia heartbeat para o orquestrador usando nova API."""
         if not self.is_registered:
             logger.warning("Tentativa de enviar heartbeat sem estar registrado")
             return False
         
         try:
             data = {
-                "server_id": self.server_id,
-                "current_streams": self.current_streams,
-                "status": "active"
+                "worker_instance_id": self.server_id,  # Novo formato da API
+                "status": "active",
+                "current_load": self.current_streams,
+                "available_capacity": max(0, self.max_streams - self.current_streams),
+                "timestamp": datetime.utcnow().isoformat()
             }
             
             # Adicionar métricas de sistema se disponíveis
             system_metrics = self._collect_system_metrics()
             if system_metrics:
-                data["system_metrics"] = system_metrics
+                data["metrics"] = {
+                    "system": system_metrics,
+                    "worker": {
+                        "uptime_seconds": int(time.time() - getattr(self, 'start_time', time.time())),
+                        "assigned_streams": len(self.assigned_streams),
+                        "max_streams": self.max_streams
+                    }
+                }
             
-            response = await self._make_request("POST", "/heartbeat", data)
+            response = await self._make_request("POST", "/api/heartbeat", data)
             
-            if response.get("status") == "heartbeat_updated":
+            if response.get("success"):
                 logger.debug(f"Heartbeat enviado com sucesso para {self.server_id}")
                 return True
             else:
@@ -208,8 +247,8 @@ class OrchestratorClient:
             logger.error(f"Erro ao enviar heartbeat: {e}")
             return False
     
-    async def request_streams(self, requested_count: Optional[int] = None) -> List[int]:
-        """Solicita streams do orquestrador."""
+    async def request_streams(self, requested_count: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Solicita streams do orquestrador usando nova API."""
         if not self.is_registered:
             logger.warning("Tentativa de solicitar streams sem estar registrado")
             return []
@@ -218,62 +257,95 @@ class OrchestratorClient:
             requested_count = self.max_streams - self.current_streams
         
         try:
-            data = {
-                "server_id": self.server_id,
-                "requested_count": requested_count
+            # Nova API usa parâmetros GET
+            params = {
+                "worker_id": self.server_id,
+                "capacity": requested_count,
+                "worker_type": "fingerv7"
             }
             
-            response = await self._make_request("POST", "/streams/assign", data)
+            # Construir URL com parâmetros
+            url = f"{self.orchestrator_url}/api/streams/assign"
+            session = await self._get_session()
             
-            if response.get("status") == "assigned":
-                new_streams = response.get("assigned_streams", [])
-                self.assigned_streams.extend(new_streams)
-                self.current_streams = len(self.assigned_streams)
-                
-                logger.info(f"Recebidos {len(new_streams)} streams do orquestrador: {new_streams}")
-                return new_streams
-                
-            elif response.get("status") in ["no_capacity", "no_streams"]:
-                logger.info(f"Nenhum stream atribuído: {response.get('message')}")
-                return []
-                
-            else:
-                logger.error(f"Resposta inesperada ao solicitar streams: {response}")
-                return []
-                
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    streams = result.get("streams", [])
+                    
+                    if streams:
+                        # Extrair IDs dos streams para compatibilidade
+                        new_stream_ids = []
+                        for stream in streams:
+                            stream_id = stream.get('stream_id') or stream.get('id')
+                            if stream_id:
+                                new_stream_ids.append(int(stream_id))
+                        
+                        self.assigned_streams.extend(new_stream_ids)
+                        self.current_streams = len(self.assigned_streams)
+                        
+                        logger.info(f"Recebidos {len(streams)} streams do orquestrador: {new_stream_ids}")
+                        return streams  # Retornar dados completos dos streams
+                    else:
+                        logger.debug("Nenhum stream disponível no momento")
+                        return []
+                        
+                elif response.status == 404:
+                    logger.debug("Worker não encontrado ou nenhum stream disponível")
+                    return []
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Erro ao solicitar streams ({response.status}): {error_text}")
+                    return []
+                    
         except Exception as e:
             logger.error(f"Erro ao solicitar streams: {e}")
             return []
     
+    async def update_stream_status(self, stream_id: int, status: str, result: Optional[Dict] = None) -> bool:
+        """Atualiza status de processamento de um stream usando nova API."""
+        try:
+            data = {
+                "stream_id": str(stream_id),
+                "worker_instance_id": self.server_id,
+                "status": status,
+                "result": result or {},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            response = await self._make_request("POST", "/api/streams/update", data)
+            
+            if response.get("success"):
+                logger.debug(f"Status do stream {stream_id} atualizado para {status}")
+                
+                # Se completado ou falhou, remover da lista local
+                if status in ["completed", "failed", "cancelled"] and stream_id in self.assigned_streams:
+                    self.assigned_streams.remove(stream_id)
+                    self.current_streams = len(self.assigned_streams)
+                    
+                return True
+            else:
+                logger.error(f"Falha ao atualizar status do stream {stream_id}: {response}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Erro ao atualizar status do stream {stream_id}: {e}")
+            return False
+
     async def release_streams(self, stream_ids: List[int]) -> bool:
-        """Libera streams no orquestrador."""
+        """Libera streams no orquestrador marcando como cancelled."""
         if not self.is_registered or not stream_ids:
             return True
         
         try:
-            data = {
-                "server_id": self.server_id,
-                "stream_ids": stream_ids
-            }
+            # Usar nova API para marcar streams como cancelled
+            success_count = 0
+            for stream_id in stream_ids:
+                if await self.update_stream_status(stream_id, "cancelled"):
+                    success_count += 1
             
-            response = await self._make_request("POST", "/streams/release", data)
-            
-            if response.get("status") == "released":
-                released_streams = response.get("released_streams", [])
-                
-                # Atualizar lista local
-                for stream_id in released_streams:
-                    if stream_id in self.assigned_streams:
-                        self.assigned_streams.remove(stream_id)
-                
-                self.current_streams = len(self.assigned_streams)
-                
-                logger.info(f"Liberados {len(released_streams)} streams: {released_streams}")
-                return True
-                
-            else:
-                logger.error(f"Falha ao liberar streams: {response}")
-                return False
+            logger.info(f"Liberados {success_count}/{len(stream_ids)} streams")
+            return success_count == len(stream_ids)
                 
         except Exception as e:
             logger.error(f"Erro ao liberar streams: {e}")

@@ -60,11 +60,18 @@ services:
       - REDIS_CHANNEL=${REDIS_CHANNEL:-smf:server_heartbeats}
       - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-smf:server}
       - REDIS_HEARTBEAT_TTL_SECS=${REDIS_HEARTBEAT_TTL_SECS:-60}
-      # --- Orquestrador Central ---
+      # --- Orquestrador Central (Nova API) ---
       - USE_ORCHESTRATOR=${USE_ORCHESTRATOR:-True}
       - ORCHESTRATOR_URL=${ORCHESTRATOR_URL}
       - INSTANCE_ID=${INSTANCE_ID}
+      - WORKER_INSTANCE_ID=${INSTANCE_ID}
+      - WORKER_TYPE=fingerv7
+      - WORKER_CAPACITY=${WORKER_CAPACITY:-5}
+      - WORKER_REGION=${WORKER_REGION:-brasil}
       - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      - MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS:-5}
+      - STREAM_TIMEOUT=${STREAM_TIMEOUT:-300}
+      - RETRY_ATTEMPTS=${RETRY_ATTEMPTS:-3}
     restart: unless-stopped
 
 volumes:
