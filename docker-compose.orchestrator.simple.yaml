@@ -1,42 +1,10 @@
-# docker-compose.yaml para Orchestrator no EasyPanel
-# Inclui Gluetun para VPN quando necessário
+# docker-compose.yaml SIMPLES para Orchestrator no EasyPanel
+# SEM VPN - Para uso normal do orchestrator
 services:
-  gluetun:
-    image: qmcgaw/gluetun:latest
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    volumes:
-      - gluetun_data:/gluetun
-    environment:
-      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
-      - VPN_TYPE=${VPN_TYPE:-wireguard}
-      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Brazil}
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
-      - OPENVPN_USER=${VPN_USER}
-      - OPENVPN_PASSWORD=${VPN_PASSWORD}
-      - TZ=${TZ:-America/Sao_Paulo}
-    healthcheck:
-      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-    profiles:
-      - vpn  # Usar apenas quando VPN for necessária
-
   orchestrator_app:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
-    # Usar VPN apenas se profile 'vpn' estiver ativo
-    network_mode: "${NETWORK_MODE:-bridge}"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        required: false
     ports:
       - "8000:8000"
     volumes:
@@ -65,9 +33,6 @@ services:
       - PYTHONUNBUFFERED=1
       - TZ=${TZ:-America/Sao_Paulo}
       
-      # --- Redis (se necessário) ---
-      - REDIS_URL=${REDIS_URL}
-      
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -77,6 +42,5 @@ services:
       start_period: 60s
 
 volumes:
-  gluetun_data:
   orchestrator_data:
   orchestrator_logs:
