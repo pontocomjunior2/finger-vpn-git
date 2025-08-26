@@ -1,37 +1,3 @@
-# 🔧 CORREÇÃO: "No such image" no EasyPanel
-
-## ❌ Problema
-```
-No such image: easypanel/n8n-pontocom/finger_orchestrator:latest
-```
-
-## ✅ Solução
-
-### 1. **Verificar Configuração no EasyPanel**
-
-Certifique-se de que está configurado assim:
-
-- **Repository**: `https://github.com/pontocomjunior2/finger-vpn-git.git`
-- **Branch**: `orchestrator-v1`
-- **Dockerfile**: `Dockerfile.easypanel`
-- **Build Context**: `.` (ponto - raiz do projeto)
-
-### 2. **Forçar Rebuild**
-
-No painel do EasyPanel:
-1. Vá em **Settings** da aplicação
-2. Clique em **Rebuild**
-3. Aguarde o build completar
-
-### 3. **Verificar Logs de Build**
-
-Se ainda der erro, verifique os logs de build para ver onde está falhando.
-
-### 4. **Configuração Alternativa - Dockerfile Simples**
-
-Se o problema persistir, crie um novo arquivo `Dockerfile.simple` com esta configuração:
-
-```dockerfile
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
@@ -72,37 +38,7 @@ RUN echo '#!/bin/bash' > /app/start.sh && \
 
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
 CMD ["/app/start.sh"]
-```
-
-Então no EasyPanel use: `Dockerfile.simple`
-
-### 5. **Variáveis de Ambiente Essenciais**
-
-Certifique-se de que estas variáveis estão configuradas:
-
-```env
-DB_PASSWORD=SuaSenhaSegura123!
-SECRET_KEY=sua_chave_secreta_32_chars
-DB_HOST=localhost
-REDIS_HOST=localhost
-```
-
-### 6. **Teste Rápido**
-
-Após o deploy, teste:
-```bash
-curl https://seu-dominio.com/health
-```
-
-## 🎯 Checklist de Troubleshooting
-
-- [ ] Repository URL correto
-- [ ] Branch `orchestrator-v1` selecionada
-- [ ] Dockerfile `Dockerfile.easypanel` especificado
-- [ ] Build context é `.` (raiz)
-- [ ] Variáveis de ambiente configuradas
-- [ ] Rebuild forçado
-- [ ] Logs de build verificados
-
-**🚀 Com essas correções, o deploy deve funcionar!**
