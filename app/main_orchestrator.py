@@ -55,13 +55,23 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Configuração do banco de dados
+# Configuração do banco de dados interno (orchestrator)
 DB_CONFIG = {
     'host': os.getenv('DB_HOST'),
     'port': int(os.getenv('DB_PORT', '5432')),
     'database': os.getenv('DB_NAME'),
     'user': os.getenv('DB_USER'),
     'password': os.getenv('DB_PASSWORD')
+}
+
+# Configuração do banco PostgreSQL externo (streams)
+POSTGRES_CONFIG = {
+    'host': os.getenv('POSTGRES_HOST'),
+    'port': int(os.getenv('POSTGRES_PORT', '5432')),
+    'database': os.getenv('POSTGRES_DB'),
+    'user': os.getenv('POSTGRES_USER'),
+    'password': os.getenv('POSTGRES_PASSWORD'),
+    'table_name': os.getenv('DB_TABLE_NAME', 'streams')
 }
 
 # Instância global do orchestrator
@@ -89,15 +99,27 @@ async def startup_event():
     global orchestrator
     
     logger.info("Starting Enhanced Stream Orchestrator...")
-    logger.info(f"Database config: {DB_CONFIG}")
+    logger.info(f"Internal database config: {DB_CONFIG}")
+    logger.info(f"External PostgreSQL config: {POSTGRES_CONFIG}")
     
-    # Verificar se todas as variáveis obrigatórias estão definidas
+    # Verificar configuração do banco interno
     required_vars = ['host', 'database', 'user', 'password']
     missing_vars = [var for var in required_vars if not DB_CONFIG.get(var)]
     
+    # Verificar configuração do PostgreSQL externo
+    postgres_required = ['host', 'database', 'user', 'password']
+    postgres_missing = [var for var in postgres_required if not POSTGRES_CONFIG.get(var)]
+    
     if missing_vars:
-        logger.warning(f"Missing database configurations: {missing_vars}")
+        logger.warning(f"Missing internal database configurations: {missing_vars}")
         logger.warning("Starting in limited mode without full orchestrator functionality")
+    
+    if postgres_missing:
+        logger.warning(f"Missing PostgreSQL configurations: {postgres_missing}")
+        logger.warning("Stream monitoring will be limited")
+    else:
+        logger.info("✅ PostgreSQL external database configured successfully")
+        logger.info(f"✅ Streams table: {POSTGRES_CONFIG['table_name']}")
         return
     
     try:
@@ -179,6 +201,79 @@ async def get_metrics():
         logger.error(f"Failed to get metrics: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
 
+@app.get("/postgres/test")
+async def test_postgres_connection():
+    """Testar conexão com PostgreSQL externo"""
+    try:
+        import asyncpg
+        
+        # Conectar ao PostgreSQL externo
+        conn = await asyncpg.connect(
+            host=POSTGRES_CONFIG['host'],
+            port=POSTGRES_CONFIG['port'],
+            database=POSTGRES_CONFIG['database'],
+            user=POSTGRES_CONFIG['user'],
+            password=POSTGRES_CONFIG['password']
+        )
+        
+        # Testar consulta na tabela streams
+        table_name = POSTGRES_CONFIG['table_name']
+        query = f"SELECT COUNT(*) as total FROM {table_name} LIMIT 1"
+        result = await conn.fetchrow(query)
+        
+        await conn.close()
+        
+        return {
+            "status": "success",
+            "message": "PostgreSQL connection successful",
+            "database": POSTGRES_CONFIG['database'],
+            "table": table_name,
+            "total_streams": result['total'] if result else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"PostgreSQL connection failed: {e}")
+        return {
+            "status": "error",
+            "message": f"PostgreSQL connection failed: {str(e)}",
+            "database": POSTGRES_CONFIG['database'],
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/streams")
+async def get_streams():
+    """Obter streams do PostgreSQL externo"""
+    try:
+        import asyncpg
+        
+        conn = await asyncpg.connect(
+            host=POSTGRES_CONFIG['host'],
+            port=POSTGRES_CONFIG['port'],
+            database=POSTGRES_CONFIG['database'],
+            user=POSTGRES_CONFIG['user'],
+            password=POSTGRES_CONFIG['password']
+        )
+        
+        table_name = POSTGRES_CONFIG['table_name']
+        query = f"SELECT * FROM {table_name} ORDER BY id DESC LIMIT 10"
+        results = await conn.fetch(query)
+        
+        await conn.close()
+        
+        streams = [dict(row) for row in results]
+        
+        return {
+            "status": "success",
+            "total": len(streams),
+            "streams": streams,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get streams: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get streams: {str(e)}")
+
 @app.get("/")
 async def root():
     """Root endpoint with API documentation"""
@@ -186,9 +281,15 @@ async def root():
         "message": "Enhanced Stream Orchestrator",
         "version": "1.0.0",
         "status": "running",
+        "databases": {
+            "internal": "localhost (orchestrator data)",
+            "external": f"{POSTGRES_CONFIG['host']} (streams data)"
+        },
         "endpoints": {
             "health": "/health",
             "metrics": "/metrics",
+            "postgres_test": "/postgres/test",
+            "streams": "/streams",
             "docs": "/docs"
         }
     }

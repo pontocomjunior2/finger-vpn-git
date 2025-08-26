@@ -32,6 +32,15 @@ Port: 8000
 **COPIE E COLE EXATAMENTE ISTO:**
 
 ```env
+# Banco PostgreSQL Externo (Tabela de Streams)
+POSTGRES_HOST=104.234.173.96
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=Conquista@@2
+POSTGRES_DB=music_log
+POSTGRES_PORT=5432
+DB_TABLE_NAME=streams
+
+# Banco Local do Orchestrator (Interno)
 DB_PASSWORD=MinhaSenh@Segura123!
 SECRET_KEY=minha_chave_secreta_muito_longa_32_caracteres_ou_mais
 DB_HOST=localhost
@@ -44,7 +53,10 @@ ORCHESTRATOR_PORT=8000
 LOG_LEVEL=INFO
 ```
 
-**⚠️ IMPORTANTE:** Altere `DB_PASSWORD` e `SECRET_KEY` para valores únicos!
+**⚠️ IMPORTANTE:** 
+- As configurações `POSTGRES_*` são para a tabela de streams externa
+- As configurações `DB_*` são para o banco interno do orchestrator
+- Altere `DB_PASSWORD` e `SECRET_KEY` para valores únicos!
 
 ### 5. **Configurar Domínio**
 
