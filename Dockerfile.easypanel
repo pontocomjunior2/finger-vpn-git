@@ -6,11 +6,10 @@ FROM python:3.11-slim
 
 # Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
-    postgresql-15 \
-    postgresql-client-15 \
-    postgresql-contrib-15 \
+    postgresql \
+    postgresql-client \
+    postgresql-contrib \
     redis-server \
-    supervisor \
     curl \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
@@ -26,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Criar diretórios necessários
-RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/lib/postgresql/15/main /var/run/postgresql
+RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql
 
 # Configurar PostgreSQL
 RUN chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/
@@ -34,10 +33,10 @@ RUN chmod 755 /var/run/postgresql
 
 # Inicializar banco PostgreSQL
 USER postgres
-RUN /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/15/main --encoding=UTF-8 --locale=C
-RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/15/main/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /var/lib/postgresql/15/main/postgresql.conf
-RUN echo "port = 5432" >> /var/lib/postgresql/15/main/postgresql.conf
+RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --encoding=UTF-8 --locale=C
+RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf
+RUN echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
+RUN echo "port = 5432" >> /var/lib/postgresql/data/postgresql.conf
 
 USER root
 

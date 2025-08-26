@@ -1,8 +1,8 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
-    postgresql-15 \
-    postgresql-client-15 \
+    postgresql \
+    postgresql-client \
     redis-server \
     curl \
     netcat-openbsd \
@@ -15,19 +15,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/logs /app/data /var/lib/postgresql/15/main /var/run/postgresql
+RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql
 RUN chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/
 
 USER postgres
-RUN /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/15/main --encoding=UTF-8 --locale=C
-RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/15/main/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /var/lib/postgresql/15/main/postgresql.conf
+RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --encoding=UTF-8 --locale=C
+RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf
+RUN echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
 
 USER root
 
 RUN echo '#!/bin/bash' > /app/start.sh && \
     echo 'set -e' >> /app/start.sh && \
-    echo 'su - postgres -c "/usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/15/main -l /tmp/pg.log start"' >> /app/start.sh && \
+    echo 'su - postgres -c "/usr/lib/postgresql/*/bin/pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start"' >> /app/start.sh && \
     echo 'until pg_isready -h localhost -p 5432; do sleep 1; done' >> /app/start.sh && \
     echo 'su - postgres -c "psql -c \"CREATE USER orchestrator_user WITH SUPERUSER PASSWORD '\''${DB_PASSWORD:-orchestrator_pass}'\'';\""' >> /app/start.sh && \
     echo 'su - postgres -c "createdb -O orchestrator_user orchestrator" || true' >> /app/start.sh && \

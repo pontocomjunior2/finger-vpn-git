@@ -5,7 +5,7 @@ echo "🚀 Iniciando serviços..."
 
 # Iniciar PostgreSQL
 echo "📊 Iniciando PostgreSQL..."
-su - postgres -c '/usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/15/main -l /var/log/postgresql.log start'
+su - postgres -c '/usr/lib/postgresql/*/bin/pg_ctl -D /var/lib/postgresql/data -l /var/log/postgresql.log start'
 
 # Aguardar PostgreSQL
 echo "⏳ Aguardando PostgreSQL..."
