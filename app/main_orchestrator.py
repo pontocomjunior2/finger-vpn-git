@@ -101,6 +101,18 @@ async def startup_event():
         return
     
     try:
+        # Forçar configuração padrão se não estiver definida
+        if not DB_CONFIG.get('host'):
+            DB_CONFIG['host'] = 'localhost'
+        if not DB_CONFIG.get('database'):
+            DB_CONFIG['database'] = 'orchestrator'
+        if not DB_CONFIG.get('user'):
+            DB_CONFIG['user'] = 'orchestrator_user'
+        if not DB_CONFIG.get('password'):
+            DB_CONFIG['password'] = os.getenv('DB_PASSWORD', 'orchestrator_pass')
+            
+        logger.info(f"Final database config: {DB_CONFIG}")
+        
         orchestrator = IntegratedOrchestrator(DB_CONFIG)
         success = await orchestrator.start_system()
         
