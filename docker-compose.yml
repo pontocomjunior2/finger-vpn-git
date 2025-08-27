@@ -47,11 +47,18 @@ services:
     container_name: enhanced-orchestrator
     environment:
       # Database Configuration
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: orchestrator
-      DB_USER: orchestrator_user
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-orchestrator}
+      DB_USER: ${DB_USER:-orchestrator_user}
       DB_PASSWORD: ${DB_PASSWORD:-orchestrator_pass}
+      
+      # External Database Configuration (for streams)
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       
       # Application Configuration
       ORCHESTRATOR_PORT: 8000

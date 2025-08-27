@@ -283,11 +283,11 @@ class EnhancedDatabaseManager:
         for attempt in range(self.max_retries):
             try:
                 db_config = {
-                    "host": os.getenv("POSTGRES_HOST"),
-                    "user": os.getenv("POSTGRES_USER"),
-                    "password": os.getenv("POSTGRES_PASSWORD"),
-                    "database": os.getenv("POSTGRES_DB"),
-                    "port": os.getenv("POSTGRES_PORT", "5432"),
+                    "host": os.getenv("DB_HOST", os.getenv("POSTGRES_HOST")),
+                    "user": os.getenv("DB_USER", os.getenv("POSTGRES_USER")),
+                    "password": os.getenv("DB_PASSWORD", os.getenv("POSTGRES_PASSWORD")),
+                    "database": os.getenv("DB_NAME", os.getenv("POSTGRES_DB")),
+                    "port": os.getenv("DB_PORT", os.getenv("POSTGRES_PORT", "5432")),
                     "connect_timeout": self.connection_timeout,
                     "options": (
                         f"-c statement_timeout={self.query_timeout * 1000} "

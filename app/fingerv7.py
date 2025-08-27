@@ -2773,7 +2773,7 @@ async def handle_stream_change_notification(change_type, stream_data=None):
 
         if change_type == "assignment_changed":
             # Forçar sincronização imediata
-            if orchestrator_client and orchestrator_client.is_registered:
+            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
                 current_assigned_stream_ids = (
                     await orchestrator_client.request_streams()
                 )
@@ -2784,7 +2784,7 @@ async def handle_stream_change_notification(change_type, stream_data=None):
 
         elif change_type in ["stream_updated", "stream_added", "stream_removed"]:
             # Recarregar todos os streams do banco de dados
-            if orchestrator_client and orchestrator_client.is_registered:
+            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
                 current_assigned_stream_ids = (
                     await orchestrator_client.request_streams()
                 )
