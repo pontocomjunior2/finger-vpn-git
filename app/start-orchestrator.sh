@@ -551,6 +551,11 @@ if [ ! -d "/app/logs" ]; then
     log_success "Created logs directory"
 fi
 
+# Ensure proper permissions for logs directory
+log_info "Setting proper permissions for logs directory..."
+chown -R postgres:postgres /app/logs 2>/dev/null || true
+chmod 777 /app/logs 2>/dev/null || true
+
 # Verify directory permissions
 if [ ! -w "/app/logs" ]; then
     handle_startup_failure "Directory Permissions" 18 "Logs directory is not writable" \
@@ -576,11 +581,22 @@ if [ ! -f "/var/lib/postgresql/data/PG_VERSION" ]; then
 fi
 
 # Start PostgreSQL with detailed logging
+# Create log file with proper permissions first
+touch /app/logs/postgresql.log 2>/dev/null || true
+chown postgres:postgres /app/logs/postgresql.log 2>/dev/null || true
+chmod 666 /app/logs/postgresql.log 2>/dev/null || true
+
 if sudo -u postgres /usr/lib/postgresql/*/bin/pg_ctl -D /var/lib/postgresql/data -l /app/logs/postgresql.log start; then
     log_success "PostgreSQL service started successfully"
 else
-    handle_startup_failure "PostgreSQL Service" 5 "Failed to start PostgreSQL service" \
-        "Check PostgreSQL installation, verify data directory permissions, check system resources"
+    # Try alternative approach without log file
+    log_warning "PostgreSQL failed with log file, trying without log redirection..."
+    if sudo -u postgres /usr/lib/postgresql/*/bin/pg_ctl -D /var/lib/postgresql/data start; then
+        log_success "PostgreSQL service started successfully (without log file)"
+    else
+        handle_startup_failure "PostgreSQL Service" 5 "Failed to start PostgreSQL service" \
+            "Check PostgreSQL installation, verify data directory permissions, check system resources"
+    fi
 fi
 
 log_success "Step 2 completed: PostgreSQL service startup successful"

@@ -29,8 +29,9 @@ COPY . .
 
 # Criar diretórios necessários com permissões corretas
 RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql \
-    && chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/ \
-    && chmod 755 /var/run/postgresql /app/logs /app/data
+    && chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/ /app/logs \
+    && chmod 755 /var/run/postgresql \
+    && chmod 777 /app/logs /app/data
 
 # Configurar PostgreSQL
 USER postgres
