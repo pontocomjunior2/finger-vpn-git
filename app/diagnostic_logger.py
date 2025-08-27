@@ -102,8 +102,8 @@ class StructuredLogger:
         log_method(message, extra=extra)
         
         # Also log structured data to file for analysis
-        structured_log_file = Path("app/logs/orchestrator_structured.jsonl")
-        structured_log_file.parent.mkdir(exist_ok=True)
+        structured_log_file = Path("/app/logs/orchestrator_structured.jsonl")
+        structured_log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(structured_log_file, "a") as f:
             f.write(json.dumps(log_data) + "\n")
     
