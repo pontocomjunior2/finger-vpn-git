@@ -78,7 +78,8 @@ ENV DB_HOST=localhost \
     REDIS_STARTUP_TIMEOUT=30 \
     APP_STARTUP_TIMEOUT=120 \
     LOG_LEVEL=INFO \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/app:/app
 
 # Health check otimizado
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \

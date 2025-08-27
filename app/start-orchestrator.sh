@@ -683,44 +683,73 @@ log_success "All services are ready and verified"
 log_step "Step 9: Starting Python application"
 log_info "Launching orchestrator application with uvicorn..."
 
-# Use Python verification functions for final check before app start with enhanced diagnostics
+# Verify Python can import orchestrator module
+log_info "Verifying Python orchestrator module..."
+cd /app/app || {
+    handle_startup_failure "Application Directory" 12 "Failed to change to application directory" \
+        "Check if /app/app directory exists and is accessible"
+}
+
+# Set PYTHONPATH to ensure module can be found
+export PYTHONPATH="/app/app:/app:$PYTHONPATH"
+
+# Test basic module import first
 python3 -c "
 import sys
-sys.path.append('/app')
-from orchestrator import verify_services, validate_startup_environment, DB_CONFIG
-from diagnostic_logger import diagnostic_logger
+import os
 
-# Run comprehensive startup validation
-diagnostic_logger.set_phase('FINAL_VALIDATION')
-validation_result = validate_startup_environment()
+# Add paths to sys.path
+sys.path.insert(0, '/app/app')
+sys.path.insert(0, '/app')
 
-if validation_result['overall_status'] == 'CRITICAL_ISSUES':
-    print('Startup validation found critical issues:')
-    for issue in validation_result['critical_issues']:
-        print(f'  - {issue}')
-    print('Recommendations:')
-    for rec in validation_result['recommendations']:
-        print(f'  - {rec}')
+print('Python paths:')
+for path in sys.path[:5]:
+    print(f'  {path}')
+
+print('Files in /app/app:')
+try:
+    for f in sorted(os.listdir('/app/app')):
+        if f.endswith('.py'):
+            print(f'  - {f}')
+except Exception as e:
+    print(f'  Error listing files: {e}')
+
+# Test basic import
+try:
+    import orchestrator
+    print('✓ Orchestrator module imported successfully')
+    
+    # Test if it has the expected attributes
+    if hasattr(orchestrator, 'app'):
+        print('✓ FastAPI app found in orchestrator module')
+    else:
+        print('⚠ FastAPI app not found in orchestrator module')
+        
+except ImportError as e:
+    print(f'✗ Import error: {e}')
     sys.exit(1)
-
-# Run service verification
-result = verify_services(DB_CONFIG, '$REDIS_HOST', int('$REDIS_PORT'))
-if result['overall_status'] != 'ready':
-    print('Python service verification failed:', result['errors'])
-    print('Service details:')
-    for service_name, service_data in result['services'].items():
-        print(f'  {service_name}: {service_data[\"status\"]}')
-        if service_data.get('error'):
-            print(f'    Error: {service_data[\"error\"]}')
+except Exception as e:
+    print(f'✗ Other error: {e}')
     sys.exit(1)
+"
 
-print('Python service verification passed')
-print('All diagnostic checks completed successfully')
-" || handle_startup_failure "Python Verification" 11 "Python service verification failed" \
-    "Check Python dependencies, verify orchestrator module, check service connectivity"
-
-log_success "Python service verification passed"
+if [ $? -eq 0 ]; then
+    log_success "Python orchestrator module verification passed"
+else
+    handle_startup_failure "Python Verification" 11 "Python module verification failed" \
+        "Check Python dependencies, verify orchestrator.py exists, check file permissions"
+fi
 
 # Start the application with proper error handling
 log_info "Starting uvicorn server..."
-exec python -m uvicorn app.main_orchestrator:app --host 0.0.0.0 --port 8000 --log-level info
+
+# Change to app directory and start the application
+cd /app/app || {
+    handle_startup_failure "Application Directory" 12 "Failed to change to application directory" \
+        "Check if /app/app directory exists and is accessible"
+}
+
+# Start uvicorn with the correct module path and PYTHONPATH
+export PYTHONPATH="/app/app:/app:$PYTHONPATH"
+log_info "Starting uvicorn with PYTHONPATH: $PYTHONPATH"
+exec python3 -m uvicorn orchestrator:app --host 0.0.0.0 --port 8000 --log-level info
