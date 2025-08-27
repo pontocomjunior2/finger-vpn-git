@@ -1,0 +1,93 @@
+# =============================================================================
+# DOCKERFILE FINGERV7 - VERSÃO COM VPN (GLUETUN)
+# =============================================================================
+# Versão otimizada para uso com Gluetun VPN
+# Use este Dockerfile junto com docker-compose.fingerv7.vpn.yml
+
+FROM python:3.11-slim-bookworm
+
+# Metadados da imagem
+LABEL maintainer="FingerV7 Team"
+LABEL description="FingerV7 Audio Fingerprinting Service - VPN Version"
+LABEL version="7.0"
+
+# Instalar dependências do sistema + ferramentas de rede para VPN
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        ca-certificates \
+        curl \
+        wget \
+        net-tools \
+        iputils-ping \
+        dnsutils \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Copiar requirements primeiro (para cache do Docker)
+COPY app/requirements.txt .
+
+# Instalar dependências Python
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY app/fingerv7.py .
+COPY app/db_pool.py .
+COPY app/async_queue.py .
+COPY app/orchestrator_client.py .
+COPY app/resilient_worker_client.py .
+COPY app/__init__.py .
+
+# Criar script de inicialização com verificação de VPN
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "🔍 Verificando conectividade VPN..."\n\
+\n\
+# Aguardar VPN estar pronta\n\
+for i in {1..30}; do\n\
+    if curl -s --max-time 10 https://ipinfo.io/ip > /dev/null 2>&1; then\n\
+        VPN_IP=$(curl -s --max-time 10 https://ipinfo.io/ip)\n\
+        echo "✅ VPN conectada! IP externo: $VPN_IP"\n\
+        break\n\
+    fi\n\
+    echo "⏳ Aguardando VPN... (tentativa $i/30)"\n\
+    sleep 2\n\
+done\n\
+\n\
+# Verificar se conseguiu conectar\n\
+if ! curl -s --max-time 10 https://ipinfo.io/ip > /dev/null 2>&1; then\n\
+    echo "❌ Falha na conectividade VPN após 60s"\n\
+    exit 1\n\
+fi\n\
+\n\
+echo "🚀 Iniciando FingerV7..."\n\
+exec python fingerv7.py\n\
+' > /app/start-with-vpn.sh && \
+    chmod +x /app/start-with-vpn.sh
+
+# Criar usuário não-root para segurança
+RUN adduser --disabled-password --gecos "" appuser && \
+    mkdir -p /app/segments /app/logs && \
+    chown -R appuser:appuser /app
+
+# Configurar variáveis de ambiente
+ENV PYTHONUNBUFFERED=1 \
+    SEGMENTS_DIR=/app/segments \
+    PYTHONPATH=/app \
+    VPN_ENABLED=true
+
+# Health check com verificação de VPN
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
+    CMD curl -s --max-time 10 https://ipinfo.io/ip > /dev/null || exit 1
+
+# Executar como usuário não-root
+USER appuser
+
+# Comando de inicialização com verificação de VPN
+CMD ["/app/start-with-vpn.sh"]

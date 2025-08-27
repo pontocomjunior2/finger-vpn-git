@@ -23,6 +23,7 @@ COPY app/fingerv7.py .
 COPY app/db_pool.py .
 COPY app/async_queue.py .
 COPY app/orchestrator_client.py .
+COPY app/resilient_worker_client.py .
 COPY app/__init__.py .
 # Se você usa o streams.json como fallback inicial, copie-o também:
 # COPY app/streams.json .

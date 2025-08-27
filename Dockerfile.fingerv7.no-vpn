@@ -1,0 +1,64 @@
+# =============================================================================
+# DOCKERFILE FINGERV7 - VERSÃO SEM VPN (EASYPANEL)
+# =============================================================================
+# Versão otimizada para deploy no EasyPanel sem necessidade de VPN
+# Use este Dockerfile quando não precisar de VPN ou quando a VPN for 
+# gerenciada externamente pelo provedor de cloud
+
+FROM python:3.11-slim-bookworm
+
+# Metadados da imagem
+LABEL maintainer="FingerV7 Team"
+LABEL description="FingerV7 Audio Fingerprinting Service - No VPN Version"
+LABEL version="7.0"
+
+# Instalar dependências do sistema essenciais
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        ca-certificates \
+        curl \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Copiar requirements primeiro (para cache do Docker)
+COPY app/requirements.txt .
+
+# Instalar dependências Python
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY app/fingerv7.py .
+COPY app/db_pool.py .
+COPY app/async_queue.py .
+COPY app/orchestrator_client.py .
+COPY app/resilient_worker_client.py .
+COPY app/__init__.py .
+
+# Criar usuário não-root para segurança
+RUN adduser --disabled-password --gecos "" appuser && \
+    mkdir -p /app/segments /app/logs && \
+    chown -R appuser:appuser /app
+
+# Configurar variáveis de ambiente
+ENV PYTHONUNBUFFERED=1 \
+    SEGMENTS_DIR=/app/segments \
+    PYTHONPATH=/app
+
+# Expor porta (se necessário para health checks)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
+
+# Executar como usuário não-root
+USER appuser
+
+# Comando de inicialização
+CMD ["python", "fingerv7.py"]
