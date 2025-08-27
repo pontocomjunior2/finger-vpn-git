@@ -155,7 +155,14 @@ MAX_STREAMS = int(
 
 # Importar cliente resiliente do orquestrador se habilitado
 orchestrator_client = None
+
+# Debug: Mostrar configurações iniciais
+logger.info(f"[INIT] USE_ORCHESTRATOR={USE_ORCHESTRATOR}")
+logger.info(f"[INIT] DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}")
+logger.info(f"[INIT] ORCHESTRATOR_URL={ORCHESTRATOR_URL}")
+
 if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
+    logger.info("[INIT] Tentando inicializar cliente do orquestrador...")
     try:
         from resilient_worker_client import create_resilient_worker_client
 
@@ -2342,6 +2349,11 @@ async def main():
 
         # Usar apenas o orquestrador para distribuição de streams
         assigned_streams = []
+        
+        # Debug: Mostrar status das variáveis de configuração
+        logger.info(f"[DEBUG] DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, USE_ORCHESTRATOR={USE_ORCHESTRATOR}, orchestrator_client={'Inicializado' if orchestrator_client else 'None'}")
+        logger.info(f"[DEBUG] ORCHESTRATOR_URL={ORCHESTRATOR_URL}")
+        
         if DISTRIBUTE_LOAD and USE_ORCHESTRATOR and orchestrator_client:
             try:
                 # Registrar instância no orquestrador
