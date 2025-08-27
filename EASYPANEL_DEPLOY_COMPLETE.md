@@ -32,8 +32,18 @@ Configure estas variáveis no EasyPanel:
 # VARIÁVEIS OBRIGATÓRIAS - CONFIGURAR NO EASYPANEL
 # =============================================================================
 
-# Senha do banco PostgreSQL (ALTERE ESTA!)
+# Senha do banco PostgreSQL interno (ALTERE ESTA!)
 DB_PASSWORD=SuaSenhaSeguraAqui123!
+
+# =============================================================================
+# POSTGRESQL EXTERNO - ONDE ESTÃO OS STREAMS (OBRIGATÓRIO)
+# =============================================================================
+POSTGRES_HOST=104.234.173.96
+POSTGRES_PORT=5432
+POSTGRES_DB=music_log
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=Conquista@@2
+DB_TABLE_NAME=streams
 
 # =============================================================================
 # VARIÁVEIS OPCIONAIS - CONFIGURAÇÕES AVANÇADAS
