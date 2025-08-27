@@ -129,7 +129,7 @@ except ImportError:
     # Considerar logar um aviso se SFTP for o método escolhido
 
 # Carregar variáveis de ambiente
-load_dotenv(dotenv_path="app/.env")
+load_dotenv(dotenv_path=".env")
 
 # Configuração para distribuição de carga entre servidores
 SERVER_ID = os.getenv("SERVER_ID", socket.gethostname())  # ID único para cada servidor
@@ -2614,11 +2614,14 @@ async def orchestrator_sync_loop():
 
             if orchestrator_client:
                 logger.info(f"[SYNC] orchestrator_client existe: {orchestrator_client}")
-                logger.info(
-                    f"[SYNC] is_registered: {orchestrator_client.is_registered}"
-                )
+                # Verificar se o atributo is_registered existe
+                if hasattr(orchestrator_client, 'is_registered'):
+                    logger.info(f"[SYNC] is_registered: {orchestrator_client.is_registered}")
+                else:
+                    logger.warning("[SYNC] Atributo is_registered não encontrado, definindo como False")
+                    orchestrator_client.is_registered = False
 
-                if orchestrator_client.is_registered:
+                if hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
                     logger.info(
                         "[SYNC] Cliente do orquestrador registrado, solicitando streams"
                     )
@@ -2652,8 +2655,9 @@ async def orchestrator_sync_loop():
                             f"[SYNC] Nenhuma mudança nos assignments: {len(current_assigned_streams)} streams"
                         )
                 else:
+                    is_registered_status = getattr(orchestrator_client, 'is_registered', False)
                     logger.info(
-                        f"[SYNC] Cliente do orquestrador não registrado. is_registered={orchestrator_client.is_registered}"
+                        f"[SYNC] Cliente do orquestrador não registrado. is_registered={is_registered_status}"
                     )
             else:
                 logger.info("[SYNC] orchestrator_client é None")
@@ -2687,7 +2691,7 @@ async def orchestrator_alerts_loop():
 
     while not shutdown_event.is_set():
         try:
-            if orchestrator_client and orchestrator_client.is_registered:
+            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
                 # Obter resumo de alertas das últimas 24 horas
                 alert_summary = orchestrator_client.get_alert_summary(hours=24)
 

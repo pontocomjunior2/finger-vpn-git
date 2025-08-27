@@ -319,6 +319,9 @@ class ResilientWorkerClient:
         self.last_health_check = datetime.now()
         self.health_check_interval = 30  # seconds
         
+        # Registration status for compatibility with fingerv7.py
+        self.is_registered = False
+        
         # Metrics
         self.metrics = {
             'total_requests': 0,
@@ -434,13 +437,16 @@ class ResilientWorkerClient:
             
             if response.get("status") == "registered":
                 logger.info(f"Successfully registered with orchestrator")
+                self.is_registered = True
                 return True
             else:
                 logger.error(f"Registration failed: {response}")
+                self.is_registered = False
                 return False
                 
         except Exception as e:
             logger.error(f"Registration error: {e}")
+            self.is_registered = False
             return False
     
     async def send_heartbeat(self) -> bool:

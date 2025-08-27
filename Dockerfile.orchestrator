@@ -1,98 +1,40 @@
-# =============================================================================
-# DOCKERFILE PARA ORCHESTRATOR - COM POSTGRESQL INTERNO
-# =============================================================================
+# Dockerfile específico para o Orquestrador
+FROM python:3.11-slim-bookworm
 
-FROM python:3.11-slim
+# Instalar dependências do sistema: curl para health check e ca-certificates para HTTPS
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Instalar dependências do sistema
-RUN apt-get update && apt-get install -y \
-    postgresql \
-    postgresql-client \
-    postgresql-contrib \
-    redis-server \
-    curl \
-    netcat-openbsd \
-    sudo \
-    && rm -rf /var/lib/apt/lists/*
-
-# Configurar diretório da aplicação
+# Definir o diretório de trabalho dentro do container
 WORKDIR /app
 
-# Copiar requirements e instalar dependências Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copiar arquivo de dependências do orquestrador
+COPY app/requirements_orchestrator.txt .
 
-# Copiar código da aplicação
-COPY . .
+# Instalar as dependências Python
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements_orchestrator.txt
 
-# Criar diretórios necessários com permissões corretas
-RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql
+# Copiar arquivos necessários para o orquestrador
+COPY app/orchestrator.py .
+COPY app/db_pool.py .
+COPY app/__init__.py .
+COPY .env .
 
-# Configurar PostgreSQL com permissões corretas
-RUN chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/ /app/logs
-RUN chmod 755 /var/run/postgresql
-RUN chmod 755 /app/logs
+# Criar usuário não-root
+RUN adduser --disabled-password --gecos "" appuser && \
+    chown -R appuser:appuser /app
 
-# Inicializar banco PostgreSQL como usuário postgres
-USER postgres
-RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --encoding=UTF-8 --locale=C
-RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
-RUN echo "port = 5432" >> /var/lib/postgresql/data/postgresql.conf
+# Saída sem buffer para logs em tempo real
+ENV PYTHONUNBUFFERED=1
 
-# Voltar para root
-USER root
+# Executar como usuário não-root
+USER appuser
 
-# Copy the enhanced startup script
-COPY app/start-orchestrator.sh /app/start-orchestrator.sh
+# Expor a porta do orquestrador
+EXPOSE 8080
 
-# Make startup script executable and ensure proper permissions
-RUN chmod +x /app/start-orchestrator.sh && \
-    chown root:root /app/start-orchestrator.sh && \
-    # Validate startup script syntax
-    bash -n /app/start-orchestrator.sh && \
-    # Create validation script for environment variables
-    echo '#!/bin/bash' > /app/validate-env.sh && \
-    echo 'echo "Validating environment variables..."' >> /app/validate-env.sh && \
-    echo 'missing_vars=""' >> /app/validate-env.sh && \
-    echo 'for var in DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD REDIS_HOST REDIS_PORT; do' >> /app/validate-env.sh && \
-    echo '  if [ -z "${!var}" ]; then missing_vars="$missing_vars $var"; fi' >> /app/validate-env.sh && \
-    echo 'done' >> /app/validate-env.sh && \
-    echo 'if [ -n "$missing_vars" ]; then' >> /app/validate-env.sh && \
-    echo '  echo "ERROR: Missing required environment variables:$missing_vars"' >> /app/validate-env.sh && \
-    echo '  echo "Please set all required variables before starting the container"' >> /app/validate-env.sh && \
-    echo '  exit 1' >> /app/validate-env.sh && \
-    echo 'fi' >> /app/validate-env.sh && \
-    echo 'echo "Environment validation passed"' >> /app/validate-env.sh && \
-    chmod +x /app/validate-env.sh
-
-# Expor porta da aplicação
-EXPOSE 8000
-
-# Environment variables for configurable timeouts
-ENV POSTGRES_STARTUP_TIMEOUT=60 \
-    REDIS_STARTUP_TIMEOUT=30 \
-    APP_STARTUP_TIMEOUT=120 \
-    HEALTH_CHECK_TIMEOUT=10 \
-    HEALTH_CHECK_INTERVAL=30 \
-    HEALTH_CHECK_START_PERIOD=120 \
-    HEALTH_CHECK_RETRIES=3
-
-# Required environment variables with defaults
-ENV DB_HOST=localhost \
-    DB_PORT=5432 \
-    DB_NAME=orchestrator \
-    DB_USER=orchestrator_user \
-    DB_PASSWORD=orchestrator_pass \
-    REDIS_HOST=localhost \
-    REDIS_PORT=6379
-
-# Enhanced health check using the improved /ready endpoint with configurable parameters
-HEALTHCHECK --interval=${HEALTH_CHECK_INTERVAL}s \
-            --timeout=${HEALTH_CHECK_TIMEOUT}s \
-            --start-period=${HEALTH_CHECK_START_PERIOD}s \
-            --retries=${HEALTH_CHECK_RETRIES} \
-  CMD curl -f --max-time ${HEALTH_CHECK_TIMEOUT} http://localhost:8000/ready || exit 1
-
-# Comando de inicialização com validação prévia
-CMD ["/bin/bash", "-c", "/app/validate-env.sh && /app/start-orchestrator.sh"]
+# Comando de inicialização do orquestrador
+CMD ["uvicorn", "orchestrator:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -379,14 +379,14 @@ async def verify_stream_processing():
         async with db_pool.get_connection() as conn:
             async with conn.cursor() as cur:
                 # Total de streams
-                await cur.execute("SELECT COUNT(*) FROM streams")
+                await cur.execute("SELECT COUNT(*) FROM public.streams")
                 total_streams = (await cur.fetchone())[0]
 
                 # Streams com lock ativo
                 await cur.execute(
                     """
                         SELECT s.id, s.name, so.server_id, so.last_check
-                        FROM streams s
+                        FROM public.streams s
                         LEFT JOIN stream_ownership so ON s.id = so.stream_id
                         WHERE so.last_check > NOW() - INTERVAL '2 minutes'
                     """
@@ -400,7 +400,7 @@ async def verify_stream_processing():
                         SELECT s.id, s.name, 
                                CASE WHEN so.server_id IS NULL THEN 'no_lock' ELSE 'inactive' END as status,
                                so.server_id, so.last_check
-                        FROM streams s
+                        FROM public.streams s
                         LEFT JOIN stream_ownership so ON s.id = so.stream_id
                         WHERE so.last_check IS NULL OR so.last_check < NOW() - INTERVAL '2 minutes'
                     """

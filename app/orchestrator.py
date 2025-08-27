@@ -1525,7 +1525,7 @@ class StreamOrchestrator:
             cursor.execute(
                 """
                 SELECT DISTINCT id 
-                FROM streams 
+                FROM public.streams 
                 ORDER BY id
             """
             )
@@ -2118,7 +2118,7 @@ class StreamOrchestrator:
         # Buscar streams não atribuídos
         cursor.execute(
             """
-            SELECT id FROM streams 
+            SELECT id FROM public.streams 
             WHERE id NOT IN (
                 SELECT stream_id FROM orchestrator_stream_assignments WHERE status = 'active'
             )

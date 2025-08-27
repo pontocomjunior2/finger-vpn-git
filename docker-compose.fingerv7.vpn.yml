@@ -1,0 +1,126 @@
+# =============================================================================
+# DOCKER COMPOSE FINGERV7 - VERSÃO COM VPN (GLUETUN)
+# =============================================================================
+# Use este arquivo quando precisar de VPN para acessar streams geo-bloqueados
+# Requer configuração de VPN (ProtonVPN, NordVPN, etc.)
+
+version: '3.8'
+
+services:
+  # Serviço VPN usando Gluetun
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: fingerv7-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - gluetun_data:/gluetun
+    environment:
+      # =============================================================================
+      # CONFIGURAÇÕES VPN - DEFINIR NO .env OU EASYPANEL
+      # =============================================================================
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Netherlands}
+      
+      # WireGuard (Recomendado)
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      
+      # OpenVPN (Alternativo)
+      - OPENVPN_USER=${VPN_USER}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      
+      # Configurações gerais
+      - TZ=${TZ:-America/Sao_Paulo}
+      - FIREWALL_OUTBOUND_SUBNETS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      
+    ports:
+      # Porta para health check (opcional)
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - fingerv7-network
+
+  # Aplicação FingerV7 (usa a rede do Gluetun)
+  fingerv7:
+    build:
+      context: .
+      dockerfile: Dockerfile.fingerv7.vpn
+    container_name: fingerv7-app
+    # IMPORTANTE: Usar a rede do Gluetun para tráfego VPN
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    volumes:
+      - app_segments:/app/segments
+      - app_logs:/app/logs
+    environment:
+      # =============================================================================
+      # CONFIGURAÇÕES DA APLICAÇÃO
+      # =============================================================================
+      
+      # PostgreSQL Remoto (Dados de produção)
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - DB_TABLE_NAME=${DB_TABLE_NAME:-music_log}
+      
+      # Redis para Heartbeats
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_CHANNEL=${REDIS_CHANNEL:-smf:server_heartbeats}
+      - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-smf:server}
+      - REDIS_HEARTBEAT_TTL_SECS=${REDIS_HEARTBEAT_TTL_SECS:-120}
+      
+      # Orchestrator Central
+      - USE_ORCHESTRATOR=${USE_ORCHESTRATOR:-True}
+      - ORCHESTRATOR_URL=${ORCHESTRATOR_URL}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - SERVER_ID=${INSTANCE_ID}
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      
+      # Configurações de Processamento
+      - ROTATION_HOURS=${ROTATION_HOURS:-24}
+      - IDENTIFICATION_DURATION=${IDENTIFICATION_DURATION:-15}
+      - DUPLICATE_CHECK_WINDOW=${DUPLICATE_CHECK_WINDOW:-120}
+      - DUPLICATE_PREVENTION_WINDOW_SECONDS=${DUPLICATE_PREVENTION_WINDOW_SECONDS:-900}
+      
+      # Configurações do Sistema
+      - SEGMENTS_DIR=/app/segments
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/Sao_Paulo}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      # Distribuição de Carga
+      - DISTRIBUTE_LOAD=${DISTRIBUTE_LOAD:-True}
+      - ENABLE_ROTATION=${ENABLE_ROTATION:-False}
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  gluetun_data:
+    driver: local
+  app_segments:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  fingerv7-network:
+    driver: bridge
