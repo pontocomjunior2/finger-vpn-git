@@ -21,8 +21,12 @@ from logging.handlers import TimedRotatingFileHandler
 
 import psycopg2
 import schedule
-from aiohttp import (ClientConnectorError, ClientError, ClientResponseError,
-                     ClientTimeout)
+from aiohttp import (
+    ClientConnectorError,
+    ClientError,
+    ClientResponseError,
+    ClientTimeout,
+)
 from dotenv import load_dotenv
 from shazamio import Shazam
 
@@ -173,7 +177,7 @@ if USE_ORCHESTRATOR and DISTRIBUTE_LOAD:
             circuit_failure_threshold=5,
             circuit_recovery_timeout=60,
             retry_max_attempts=3,
-            retry_base_delay=1.0
+            retry_base_delay=1.0,
         )
         logger.info(
             f"Cliente resiliente do orquestrador inicializado: {ORCHESTRATOR_URL} com MAX_STREAMS={MAX_STREAMS}"
@@ -2349,11 +2353,13 @@ async def main():
 
         # Usar apenas o orquestrador para distribuição de streams
         assigned_streams = []
-        
+
         # Debug: Mostrar status das variáveis de configuração
-        logger.info(f"[DEBUG] DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, USE_ORCHESTRATOR={USE_ORCHESTRATOR}, orchestrator_client={'Inicializado' if orchestrator_client else 'None'}")
+        logger.info(
+            f"[DEBUG] DISTRIBUTE_LOAD={DISTRIBUTE_LOAD}, USE_ORCHESTRATOR={USE_ORCHESTRATOR}, orchestrator_client={'Inicializado' if orchestrator_client else 'None'}"
+        )
         logger.info(f"[DEBUG] ORCHESTRATOR_URL={ORCHESTRATOR_URL}")
-        
+
         if DISTRIBUTE_LOAD and USE_ORCHESTRATOR and orchestrator_client:
             try:
                 # Registrar instância no orquestrador
@@ -2579,16 +2585,24 @@ async def orchestrator_heartbeat_loop():
                 success = await orchestrator_client.send_heartbeat()
 
                 if success:
-                    logger.debug(f"Heartbeat enviado com sucesso - Instância {SERVER_ID}")
+                    logger.debug(
+                        f"Heartbeat enviado com sucesso - Instância {SERVER_ID}"
+                    )
                 else:
-                    logger.warning(f"[HEARTBEAT] Falha no heartbeat - pode estar em modo local")
-                    
+                    logger.warning(
+                        f"[HEARTBEAT] Falha no heartbeat - pode estar em modo local"
+                    )
+
                 # Verificar status do cliente para detectar modo local
                 health_status = await orchestrator_client.health_check()
-                if health_status.get('local_mode_active'):
-                    logger.info(f"[HEARTBEAT] Cliente em modo local - continuando operação")
-                elif not health_status.get('orchestrator_available'):
-                    logger.warning(f"[HEARTBEAT] Orquestrador indisponível - ativando modo local")
+                if health_status.get("local_mode_active"):
+                    logger.info(
+                        f"[HEARTBEAT] Cliente em modo local - continuando operação"
+                    )
+                elif not health_status.get("orchestrator_available"):
+                    logger.warning(
+                        f"[HEARTBEAT] Orquestrador indisponível - ativando modo local"
+                    )
 
         except Exception as e:
             logger.error(f"Erro no heartbeat aprimorado do orquestrador: {e}")
@@ -2615,13 +2629,20 @@ async def orchestrator_sync_loop():
             if orchestrator_client:
                 logger.info(f"[SYNC] orchestrator_client existe: {orchestrator_client}")
                 # Verificar se o atributo is_registered existe
-                if hasattr(orchestrator_client, 'is_registered'):
-                    logger.info(f"[SYNC] is_registered: {orchestrator_client.is_registered}")
+                if hasattr(orchestrator_client, "is_registered"):
+                    logger.info(
+                        f"[SYNC] is_registered: {orchestrator_client.is_registered}"
+                    )
                 else:
-                    logger.warning("[SYNC] Atributo is_registered não encontrado, definindo como False")
+                    logger.warning(
+                        "[SYNC] Atributo is_registered não encontrado, definindo como False"
+                    )
                     orchestrator_client.is_registered = False
 
-                if hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
+                if (
+                    hasattr(orchestrator_client, "is_registered")
+                    and orchestrator_client.is_registered
+                ):
                     logger.info(
                         "[SYNC] Cliente do orquestrador registrado, solicitando streams"
                     )
@@ -2655,7 +2676,9 @@ async def orchestrator_sync_loop():
                             f"[SYNC] Nenhuma mudança nos assignments: {len(current_assigned_streams)} streams"
                         )
                 else:
-                    is_registered_status = getattr(orchestrator_client, 'is_registered', False)
+                    is_registered_status = getattr(
+                        orchestrator_client, "is_registered", False
+                    )
                     logger.info(
                         f"[SYNC] Cliente do orquestrador não registrado. is_registered={is_registered_status}"
                     )
@@ -2691,7 +2714,11 @@ async def orchestrator_alerts_loop():
 
     while not shutdown_event.is_set():
         try:
-            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
+            if (
+                orchestrator_client
+                and hasattr(orchestrator_client, "is_registered")
+                and orchestrator_client.is_registered
+            ):
                 # Obter resumo de alertas das últimas 24 horas
                 alert_summary = orchestrator_client.get_alert_summary(hours=24)
 
@@ -2773,7 +2800,11 @@ async def handle_stream_change_notification(change_type, stream_data=None):
 
         if change_type == "assignment_changed":
             # Forçar sincronização imediata
-            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
+            if (
+                orchestrator_client
+                and hasattr(orchestrator_client, "is_registered")
+                and orchestrator_client.is_registered
+            ):
                 current_assigned_stream_ids = (
                     await orchestrator_client.request_streams()
                 )
@@ -2784,7 +2815,11 @@ async def handle_stream_change_notification(change_type, stream_data=None):
 
         elif change_type in ["stream_updated", "stream_added", "stream_removed"]:
             # Recarregar todos os streams do banco de dados
-            if orchestrator_client and hasattr(orchestrator_client, 'is_registered') and orchestrator_client.is_registered:
+            if (
+                orchestrator_client
+                and hasattr(orchestrator_client, "is_registered")
+                and orchestrator_client.is_registered
+            ):
                 current_assigned_stream_ids = (
                     await orchestrator_client.request_streams()
                 )
@@ -2889,9 +2924,7 @@ async def reload_streams_dynamic(assigned_stream_ids):
 
         # CORREÇÃO CRÍTICA: Sincronizar current_streams com orchestrator_client
         if orchestrator_client:
-            logger.info(
-                f"[RELOAD_DYNAMIC] Streams atualizados: {len(STREAMS)}"
-            )
+            logger.info(f"[RELOAD_DYNAMIC] Streams atualizados: {len(STREAMS)}")
 
         logger.info(
             f"Sincronização dinâmica concluída: {len(STREAMS)} streams ativos, "

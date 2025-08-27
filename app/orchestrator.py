@@ -83,6 +83,9 @@ def load_optional_modules():
         from enhanced_orchestrator import EnhancedStreamOrchestrator
         from load_balancer_config import create_load_balance_config
         from smart_load_balancer import LoadBalanceConfig, RebalanceReason
+        from enhanced_db_manager import EnhancedDBManager
+        from database_error_handler import DatabaseErrorHandler
+
 
         modules["enhanced_orchestrator"]["available"] = True
         modules["enhanced_orchestrator"]["module"] = {
@@ -90,9 +93,11 @@ def load_optional_modules():
             "create_load_balance_config": create_load_balance_config,
             "LoadBalanceConfig": LoadBalanceConfig,
             "RebalanceReason": RebalanceReason,
+            "EnhancedDBManager": EnhancedDBManager,
+            "DatabaseErrorHandler": DatabaseErrorHandler,
         }
         logger.info(
-            "Enhanced orchestrator loaded successfully - smart load balancing available"
+            "Enhanced orchestrator and its dependencies loaded successfully - smart load balancing available"
         )
 
     except ImportError as e:
@@ -217,6 +222,16 @@ DB_CONFIG = {
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", ""),
     "port": int(os.getenv("DB_PORT", 5432)),
+}
+
+# Configurações do banco de dados de streams (adicionado para corrigir o NameError)
+POSTGRES_CONFIG = {
+    "host": os.getenv("POSTGRES_HOST"),
+    "database": os.getenv("POSTGRES_DB"),
+    "user": os.getenv("POSTGRES_USER"),
+    "password": os.getenv("POSTGRES_PASSWORD"),
+    "port": int(os.getenv("POSTGRES_PORT", 5432)),
+    "table": os.getenv("POSTGRES_STREAMS_TABLE", "streams"),
 }
 
 # Configurações do orquestrador
@@ -1343,7 +1358,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Todos os serviços verificados com sucesso")
 
-    orchestrator = StreamOrchestrator()
+    orchestrator = StreamOrchestrator(postgres_config=POSTGRES_CONFIG)
     orchestrator.create_tables()
 
     # Iniciar tarefas em background usando as funções independentes
@@ -1395,8 +1410,9 @@ app = FastAPI(
 class StreamOrchestrator:
     """Classe principal do orquestrador de streams."""
 
-    def __init__(self):
+    def __init__(self, postgres_config: Dict):
         self.db_config = DB_CONFIG
+        self.postgres_config = postgres_config
         self.active_instances: Dict[str, dict] = {}
         self.stream_assignments: Dict[int, str] = {}  # stream_id -> server_id
 
@@ -1405,6 +1421,17 @@ class StreamOrchestrator:
 
         # Initialize resilient orchestrator for enhanced failure handling with graceful degradation
         self.resilient_orchestrator = self._initialize_resilient_orchestrator()
+
+    def get_streams_db_connection(self):
+        """
+        Establish a connection to the streams database.
+
+        Returns:
+            psycopg2.connection: Connection to the streams database.
+        """
+        if not self.postgres_config:
+            raise ValueError("Postgres config is not set for the orchestrator")
+        return psycopg2.connect(**self.postgres_config)
 
     def _initialize_enhanced_orchestrator(self):
         """
@@ -1422,16 +1449,32 @@ class StreamOrchestrator:
             return None
 
         try:
+            # Retrieve loaded modules
+            enhanced_modules = OPTIONAL_MODULES.get("enhanced_orchestrator", {}).get("module", {})
+            EnhancedDBManager = enhanced_modules.get("EnhancedDBManager")
+            DatabaseErrorHandler = enhanced_modules.get("DatabaseErrorHandler")
+
             # Verify all required components are available
-            if not all([EnhancedStreamOrchestrator, create_load_balance_config]):
+            if not all([EnhancedStreamOrchestrator, create_load_balance_config, EnhancedDBManager, DatabaseErrorHandler]):
                 logger.warning(
                     "Enhanced orchestrator components missing - falling back to basic mode"
                 )
                 return None
 
             # Create configuration from environment variables
-            config = create_load_balance_config()
-            enhanced_orch = EnhancedStreamOrchestrator(self.db_config, config)
+            load_balance_config = create_load_balance_config()
+            
+            # Initialize dependencies
+            db_manager = EnhancedDBManager(postgres_config=self.postgres_config)
+            error_handler = DatabaseErrorHandler()
+
+            # Instantiate the enhanced orchestrator
+            enhanced_orch = EnhancedStreamOrchestrator(
+                db_manager=db_manager,
+                error_handler=error_handler,
+                postgres_config=self.postgres_config,
+                load_balance_config=load_balance_config,
+            )
 
             logger.info(
                 "Enhanced orchestrator initialized successfully - smart load balancing enabled"
@@ -1755,11 +1798,15 @@ class StreamOrchestrator:
         cursor = None
 
         try:
-            conn = self.get_db_connection()
+            conn = self.get_streams_db_connection()
+            if not conn:
+                logger.error("Não foi possível obter conexão com o banco de dados de streams.")
+                return []
+
             cursor = conn.cursor()
 
             # Obter o nome da tabela de streams da configuração
-            table_name = POSTGRES_CONFIG.get("table_name", "public.streams")
+            table_name = self.postgres_config.get("table", "public.streams")
 
             # Buscar todos os streams disponíveis
             query = f"""
@@ -3087,7 +3134,7 @@ class StreamOrchestrator:
 
 
 # Instância global do orquestrador
-orchestrator = StreamOrchestrator()
+# orchestrator = StreamOrchestrator(postgres_config=POSTGRES_CONFIG)
 
 # Endpoints da API
 
