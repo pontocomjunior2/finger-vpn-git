@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Garante que o usuário postgres seja o proprietário do diretório de dados
+chown -R postgres:postgres /var/lib/postgresql/data
+
+
 # Enhanced Orchestrator Startup Script with Improved Service Sequencing
 # Configuration from environment variables with detailed logging and validation
 POSTGRES_STARTUP_TIMEOUT=${POSTGRES_STARTUP_TIMEOUT:-60}
