@@ -1,0 +1,108 @@
+# =============================================================================
+# DOCKER COMPOSE PARA EASYPANEL - ORCHESTRATOR COMPLETO
+# =============================================================================
+
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.easypanel
+    ports:
+      - "8000:8000"
+    volumes:
+      - orchestrator_logs:/app/logs
+      - orchestrator_data:/app/data
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      # =============================================================================
+      # CONFIGURAÇÕES OBRIGATÓRIAS - DEFINIR NO EASYPANEL
+      # =============================================================================
+      
+      # Senha do banco PostgreSQL (ALTERAR!)
+      - DB_PASSWORD=${DB_PASSWORD:-SuaSenhaSegura123!}
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DO BANCO DE DADOS INTERNO
+      # =============================================================================
+      - DB_HOST=localhost
+      - DB_PORT=5432
+      - DB_NAME=orchestrator
+      - DB_USER=orchestrator_user
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DO REDIS INTERNO
+      # =============================================================================
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DA APLICAÇÃO
+      # =============================================================================
+      - ORCHESTRATOR_HOST=0.0.0.0
+      - ORCHESTRATOR_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DE TIMEOUT (AJUSTAR SE NECESSÁRIO)
+      # =============================================================================
+      - POSTGRES_STARTUP_TIMEOUT=${POSTGRES_STARTUP_TIMEOUT:-60}
+      - REDIS_STARTUP_TIMEOUT=${REDIS_STARTUP_TIMEOUT:-30}
+      - APP_STARTUP_TIMEOUT=${APP_STARTUP_TIMEOUT:-120}
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DE PRODUÇÃO
+      # =============================================================================
+      - TZ=${TZ:-America/Sao_Paulo}
+      - MAX_WORKERS=${MAX_WORKERS:-2}
+      
+      # =============================================================================
+      # CONFIGURAÇÕES DE PERFORMANCE
+      # =============================================================================
+      - IMBALANCE_THRESHOLD=${IMBALANCE_THRESHOLD:-0.15}
+      - MAX_STREAM_DIFFERENCE=${MAX_STREAM_DIFFERENCE:-3}
+      - HEARTBEAT_TIMEOUT=${HEARTBEAT_TIMEOUT:-180}
+      - HEARTBEAT_WARNING_THRESHOLD=${HEARTBEAT_WARNING_THRESHOLD:-90}
+      - MAX_MISSED_HEARTBEATS=${MAX_MISSED_HEARTBEATS:-2}
+      - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-5}
+      - RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-3}
+      - EXPONENTIAL_BACKOFF=${EXPONENTIAL_BACKOFF:-true}
+      
+      # =============================================================================
+      # FEATURE FLAGS
+      # =============================================================================
+      - RUN_MIGRATIONS=${RUN_MIGRATIONS:-true}
+      - RUN_HEALTH_CHECK=${RUN_HEALTH_CHECK:-true}
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    
+    # Configurações de recursos (ajustar conforme plano do EasyPanel)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+volumes:
+  orchestrator_logs:
+    driver: local
+  orchestrator_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge

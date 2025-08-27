@@ -1,204 +1,252 @@
-# 🚀 Deploy no EasyPanel - Guia Completo
+# 🚀 Deploy Orchestrator Atualizado no EasyPanel
 
-## 📋 Pré-requisitos
+## 📋 RESUMO DAS MUDANÇAS
 
-1. **Conta no EasyPanel** configurada
-2. **Repositório Git** com o código
-3. **Variáveis de ambiente** configuradas
+✅ **Novos endpoints implementados:**
+- `POST /api/workers/register` - Registrar workers FingerV7
+- `POST /api/heartbeat` - Receber heartbeats dos workers
+- `GET /api/workers` - Listar workers registrados
+- `GET /api/streams/assign` - Atribuir streams para workers
+- `POST /api/streams/update` - Atualizar status de processamento
+- `GET /api/metrics` - Métricas do orchestrator
 
-## 🔧 Configuração das Variáveis de Ambiente
-
-### ✅ Variáveis OBRIGATÓRIAS no EasyPanel:
-
-```env
-# Senha do banco (ALTERE!)
-DB_PASSWORD=SuaSenhaSegura123!
-
-# Chave secreta (ALTERE!)
-SECRET_KEY=sua_chave_secreta_muito_segura_de_pelo_menos_32_caracteres_aqui
+✅ **Testes locais aprovados:**
+```
+🎉 TODOS OS TESTES PASSARAM!
+✅ Os novos endpoints estão funcionando
+🚀 Pronto para deploy no EasyPanel
 ```
 
-### ✅ Variáveis de Rede (Configuração Automática):
+## 🔄 **PASSOS PARA DEPLOY**
 
-```env
-# Database - localhost porque está no mesmo container
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=orchestrator
-DB_USER=orchestrator_user
+### 1. **Fazer Backup do Código Atual**
 
-# Redis - localhost porque está no mesmo container
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# Aplicação
-ORCHESTRATOR_HOST=0.0.0.0
-ORCHESTRATOR_PORT=8000
-```
-
-### ⚙️ Variáveis Opcionais (Performance):
-
-```env
-LOG_LEVEL=INFO
-MAX_WORKERS=2
-IMBALANCE_THRESHOLD=0.15
-MAX_STREAM_DIFFERENCE=3
-HEARTBEAT_TIMEOUT=180
-HEARTBEAT_WARNING_THRESHOLD=90
-MAX_MISSED_HEARTBEATS=2
-MAX_RETRY_ATTEMPTS=5
-RETRY_DELAY_SECONDS=3
-EXPONENTIAL_BACKOFF=true
-RUN_MIGRATIONS=true
-RUN_HEALTH_CHECK=true
-TZ=America/Sao_Paulo
-```
-
-## 🐳 Configuração do EasyPanel
-
-### 1. **Criar Nova Aplicação**
-- Nome: `enhanced-orchestrator`
-- Tipo: `Docker`
-- Repositório: `https://github.com/pontocomjunior2/finger-vpn-git.git`
-
-### 2. **Configurar Build**
-- **Dockerfile**: `Dockerfile.easypanel`
-- **Context**: `.` (raiz do projeto)
-- **Branch**: `orchestrator-v1`
-- **Build Command**: (deixar vazio - usa o Dockerfile)
-
-### 3. **Configurar Portas**
-- **Porta da Aplicação**: `8000`
-- **Protocolo**: `HTTP`
-
-### 4. **Configurar Domínio**
-- Adicionar seu domínio personalizado
-- Ou usar o domínio fornecido pelo EasyPanel
-
-### 5. **Adicionar Variáveis de Ambiente OBRIGATÓRIAS**
-```env
-# ALTERE ESTAS VARIÁVEIS!
-DB_PASSWORD=SuaSenhaSegura123!
-SECRET_KEY=sua_chave_secreta_muito_segura_de_pelo_menos_32_caracteres_aqui
-
-# Configurações de rede (localhost porque está no mesmo container)
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=orchestrator
-DB_USER=orchestrator_user
-REDIS_HOST=localhost
-REDIS_PORT=6379
-ORCHESTRATOR_HOST=0.0.0.0
-ORCHESTRATOR_PORT=8000
-```
-
-## 🔍 Verificação Pós-Deploy
-
-### 1. **Health Check**
+No EasyPanel, faça backup do código atual:
 ```bash
-curl https://seu-dominio.com/health
+# Conectar via SSH ou terminal do EasyPanel
+cp -r /app /app_backup_$(date +%Y%m%d_%H%M%S)
 ```
 
-**Resposta esperada:**
+### 2. **Atualizar o Código**
+
+Substitua o arquivo `app/main_orchestrator.py` com a versão atualizada.
+
+**Principais mudanças no arquivo:**
+- Adicionados endpoints da API para workers
+- Sistema de registro de workers em memória
+- Sistema de atribuição de streams
+- Métricas do orchestrator
+- Correção do sistema de logs
+
+### 3. **Verificar Variáveis de Ambiente**
+
+No EasyPanel, certifique-se que estas variáveis estão configuradas:
+
+```env
+# PostgreSQL Externo (Streams) - JÁ CONFIGURADO
+POSTGRES_HOST=104.234.173.96
+POSTGRES_PORT=5432
+POSTGRES_DB=music_log
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=Mudar123!
+DB_TABLE_NAME=streams
+
+# Configurações do Servidor
+ORCHESTRATOR_PORT=8000
+ORCHESTRATOR_HOST=0.0.0.0
+LOG_LEVEL=INFO
+
+# Banco Interno (Opcional - para modo completo)
+DB_HOST=localhost
+DB_NAME=orchestrator
+DB_USER=orchestrator_user
+DB_PASSWORD=MinhaSenh@Segura123!
+```
+
+### 4. **Reiniciar a Aplicação**
+
+No EasyPanel:
+1. Vá para a aba **"Deployments"**
+2. Clique em **"Restart"** ou **"Redeploy"**
+3. Aguarde a aplicação reiniciar
+
+### 5. **Testar os Novos Endpoints**
+
+Após o restart, teste os endpoints:
+
+```bash
+# 1. Health check
+curl https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/health
+
+# 2. Dashboard atualizado
+curl https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/
+
+# 3. Testar registro de worker
+curl -X POST https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/api/workers/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instance_id": "test-worker-001",
+    "worker_type": "fingerv7",
+    "capacity": 5,
+    "status": "active",
+    "metadata": {"version": "7.0", "test": true}
+  }'
+
+# 4. Listar workers
+curl https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/api/workers
+
+# 5. Testar heartbeat
+curl -X POST https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/api/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "worker_instance_id": "test-worker-001",
+    "status": "active",
+    "current_load": 2,
+    "available_capacity": 3,
+    "metrics": {"cpu_usage": 45.2}
+  }'
+
+# 6. Testar atribuição de streams
+curl "https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/api/streams/assign?worker_id=test-worker-001&capacity=2"
+
+# 7. Métricas da API
+curl https://n8n-pontocom-finger-orchestrator.azfa0v.easypanel.host/api/metrics
+```
+
+## ✅ **RESULTADO ESPERADO**
+
+### **Dashboard Atualizado:**
 ```json
 {
-  "status": "healthy",
-  "message": "Enhanced Stream Orchestrator is running",
-  "timestamp": "2025-01-XX...",
-  "database": "connected",
-  "redis": "connected"
+  "message": "Enhanced Stream Orchestrator",
+  "version": "1.0.0",
+  "status": "running",
+  "endpoints": {
+    "health": "/health",
+    "metrics": "/metrics",
+    "postgres_test": "/postgres/test",
+    "streams": "/streams",
+    "docs": "/docs",
+    "api": {
+      "workers_register": "/api/workers/register",
+      "workers_list": "/api/workers",
+      "heartbeat": "/api/heartbeat",
+      "streams_assign": "/api/streams/assign",
+      "streams_update": "/api/streams/update",
+      "api_metrics": "/api/metrics"
+    }
+  }
 }
 ```
 
-### 2. **Endpoints Principais**
+### **Registro de Worker:**
+```json
+{
+  "success": true,
+  "worker_id": "test-worker-001",
+  "message": "Worker registered successfully"
+}
+```
+
+### **Lista de Workers:**
+```json
+{
+  "workers": [
+    {
+      "instance_id": "test-worker-001",
+      "worker_type": "fingerv7",
+      "status": "active",
+      "capacity": 5,
+      "current_load": 2,
+      "available_capacity": 3,
+      "last_heartbeat": "2025-08-26T19:57:22.793805",
+      "registered_at": "2025-08-26T19:57:22.793805"
+    }
+  ],
+  "total": 1
+}
+```
+
+### **Atribuição de Streams:**
+```json
+{
+  "streams": [
+    {
+      "stream_id": "92",
+      "id": 92,
+      "stream_url": "http://cloud1.radyou.com.br/BANDABFMCWB",
+      "url": "http://cloud1.radyou.com.br/BANDABFMCWB",
+      "name": "Banda B FM Curitiba - PR",
+      "metadata": {
+        "cidade": "Curitiba",
+        "estado": "PR",
+        "regiao": "Sul",
+        "segmento": "Popular",
+        "frequencia": "89,7"
+      }
+    }
+  ],
+  "total": 1,
+  "worker_id": "test-worker-001"
+}
+```
+
+## 🔧 **TROUBLESHOOTING**
+
+### **Se os endpoints retornarem 404:**
+1. Verifique se o arquivo foi atualizado corretamente
+2. Reinicie a aplicação no EasyPanel
+3. Verifique os logs da aplicação
+
+### **Se der erro 500:**
+1. Verifique as variáveis de ambiente
+2. Verifique os logs da aplicação
+3. Teste a conexão com PostgreSQL: `/postgres/test`
+
+### **Para verificar logs:**
+No EasyPanel, vá para **"Logs"** e procure por:
+- `✅ Worker registered`
+- `💓 Heartbeat received`
+- `📤 Assigned X streams`
+
+## 🎯 **PRÓXIMOS PASSOS APÓS DEPLOY**
+
+1. **Testar integração completa:**
+   ```bash
+   python test_fingerv7_integration.py
+   ```
+
+2. **Configurar instâncias FingerV7:**
+   - Copiar `fingerv7_orchestrator_client.py`
+   - Configurar variáveis de ambiente
+   - Iniciar clientes
+
+3. **Monitorar dashboard:**
+   - Workers registrados
+   - Streams sendo processados
+   - Métricas em tempo real
+
+## 🚀 **COMANDO RÁPIDO PARA TESTAR TUDO**
+
+Após o deploy, execute:
 ```bash
-# Dashboard
-https://seu-dominio.com/
-
-# API Status
-https://seu-dominio.com/api/status
-
-# Métricas
-https://seu-dominio.com/api/metrics
-
-# Workers
-https://seu-dominio.com/api/workers
+python test_fingerv7_integration.py
 ```
 
-### 3. **Logs no EasyPanel**
-Monitore os logs para verificar:
-- ✅ PostgreSQL iniciado
-- ✅ Redis iniciado  
-- ✅ Migrations executadas
-- ✅ Orchestrator rodando na porta 8000
+**Se todos os testes passarem, a integração está pronta!**
 
-## 🚨 Troubleshooting
+---
 
-### Problema: "Database connection failed"
-**Solução:**
-```env
-# Verifique se as variáveis estão corretas:
-DB_HOST=localhost  # NÃO postgres
-DB_PASSWORD=sua_senha_aqui
-```
+## 📝 **CHECKLIST DE DEPLOY**
 
-### Problema: "Redis connection failed"
-**Solução:**
-```env
-# Verifique se está usando localhost:
-REDIS_HOST=localhost  # NÃO redis
-REDIS_PORT=6379
-```
+- [ ] Backup do código atual
+- [ ] Atualizar `app/main_orchestrator.py`
+- [ ] Verificar variáveis de ambiente
+- [ ] Reiniciar aplicação no EasyPanel
+- [ ] Testar health check
+- [ ] Testar novos endpoints da API
+- [ ] Executar teste de integração completo
+- [ ] Configurar primeira instância FingerV7
+- [ ] Monitorar logs e métricas
 
-### Problema: "Application not starting"
-**Verificações:**
-1. Dockerfile correto: `Dockerfile.easypanel`
-2. Porta exposta: `8000`
-3. Variável `SECRET_KEY` configurada
-4. Logs do EasyPanel para detalhes
-
-### Problema: "Health check failing"
-**Verificações:**
-1. Aplicação rodando na porta `8000`
-2. Endpoint `/health` acessível
-3. Aguardar 60s para inicialização completa
-
-## 📊 Monitoramento
-
-### Logs Importantes:
-```bash
-# No EasyPanel, monitore:
-- /var/log/supervisor/postgresql.log
-- /var/log/supervisor/redis.log  
-- /var/log/supervisor/orchestrator.log
-- /var/log/supervisor/init-db.log
-```
-
-### Métricas de Performance:
-- CPU: < 80%
-- Memória: < 512MB
-- Resposta: < 2s
-
-## 🔐 Segurança
-
-### ✅ Checklist de Segurança:
-- [ ] `DB_PASSWORD` alterada do padrão
-- [ ] `SECRET_KEY` com 32+ caracteres únicos
-- [ ] HTTPS habilitado no domínio
-- [ ] Logs não expõem senhas
-- [ ] Backup do banco configurado
-
-## 🎯 Deploy Rápido
-
-### Comando Único (se usando CLI):
-```bash
-# 1. Fazer push do código
-git push origin orchestrator-v1
-
-# 2. No EasyPanel:
-# - Criar app com Dockerfile.easypanel
-# - Adicionar variáveis do .env.easypanel
-# - Deploy!
-```
-
-**🚀 Seu Enhanced Stream Orchestrator estará rodando em poucos minutos!**
+**🎉 Pronto para integrar as instâncias FingerV7!**

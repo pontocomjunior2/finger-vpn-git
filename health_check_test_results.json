@@ -1,0 +1,39 @@
+{
+  "test_run": {
+    "timestamp": "2025-08-26T20:48:14.445081",
+    "base_url": "http://localhost:8000"
+  },
+  "tests": {
+    "health": {
+      "endpoint": "/health",
+      "status_code": null,
+      "error": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "validation": {
+        "structure_valid": false
+      }
+    },
+    "readiness": {
+      "endpoint": "/ready",
+      "status_code": null,
+      "error": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "validation": {
+        "structure_valid": false
+      }
+    },
+    "detailed_health": {
+      "endpoint": "/health/detailed",
+      "status_code": null,
+      "error": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "validation": {
+        "structure_valid": false
+      }
+    }
+  },
+  "summary": {
+    "total_tests": 3,
+    "passed_tests": 0,
+    "failed_tests": 3,
+    "success_rate": 0.0,
+    "all_tests_passed": false
+  }
+}

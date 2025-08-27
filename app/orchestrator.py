@@ -13,6 +13,7 @@ Data: 2025
 import asyncio
 import logging
 import os
+import subprocess
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -22,9 +23,13 @@ from typing import Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
+import redis
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
+
+# Import diagnostic logging functionality
+from diagnostic_logger import diagnostic_logger, environment_validator, diagnostic_functions
 
 # Configuração de logging (deve vir antes de qualquer uso do logger)
 logging.basicConfig(
@@ -32,33 +37,133 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Importar psutil para métricas de sistema
-try:
-    import psutil
-    HAS_PSUTIL = True
-except ImportError:
-    HAS_PSUTIL = False
-    logger.warning("psutil não encontrado. Métricas de sistema não estarão disponíveis.")
+# Set initial phase for diagnostic logging
+diagnostic_logger.set_phase("MODULE_INITIALIZATION")
 
-# Import enhanced orchestrator for smart load balancing
-try:
-    from enhanced_orchestrator import EnhancedStreamOrchestrator
-    from load_balancer_config import create_load_balance_config
-    from smart_load_balancer import LoadBalanceConfig, RebalanceReason
-    HAS_SMART_BALANCER = True
-except ImportError as e:
-    HAS_SMART_BALANCER = False
-    logger.warning(f"Smart load balancer não disponível: {e}")
+# =============================================================================
+# OPTIONAL MODULE LOADING WITH GRACEFUL DEGRADATION
+# =============================================================================
 
-# Import resilient orchestrator for enhanced failure handling
-try:
-    from resilient_orchestrator import (FailureRecoveryConfig, HeartbeatConfig,
-                                        ResilientOrchestrator,
-                                        SystemHealthStatus)
-    HAS_RESILIENT_ORCHESTRATOR = True
-except ImportError as e:
-    HAS_RESILIENT_ORCHESTRATOR = False
-    logger.warning(f"Resilient orchestrator não disponível: {e}")
+def load_optional_modules():
+    """
+    Load optional modules with graceful degradation and detailed logging.
+    
+    Returns:
+        dict: Dictionary containing module availability flags and loaded modules
+        
+    Requirements: 6.1, 6.2, 6.3, 6.4
+    """
+    modules = {
+        'psutil': {'available': False, 'module': None, 'error': None},
+        'enhanced_orchestrator': {'available': False, 'module': None, 'error': None},
+        'resilient_orchestrator': {'available': False, 'module': None, 'error': None}
+    }
+    
+    # Load psutil for system metrics
+    try:
+        import psutil
+        modules['psutil']['available'] = True
+        modules['psutil']['module'] = psutil
+        logger.info("psutil loaded successfully - system metrics available")
+    except ImportError as e:
+        modules['psutil']['error'] = str(e)
+        logger.warning(f"psutil not available: {e}. System metrics will be disabled.")
+    except Exception as e:
+        modules['psutil']['error'] = str(e)
+        logger.error(f"Unexpected error loading psutil: {e}")
+    
+    # Load enhanced orchestrator for smart load balancing
+    try:
+        from enhanced_orchestrator import EnhancedStreamOrchestrator
+        from load_balancer_config import create_load_balance_config
+        from smart_load_balancer import LoadBalanceConfig, RebalanceReason
+        
+        modules['enhanced_orchestrator']['available'] = True
+        modules['enhanced_orchestrator']['module'] = {
+            'EnhancedStreamOrchestrator': EnhancedStreamOrchestrator,
+            'create_load_balance_config': create_load_balance_config,
+            'LoadBalanceConfig': LoadBalanceConfig,
+            'RebalanceReason': RebalanceReason
+        }
+        logger.info("Enhanced orchestrator loaded successfully - smart load balancing available")
+        
+    except ImportError as e:
+        modules['enhanced_orchestrator']['error'] = str(e)
+        logger.warning(f"Enhanced orchestrator not available: {e}. Using basic load balancing.")
+    except Exception as e:
+        modules['enhanced_orchestrator']['error'] = str(e)
+        logger.error(f"Unexpected error loading enhanced orchestrator: {e}")
+    
+    # Load resilient orchestrator for enhanced failure handling
+    try:
+        from resilient_orchestrator import (
+            FailureRecoveryConfig, 
+            HeartbeatConfig,
+            ResilientOrchestrator,
+            SystemHealthStatus
+        )
+        
+        modules['resilient_orchestrator']['available'] = True
+        modules['resilient_orchestrator']['module'] = {
+            'FailureRecoveryConfig': FailureRecoveryConfig,
+            'HeartbeatConfig': HeartbeatConfig,
+            'ResilientOrchestrator': ResilientOrchestrator,
+            'SystemHealthStatus': SystemHealthStatus
+        }
+        logger.info("Resilient orchestrator loaded successfully - enhanced failure handling available")
+        
+    except ImportError as e:
+        modules['resilient_orchestrator']['error'] = str(e)
+        logger.warning(f"Resilient orchestrator not available: {e}. Using basic failure handling.")
+    except Exception as e:
+        modules['resilient_orchestrator']['error'] = str(e)
+        logger.error(f"Unexpected error loading resilient orchestrator: {e}")
+    
+    # Log summary of loaded modules
+    available_modules = [name for name, info in modules.items() if info['available']]
+    unavailable_modules = [name for name, info in modules.items() if not info['available']]
+    
+    logger.info(f"Optional modules loaded: {available_modules}")
+    if unavailable_modules:
+        logger.warning(f"Optional modules not available: {unavailable_modules}")
+        logger.info("System will continue with basic functionality for missing modules")
+    
+    return modules
+
+# Load optional modules with graceful degradation
+OPTIONAL_MODULES = load_optional_modules()
+
+# Set compatibility flags for backward compatibility
+HAS_PSUTIL = OPTIONAL_MODULES['psutil']['available']
+HAS_SMART_BALANCER = OPTIONAL_MODULES['enhanced_orchestrator']['available'] 
+HAS_RESILIENT_ORCHESTRATOR = OPTIONAL_MODULES['resilient_orchestrator']['available']
+
+# Extract modules for direct access (with None fallback)
+psutil = OPTIONAL_MODULES['psutil']['module'] if HAS_PSUTIL else None
+
+if HAS_SMART_BALANCER:
+    enhanced_modules = OPTIONAL_MODULES['enhanced_orchestrator']['module']
+    EnhancedStreamOrchestrator = enhanced_modules['EnhancedStreamOrchestrator']
+    create_load_balance_config = enhanced_modules['create_load_balance_config']
+    LoadBalanceConfig = enhanced_modules['LoadBalanceConfig']
+    RebalanceReason = enhanced_modules['RebalanceReason']
+else:
+    EnhancedStreamOrchestrator = None
+    create_load_balance_config = None
+    LoadBalanceConfig = None
+    RebalanceReason = None
+
+if HAS_RESILIENT_ORCHESTRATOR:
+    resilient_modules = OPTIONAL_MODULES['resilient_orchestrator']['module']
+    FailureRecoveryConfig = resilient_modules['FailureRecoveryConfig']
+    HeartbeatConfig = resilient_modules['HeartbeatConfig']
+    ResilientOrchestrator = resilient_modules['ResilientOrchestrator']
+    SystemHealthStatus = resilient_modules['SystemHealthStatus']
+else:
+    FailureRecoveryConfig = None
+    HeartbeatConfig = None
+    ResilientOrchestrator = None
+    SystemHealthStatus = None
 
 # Carregar variáveis de ambiente
 # Primeiro tenta carregar do .env da raiz do projeto
@@ -101,6 +206,879 @@ DB_CONFIG = {
 MAX_STREAMS_PER_INSTANCE = int(os.getenv("MAX_STREAMS_PER_INSTANCE", 20))
 HEARTBEAT_TIMEOUT = int(os.getenv("HEARTBEAT_TIMEOUT", 300))  # 5 minutos
 REBALANCE_INTERVAL = int(os.getenv("REBALANCE_INTERVAL", 60))  # 1 minuto
+
+# Service startup configuration
+POSTGRES_STARTUP_TIMEOUT = int(os.getenv("POSTGRES_STARTUP_TIMEOUT", 60))
+REDIS_STARTUP_TIMEOUT = int(os.getenv("REDIS_STARTUP_TIMEOUT", 30))
+DB_MAX_RETRIES = int(os.getenv("DB_MAX_RETRIES", 3))
+DB_RETRY_DELAY = float(os.getenv("DB_RETRY_DELAY", 1.0))
+
+
+# =============================================================================
+# SERVICE STARTUP VERIFICATION FUNCTIONS
+# =============================================================================
+
+def wait_for_postgres(host: str = "localhost", port: int = 5432, timeout: int = POSTGRES_STARTUP_TIMEOUT) -> bool:
+    """
+    Wait for PostgreSQL to be ready with timeout and retry logic.
+    
+    Args:
+        host: PostgreSQL host
+        port: PostgreSQL port
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        bool: True if PostgreSQL is ready, False if timeout
+        
+    Requirements: 1.1, 1.2, 3.1, 4.1, 4.2
+    """
+    diagnostic_logger.set_phase("POSTGRES_STARTUP")
+    diagnostic_logger.step(f"Waiting for PostgreSQL at {host}:{port} (timeout: {timeout}s)")
+    
+    start_time = time.time()
+    retry_delay = 1.0
+    max_retry_delay = 8.0
+    attempt_count = 0
+    
+    while time.time() - start_time < timeout:
+        attempt_count += 1
+        elapsed = time.time() - start_time
+        
+        diagnostic_logger.info(f"PostgreSQL readiness check attempt #{attempt_count} (elapsed: {elapsed:.1f}s)", 
+                              context={"host": host, "port": port, "attempt": attempt_count})
+        
+        try:
+            # Try to connect using pg_isready command first (more reliable)
+            result = subprocess.run(
+                ["pg_isready", "-h", host, "-p", str(port)],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                diagnostic_logger.success(f"PostgreSQL is ready at {host}:{port} (verified with pg_isready)", 
+                                        context={"method": "pg_isready", "attempts": attempt_count, "elapsed": elapsed})
+                return True
+                
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            # Fallback to direct connection test
+            try:
+                # Test basic connection without authentication
+                test_conn = psycopg2.connect(
+                    host=host,
+                    port=port,
+                    database="postgres",  # Default database
+                    user="postgres",      # Default user
+                    password="",          # No password for initial test
+                    connect_timeout=3
+                )
+                test_conn.close()
+                diagnostic_logger.success(f"PostgreSQL is ready at {host}:{port} (direct connection)", 
+                                        context={"method": "direct_connection", "attempts": attempt_count, "elapsed": elapsed})
+                return True
+                
+            except psycopg2.OperationalError as e:
+                # Check if it's an authentication error (means server is up)
+                if "authentication failed" in str(e).lower() or "password authentication failed" in str(e).lower():
+                    diagnostic_logger.success(f"PostgreSQL is ready at {host}:{port} (authentication required)", 
+                                            context={"method": "auth_check", "attempts": attempt_count, "elapsed": elapsed})
+                    return True
+                    
+                # Server not ready yet - log specific error for diagnostics
+                diagnostic_logger.warning(f"PostgreSQL connection attempt failed: {str(e)[:100]}...", 
+                                        context={"error_type": "OperationalError", "attempt": attempt_count})
+            except Exception as e:
+                # Any other error means server not ready
+                diagnostic_logger.warning(f"PostgreSQL connection attempt failed: {str(e)[:100]}...", 
+                                        context={"error_type": type(e).__name__, "attempt": attempt_count})
+        
+        remaining = timeout - elapsed
+        
+        if remaining <= 0:
+            break
+            
+        # Exponential backoff with jitter
+        actual_delay = min(retry_delay, remaining)
+        diagnostic_logger.info(f"PostgreSQL not ready, retrying in {actual_delay:.1f}s (remaining: {remaining:.1f}s)", 
+                              context={"retry_delay": actual_delay, "remaining_time": remaining})
+        time.sleep(actual_delay)
+        
+        # Increase delay for next iteration
+        retry_delay = min(retry_delay * 1.5, max_retry_delay)
+    
+    diagnostic_logger.error(f"PostgreSQL not ready after {timeout}s timeout at {host}:{port}", 
+                           context={"total_attempts": attempt_count, "timeout": timeout, "host": host, "port": port},
+                           suggested_solution="Check PostgreSQL service status, increase timeout, or verify network connectivity")
+    return False
+
+
+def wait_for_redis(host: str = "localhost", port: int = 6379, timeout: int = REDIS_STARTUP_TIMEOUT) -> bool:
+    """
+    Wait for Redis to be ready with ping verification.
+    
+    Args:
+        host: Redis host
+        port: Redis port  
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        bool: True if Redis is ready, False if timeout
+        
+    Requirements: 1.2, 3.2, 4.1, 4.2
+    """
+    diagnostic_logger.set_phase("REDIS_STARTUP")
+    diagnostic_logger.step(f"Waiting for Redis at {host}:{port} (timeout: {timeout}s)")
+    
+    start_time = time.time()
+    retry_delay = 0.5
+    max_retry_delay = 4.0
+    attempt_count = 0
+    
+    while time.time() - start_time < timeout:
+        attempt_count += 1
+        elapsed = time.time() - start_time
+        
+        diagnostic_logger.info(f"Redis readiness check attempt #{attempt_count} (elapsed: {elapsed:.1f}s)", 
+                              context={"host": host, "port": port, "attempt": attempt_count})
+        
+        try:
+            # Create Redis client with short timeout
+            redis_client = redis.Redis(
+                host=host,
+                port=port,
+                socket_connect_timeout=3,
+                socket_timeout=3,
+                retry_on_timeout=False
+            )
+            
+            # Test with ping command
+            response = redis_client.ping()
+            
+            if response:
+                diagnostic_logger.success(f"Redis is ready at {host}:{port} (ping successful)", 
+                                        context={"method": "ping", "attempts": attempt_count, "elapsed": elapsed})
+                redis_client.close()
+                return True
+                
+        except redis.ConnectionError as e:
+            # Connection failed, server not ready
+            diagnostic_logger.warning(f"Redis connection failed: {str(e)[:100]}...", 
+                                    context={"error_type": "ConnectionError", "attempt": attempt_count})
+        except redis.TimeoutError as e:
+            # Timeout, server might be overloaded
+            diagnostic_logger.warning(f"Redis timeout: {str(e)[:100]}...", 
+                                    context={"error_type": "TimeoutError", "attempt": attempt_count})
+        except Exception as e:
+            # Any other error
+            diagnostic_logger.warning(f"Redis connection error: {str(e)[:100]}...", 
+                                    context={"error_type": type(e).__name__, "attempt": attempt_count})
+        
+        remaining = timeout - elapsed
+        
+        if remaining <= 0:
+            break
+            
+        # Exponential backoff
+        actual_delay = min(retry_delay, remaining)
+        diagnostic_logger.info(f"Redis not ready, retrying in {actual_delay:.1f}s (remaining: {remaining:.1f}s)", 
+                              context={"retry_delay": actual_delay, "remaining_time": remaining})
+        time.sleep(actual_delay)
+        
+        # Increase delay for next iteration
+        retry_delay = min(retry_delay * 1.5, max_retry_delay)
+    
+    diagnostic_logger.error(f"Redis not ready after {timeout}s timeout at {host}:{port}", 
+                           context={"total_attempts": attempt_count, "timeout": timeout, "host": host, "port": port},
+                           suggested_solution="Check Redis service status, increase timeout, or verify network connectivity")
+    return False
+
+
+def setup_database(db_config: dict, max_retries: int = DB_MAX_RETRIES) -> bool:
+    """
+    Setup database with proper error handling and retry logic.
+    
+    Args:
+        db_config: Database configuration dictionary
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        bool: True if setup successful, False otherwise
+        
+    Requirements: 1.1, 2.1, 2.2, 2.3, 4.1, 4.2
+    """
+    diagnostic_logger.set_phase("DATABASE_SETUP")
+    diagnostic_logger.step("Setting up database connection and tables")
+    
+    retry_delay = DB_RETRY_DELAY
+    
+    for attempt in range(max_retries):
+        conn = None
+        cursor = None
+        
+        try:
+            # Test basic connectivity first
+            diagnostic_logger.info(f"Database setup attempt {attempt + 1}/{max_retries}", 
+                                  context={"attempt": attempt + 1, "max_retries": max_retries, "config": {
+                                      "host": db_config["host"], "port": db_config["port"], 
+                                      "database": db_config["database"], "user": db_config["user"]
+                                  }})
+            
+            # Try to connect with provided configuration
+            conn = psycopg2.connect(**db_config)
+            conn.autocommit = True
+            
+            # Test the connection with a simple query
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+            
+            if result and result[0] == 1:
+                diagnostic_logger.success("Database connection successful", 
+                                        context={"attempt": attempt + 1, "database": db_config["database"]})
+                return True
+            else:
+                diagnostic_logger.warning("Database connection test failed - unexpected result", 
+                                        context={"result": result})
+                
+        except psycopg2.OperationalError as e:
+            error_msg = str(e).lower()
+            
+            if "authentication failed" in error_msg:
+                diagnostic_logger.error(f"Database authentication failed: {e}", 
+                                      context={"user": db_config["user"], "host": db_config["host"]},
+                                      exception=e,
+                                      suggested_solution="Verify DB_USER and DB_PASSWORD environment variables")
+                return False  # Don't retry authentication errors
+            elif "database" in error_msg and "does not exist" in error_msg:
+                diagnostic_logger.warning(f"Target database does not exist, attempting to create: {e}", 
+                                        context={"database": db_config["database"]})
+                # Try to connect to default postgres database to create the target database
+                try:
+                    default_config = db_config.copy()
+                    default_config["database"] = "postgres"
+                    
+                    default_conn = psycopg2.connect(**default_config)
+                    default_conn.autocommit = True
+                    default_cursor = default_conn.cursor()
+                    
+                    # Create database if it doesn't exist
+                    default_cursor.execute(f"CREATE DATABASE {db_config['database']}")
+                    diagnostic_logger.success(f"Created database: {db_config['database']}")
+                    
+                    default_cursor.close()
+                    default_conn.close()
+                    
+                    # Now try original connection again
+                    continue
+                    
+                except Exception as create_error:
+                    diagnostic_logger.error(f"Could not create database: {create_error}", 
+                                          exception=create_error,
+                                          suggested_solution="Check database creation permissions or create database manually")
+            else:
+                diagnostic_logger.warning(f"Database connection failed (attempt {attempt + 1}): {e}", 
+                                        context={"error_type": "OperationalError", "attempt": attempt + 1},
+                                        exception=e)
+                
+        except psycopg2.DatabaseError as e:
+            diagnostic_logger.error(f"Database error during setup (attempt {attempt + 1}): {e}", 
+                                   context={"error_type": "DatabaseError", "attempt": attempt + 1},
+                                   exception=e,
+                                   suggested_solution="Check database server health and configuration")
+            
+        except Exception as e:
+            diagnostic_logger.error(f"Unexpected error during database setup (attempt {attempt + 1}): {e}", 
+                                   context={"error_type": type(e).__name__, "attempt": attempt + 1},
+                                   exception=e,
+                                   suggested_solution="Check database connectivity and system resources")
+            
+        finally:
+            # Safe cleanup with enhanced error handling
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception as cursor_error:
+                    diagnostic_logger.warning(f"Error closing cursor: {cursor_error}", 
+                                            context={"cleanup_error": "cursor"})
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as conn_error:
+                    diagnostic_logger.warning(f"Error closing connection: {conn_error}", 
+                                            context={"cleanup_error": "connection"})
+        
+        # Wait before retry (except on last attempt)
+        if attempt < max_retries - 1:
+            diagnostic_logger.info(f"Retrying database setup in {retry_delay:.1f}s...", 
+                                  context={"retry_delay": retry_delay, "next_attempt": attempt + 2})
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+    
+    diagnostic_logger.error(f"Database setup failed after {max_retries} attempts", 
+                           context={"max_retries": max_retries, "final_retry_delay": retry_delay},
+                           suggested_solution="Check database service status, verify configuration, or increase DB_MAX_RETRIES")
+    return False
+
+
+def _get_application_components_status(orchestrator) -> dict:
+    """
+    Get status of application components including optional modules.
+    
+    Args:
+        orchestrator: StreamOrchestrator instance
+        
+    Returns:
+        dict: Status of each application component
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    components = {}
+    
+    # Check enhanced orchestrator
+    components["enhanced_orchestrator"] = {
+        "name": "Enhanced Orchestrator (Smart Load Balancing)",
+        "status": "available" if orchestrator.enhanced_orchestrator else "unavailable",
+        "details": {
+            "module_loaded": HAS_SMART_BALANCER,
+            "instance_initialized": orchestrator.enhanced_orchestrator is not None,
+            "functionality": "Smart load balancing and advanced stream management"
+        }
+    }
+    
+    if not orchestrator.enhanced_orchestrator and HAS_SMART_BALANCER:
+        components["enhanced_orchestrator"]["error"] = "Module loaded but instance not initialized"
+    elif not HAS_SMART_BALANCER:
+        error_info = OPTIONAL_MODULES.get('enhanced_orchestrator', {}).get('error')
+        components["enhanced_orchestrator"]["error"] = error_info or "Module not available"
+    
+    # Check resilient orchestrator
+    components["resilient_orchestrator"] = {
+        "name": "Resilient Orchestrator (Enhanced Failure Handling)",
+        "status": "available" if orchestrator.resilient_orchestrator else "unavailable",
+        "details": {
+            "module_loaded": HAS_RESILIENT_ORCHESTRATOR,
+            "instance_initialized": orchestrator.resilient_orchestrator is not None,
+            "functionality": "Enhanced failure detection and recovery"
+        }
+    }
+    
+    if not orchestrator.resilient_orchestrator and HAS_RESILIENT_ORCHESTRATOR:
+        components["resilient_orchestrator"]["error"] = "Module loaded but instance not initialized"
+    elif not HAS_RESILIENT_ORCHESTRATOR:
+        error_info = OPTIONAL_MODULES.get('resilient_orchestrator', {}).get('error')
+        components["resilient_orchestrator"]["error"] = error_info or "Module not available"
+    
+    # Check psutil for system metrics
+    components["system_metrics"] = {
+        "name": "System Metrics (psutil)",
+        "status": "available" if HAS_PSUTIL else "unavailable",
+        "details": {
+            "module_loaded": HAS_PSUTIL,
+            "functionality": "CPU, memory, and disk usage monitoring"
+        }
+    }
+    
+    if not HAS_PSUTIL:
+        error_info = OPTIONAL_MODULES.get('psutil', {}).get('error')
+        components["system_metrics"]["error"] = error_info or "Module not available"
+    
+    return components
+
+
+def _validate_configuration() -> dict:
+    """
+    Validate system configuration and environment variables.
+    
+    Returns:
+        dict: Configuration validation results
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    validation = {
+        "status": "valid",
+        "issues": [],
+        "environment_variables": {},
+        "database_config": {},
+        "timeouts": {}
+    }
+    
+    # Check required environment variables
+    required_vars = ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"]
+    for var in required_vars:
+        value = os.getenv(var)
+        if value:
+            validation["environment_variables"][var] = "set"
+        else:
+            validation["environment_variables"][var] = "missing"
+            validation["issues"].append(f"Environment variable {var} is not set")
+    
+    # Check database configuration
+    validation["database_config"] = {
+        "host": DB_CONFIG["host"],
+        "port": DB_CONFIG["port"],
+        "database": DB_CONFIG["database"],
+        "user": DB_CONFIG["user"],
+        "password_set": bool(DB_CONFIG["password"])
+    }
+    
+    # Check timeout configurations
+    validation["timeouts"] = {
+        "postgres_startup_timeout": POSTGRES_STARTUP_TIMEOUT,
+        "redis_startup_timeout": REDIS_STARTUP_TIMEOUT,
+        "heartbeat_timeout": HEARTBEAT_TIMEOUT,
+        "db_max_retries": DB_MAX_RETRIES,
+        "db_retry_delay": DB_RETRY_DELAY
+    }
+    
+    # Validate timeout values
+    if POSTGRES_STARTUP_TIMEOUT < 30:
+        validation["issues"].append("PostgreSQL startup timeout is very low (< 30s)")
+    if REDIS_STARTUP_TIMEOUT < 10:
+        validation["issues"].append("Redis startup timeout is very low (< 10s)")
+    if HEARTBEAT_TIMEOUT < 60:
+        validation["issues"].append("Heartbeat timeout is very low (< 60s)")
+    
+    # Set overall status
+    if validation["issues"]:
+        validation["status"] = "issues_found"
+    
+    return validation
+
+
+def _get_system_warnings() -> List[str]:
+    """
+    Get current system warnings and potential issues.
+    
+    Returns:
+        List[str]: List of warning messages
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    warnings = []
+    
+    # Check optional modules
+    if not HAS_SMART_BALANCER:
+        warnings.append("Enhanced orchestrator not available - using basic load balancing")
+    
+    if not HAS_RESILIENT_ORCHESTRATOR:
+        warnings.append("Resilient orchestrator not available - using basic failure handling")
+    
+    if not HAS_PSUTIL:
+        warnings.append("System metrics not available - psutil module not loaded")
+    
+    # Check system resources if psutil is available
+    if HAS_PSUTIL and psutil:
+        try:
+            memory = psutil.virtual_memory()
+            if memory.percent > 90:
+                warnings.append(f"High memory usage detected: {memory.percent:.1f}%")
+            
+            disk = psutil.disk_usage('/')
+            disk_percent = (disk.used / disk.total) * 100
+            if disk_percent > 90:
+                warnings.append(f"High disk usage detected: {disk_percent:.1f}%")
+                
+        except Exception:
+            pass
+    
+    # Check configuration warnings
+    if not os.getenv("DB_PASSWORD"):
+        warnings.append("Database password not set - using empty password")
+    
+    return warnings
+
+
+def _get_system_recommendations(service_status: dict, app_components: dict) -> List[str]:
+    """
+    Get system recommendations based on current status.
+    
+    Args:
+        service_status: Service status from verify_services
+        app_components: Application components status
+        
+    Returns:
+        List[str]: List of recommendation messages
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    recommendations = []
+    
+    # Service-based recommendations
+    if service_status["overall_status"] != "ready":
+        recommendations.append("Ensure all required services (PostgreSQL, Redis) are running and accessible")
+    
+    # Component-based recommendations
+    unavailable_components = [
+        name for name, info in app_components.items() 
+        if info.get("status") == "unavailable"
+    ]
+    
+    if "enhanced_orchestrator" in unavailable_components:
+        recommendations.append("Consider installing enhanced orchestrator for smart load balancing capabilities")
+    
+    if "resilient_orchestrator" in unavailable_components:
+        recommendations.append("Consider installing resilient orchestrator for enhanced failure handling")
+    
+    if "system_metrics" in unavailable_components:
+        recommendations.append("Install psutil package for system metrics monitoring")
+    
+    # Performance recommendations
+    if HAS_PSUTIL and psutil:
+        try:
+            memory = psutil.virtual_memory()
+            if memory.percent > 80:
+                recommendations.append("Consider increasing available memory or optimizing memory usage")
+            
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            if cpu_percent > 80:
+                recommendations.append("High CPU usage detected - consider scaling or optimization")
+                
+        except Exception:
+            pass
+    
+    # Configuration recommendations
+    if HEARTBEAT_TIMEOUT < 300:
+        recommendations.append("Consider increasing heartbeat timeout for better stability in slow networks")
+    
+    if DB_MAX_RETRIES < 3:
+        recommendations.append("Consider increasing database retry attempts for better resilience")
+    
+    return recommendations
+
+
+def _get_system_metrics() -> Optional[dict]:
+    """
+    Get current system metrics if psutil is available.
+    
+    Returns:
+        dict: System metrics or None if not available
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    if not HAS_PSUTIL or not psutil:
+        return None
+    
+    try:
+        # Get CPU usage
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Get memory usage
+        memory = psutil.virtual_memory()
+        
+        # Get disk usage for root partition
+        disk = psutil.disk_usage('/')
+        
+        # Get load average (Unix-like systems only)
+        load_avg = None
+        try:
+            load_avg = list(psutil.getloadavg())
+        except (AttributeError, OSError):
+            # Not available on Windows
+            pass
+        
+        # Get uptime
+        boot_time = psutil.boot_time()
+        uptime_seconds = time.time() - boot_time
+        
+        return {
+            "cpu_percent": round(cpu_percent, 2),
+            "memory": {
+                "percent": round(memory.percent, 2),
+                "used_gb": round(memory.used / (1024**3), 2),
+                "total_gb": round(memory.total / (1024**3), 2),
+                "available_gb": round(memory.available / (1024**3), 2)
+            },
+            "disk": {
+                "percent": round((disk.used / disk.total) * 100, 2),
+                "used_gb": round(disk.used / (1024**3), 2),
+                "free_gb": round(disk.free / (1024**3), 2),
+                "total_gb": round(disk.total / (1024**3), 2)
+            },
+            "load_average": load_avg,
+            "uptime_seconds": round(uptime_seconds, 2),
+            "uptime_human": str(timedelta(seconds=int(uptime_seconds)))
+        }
+        
+    except Exception as e:
+        logger.warning(f"Failed to get system metrics: {e}")
+        return {
+            "error": str(e),
+            "message": "System metrics collection failed"
+        }
+
+
+def validate_startup_environment() -> dict:
+    """
+    Validate startup environment with comprehensive diagnostics and reporting.
+    
+    Returns:
+        dict: Comprehensive validation report
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    diagnostic_logger.set_phase("STARTUP_VALIDATION")
+    diagnostic_logger.step("Starting comprehensive startup environment validation")
+    
+    # Perform environment validation
+    env_validation = environment_validator.validate_all()
+    
+    # Generate diagnostic report
+    diagnostic_report = diagnostic_functions.generate_comprehensive_report(
+        DB_CONFIG, 
+        os.getenv("REDIS_HOST", "localhost"), 
+        int(os.getenv("REDIS_PORT", 6379))
+    )
+    
+    # Combine results
+    validation_report = {
+        "timestamp": datetime.now().isoformat(),
+        "validation_type": "startup_environment",
+        "environment_validation": env_validation,
+        "service_diagnostics": diagnostic_report,
+        "overall_status": "UNKNOWN",
+        "critical_issues": [],
+        "warnings": [],
+        "recommendations": []
+    }
+    
+    # Analyze combined results
+    critical_issues = []
+    warnings = []
+    recommendations = []
+    
+    # Check environment validation
+    if env_validation["overall_status"] == "FAILED":
+        critical_issues.extend(env_validation["issues"])
+        recommendations.extend(env_validation["recommendations"])
+    elif env_validation["overall_status"] == "WARNING":
+        warnings.extend(env_validation["warnings"])
+        recommendations.extend(env_validation["recommendations"])
+    
+    # Check service diagnostics
+    if diagnostic_report["overall_status"] in ["ALL_ISSUES", "MIXED"]:
+        for service_name, service_data in diagnostic_report["services"].items():
+            if service_data["status"] != "HEALTHY":
+                for issue in service_data["issues_found"]:
+                    critical_issues.append(f"{service_name}: {issue['error']}")
+        recommendations.extend(diagnostic_report["recommendations"])
+    
+    # Set overall status
+    if critical_issues:
+        validation_report["overall_status"] = "CRITICAL_ISSUES"
+    elif warnings:
+        validation_report["overall_status"] = "WARNINGS"
+    else:
+        validation_report["overall_status"] = "HEALTHY"
+    
+    validation_report["critical_issues"] = critical_issues
+    validation_report["warnings"] = warnings
+    validation_report["recommendations"] = list(set(recommendations))  # Remove duplicates
+    
+    # Log results
+    if validation_report["overall_status"] == "CRITICAL_ISSUES":
+        diagnostic_logger.error("Startup environment validation found critical issues", 
+                               context={"critical_issues_count": len(critical_issues)},
+                               suggested_solution="Address critical issues before proceeding")
+    elif validation_report["overall_status"] == "WARNINGS":
+        diagnostic_logger.warning("Startup environment validation completed with warnings", 
+                                 context={"warnings_count": len(warnings)})
+    else:
+        diagnostic_logger.success("Startup environment validation passed successfully")
+    
+    return validation_report
+
+
+def verify_services(db_config: dict, redis_host: str = "localhost", redis_port: int = 6379) -> dict:
+    """
+    Perform comprehensive checks of all required services.
+    
+    Args:
+        db_config: Database configuration dictionary
+        redis_host: Redis host
+        redis_port: Redis port
+        
+    Returns:
+        dict: Service status report with detailed information
+        
+    Requirements: 3.1, 3.2, 3.3, 4.3
+    """
+    diagnostic_logger.set_phase("SERVICE_VERIFICATION")
+    diagnostic_logger.step("Performing comprehensive service verification")
+    
+    status_report = {
+        "overall_status": "unknown",
+        "services": {},
+        "timestamp": datetime.now().isoformat(),
+        "errors": [],
+        "verification_details": {
+            "total_services": 2,
+            "services_checked": 0,
+            "services_ready": 0,
+            "services_failed": 0
+        }
+    }
+    
+    # Check PostgreSQL
+    diagnostic_logger.info("Starting PostgreSQL service verification", 
+                          context={"host": db_config["host"], "port": db_config["port"], "database": db_config["database"]})
+    
+    postgres_status = {
+        "name": "PostgreSQL",
+        "status": "checking",
+        "details": {},
+        "error": None
+    }
+    
+    try:
+        # Test PostgreSQL connectivity
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        
+        # Get PostgreSQL version
+        cursor.execute("SELECT version()")
+        version_info = cursor.fetchone()[0]
+        postgres_status["details"]["version"] = version_info
+        
+        # Test basic operations
+        cursor.execute("SELECT current_timestamp")
+        current_time = cursor.fetchone()[0]
+        postgres_status["details"]["current_time"] = str(current_time)
+        
+        # Check if we can create tables (test permissions)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS service_verification_test (
+                id SERIAL PRIMARY KEY,
+                test_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Insert test data
+        cursor.execute("INSERT INTO service_verification_test DEFAULT VALUES RETURNING id")
+        test_id = cursor.fetchone()[0]
+        
+        # Clean up test data
+        cursor.execute("DELETE FROM service_verification_test WHERE id = %s", (test_id,))
+        cursor.execute("DROP TABLE service_verification_test")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        postgres_status["status"] = "ready"
+        postgres_status["details"]["operations_test"] = "passed"
+        status_report["verification_details"]["services_ready"] += 1
+        
+        diagnostic_logger.success("PostgreSQL service verification passed", 
+                                 context={"version": version_info.split()[1] if len(version_info.split()) > 1 else "unknown",
+                                         "operations_test": "passed"})
+        
+    except Exception as e:
+        postgres_status["status"] = "error"
+        postgres_status["error"] = str(e)
+        status_report["errors"].append(f"PostgreSQL: {e}")
+        status_report["verification_details"]["services_failed"] += 1
+        
+        diagnostic_logger.error("PostgreSQL service verification failed", 
+                               context={"database": db_config["database"], "host": db_config["host"]},
+                               exception=e,
+                               suggested_solution="Check PostgreSQL service status and database connectivity")
+    
+    status_report["services"]["postgresql"] = postgres_status
+    status_report["verification_details"]["services_checked"] += 1
+    
+    # Check Redis
+    diagnostic_logger.info("Starting Redis service verification", 
+                          context={"host": redis_host, "port": redis_port})
+    
+    redis_status = {
+        "name": "Redis",
+        "status": "checking", 
+        "details": {},
+        "error": None
+    }
+    
+    try:
+        # Test Redis connectivity
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            socket_connect_timeout=5,
+            socket_timeout=5
+        )
+        
+        # Test ping
+        ping_response = redis_client.ping()
+        redis_status["details"]["ping"] = str(ping_response)
+        
+        # Get Redis info
+        redis_info = redis_client.info()
+        redis_status["details"]["version"] = redis_info.get("redis_version", "unknown")
+        redis_status["details"]["uptime_seconds"] = redis_info.get("uptime_in_seconds", 0)
+        redis_status["details"]["connected_clients"] = redis_info.get("connected_clients", 0)
+        redis_status["details"]["used_memory_human"] = redis_info.get("used_memory_human", "unknown")
+        
+        # Test basic operations
+        test_key = "service_verification_test"
+        redis_client.set(test_key, "test_value", ex=10)  # Expire in 10 seconds
+        test_value = redis_client.get(test_key)
+        redis_client.delete(test_key)
+        
+        if test_value == b"test_value":
+            redis_status["details"]["operations_test"] = "passed"
+        else:
+            redis_status["details"]["operations_test"] = "failed"
+            diagnostic_logger.warning("Redis operations test returned unexpected result", 
+                                     context={"expected": "test_value", "actual": str(test_value)})
+            
+        redis_client.close()
+        redis_status["status"] = "ready"
+        status_report["verification_details"]["services_ready"] += 1
+        
+        diagnostic_logger.success("Redis service verification passed", 
+                                 context={"version": redis_status["details"]["version"],
+                                         "uptime_seconds": redis_status["details"]["uptime_seconds"],
+                                         "operations_test": redis_status["details"]["operations_test"]})
+        
+    except Exception as e:
+        redis_status["status"] = "error"
+        redis_status["error"] = str(e)
+        status_report["errors"].append(f"Redis: {e}")
+        status_report["verification_details"]["services_failed"] += 1
+        
+        diagnostic_logger.error("Redis service verification failed", 
+                               context={"host": redis_host, "port": redis_port},
+                               exception=e,
+                               suggested_solution="Check Redis service status and connectivity")
+    
+    status_report["services"]["redis"] = redis_status
+    status_report["verification_details"]["services_checked"] += 1
+    
+    # Determine overall status
+    all_services_ready = all(
+        service["status"] == "ready" 
+        for service in status_report["services"].values()
+    )
+    
+    if all_services_ready:
+        status_report["overall_status"] = "ready"
+        diagnostic_logger.success("All services verified successfully", 
+                                 context={
+                                     "services_ready": status_report["verification_details"]["services_ready"],
+                                     "total_services": status_report["verification_details"]["total_services"]
+                                 })
+    else:
+        status_report["overall_status"] = "error"
+        diagnostic_logger.error("Service verification failed - not all services are ready", 
+                               context={
+                                   "services_ready": status_report["verification_details"]["services_ready"],
+                                   "services_failed": status_report["verification_details"]["services_failed"],
+                                   "total_services": status_report["verification_details"]["total_services"],
+                                   "errors": status_report["errors"]
+                               },
+                               suggested_solution="Check failed services and resolve connectivity issues")
+    
+    return status_report
 
 
 # Modelos Pydantic
@@ -152,6 +1130,18 @@ async def lifespan(app: FastAPI):
     """Gerencia o ciclo de vida da aplicação FastAPI com monitoramento resiliente."""
     # Startup
     logger.info("Iniciando orquestrador com monitoramento resiliente...")
+    
+    # Verify services before starting orchestrator
+    logger.info("Verificando serviços antes de inicializar o orquestrador...")
+    service_status = verify_services(DB_CONFIG)
+    
+    if service_status["overall_status"] != "ready":
+        logger.error("Falha na verificação de serviços durante inicialização")
+        logger.error(f"Erros: {service_status['errors']}")
+        raise RuntimeError("Services not ready for orchestrator startup")
+    
+    logger.info("Todos os serviços verificados com sucesso")
+    
     orchestrator = StreamOrchestrator()
     orchestrator.create_tables()
 
@@ -209,55 +1199,132 @@ class StreamOrchestrator:
         self.active_instances: Dict[str, dict] = {}
         self.stream_assignments: Dict[int, str] = {}  # stream_id -> server_id
         
-        # Initialize enhanced orchestrator for smart load balancing
-        if HAS_SMART_BALANCER:
-            try:
-                # Create configuration from environment variables
-                config = create_load_balance_config()
-                self.enhanced_orchestrator = EnhancedStreamOrchestrator(self.db_config, config)
-                logger.info("Smart load balancer initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize smart load balancer: {e}")
-                self.enhanced_orchestrator = None
-        else:
-            self.enhanced_orchestrator = None
+        # Initialize enhanced orchestrator for smart load balancing with graceful degradation
+        self.enhanced_orchestrator = self._initialize_enhanced_orchestrator()
         
-        # Initialize resilient orchestrator for enhanced failure handling
-        if HAS_RESILIENT_ORCHESTRATOR:
-            try:
-                # Create heartbeat and recovery configurations from environment
-                heartbeat_config = HeartbeatConfig(
-                    timeout_seconds=int(os.getenv("HEARTBEAT_TIMEOUT", 300)),
-                    warning_threshold_seconds=int(os.getenv("HEARTBEAT_WARNING_THRESHOLD", 120)),
-                    max_missed_heartbeats=int(os.getenv("MAX_MISSED_HEARTBEATS", 3)),
-                    check_interval_seconds=int(os.getenv("HEARTBEAT_CHECK_INTERVAL", 30)),
-                    emergency_threshold_seconds=int(os.getenv("EMERGENCY_THRESHOLD", 600))
-                )
-                
-                recovery_config = FailureRecoveryConfig(
-                    max_retry_attempts=int(os.getenv("MAX_RETRY_ATTEMPTS", 3)),
-                    retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", 5)),
-                    exponential_backoff=os.getenv("EXPONENTIAL_BACKOFF", "true").lower() == "true",
-                    circuit_breaker_threshold=int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", 5)),
-                    circuit_breaker_timeout_seconds=int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", 60)),
-                    emergency_recovery_enabled=os.getenv("EMERGENCY_RECOVERY_ENABLED", "true").lower() == "true"
-                )
-                
-                self.resilient_orchestrator = ResilientOrchestrator(
-                    self.db_config, heartbeat_config, recovery_config
-                )
-                logger.info("Resilient orchestrator initialized successfully")
-                
+        # Initialize resilient orchestrator for enhanced failure handling with graceful degradation
+        self.resilient_orchestrator = self._initialize_resilient_orchestrator()
 
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize resilient orchestrator: {e}")
-                self.resilient_orchestrator = None
-        else:
-            self.resilient_orchestrator = None
+    def _initialize_enhanced_orchestrator(self):
+        """
+        Initialize enhanced orchestrator with graceful degradation.
+        
+        Returns:
+            EnhancedStreamOrchestrator instance or None if not available
+            
+        Requirements: 6.1, 6.2, 6.3, 6.4
+        """
+        if not HAS_SMART_BALANCER:
+            logger.info("Enhanced orchestrator not available - using basic load balancing")
+            return None
+            
+        try:
+            # Verify all required components are available
+            if not all([EnhancedStreamOrchestrator, create_load_balance_config]):
+                logger.warning("Enhanced orchestrator components missing - falling back to basic mode")
+                return None
+            
+            # Create configuration from environment variables
+            config = create_load_balance_config()
+            enhanced_orch = EnhancedStreamOrchestrator(self.db_config, config)
+            
+            logger.info("Enhanced orchestrator initialized successfully - smart load balancing enabled")
+            return enhanced_orch
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize enhanced orchestrator: {e}")
+            logger.warning("Falling back to basic load balancing due to initialization failure")
+            return None
+
+    def _initialize_resilient_orchestrator(self):
+        """
+        Initialize resilient orchestrator with graceful degradation.
+        
+        Returns:
+            ResilientOrchestrator instance or None if not available
+            
+        Requirements: 6.1, 6.2, 6.3, 6.4
+        """
+        if not HAS_RESILIENT_ORCHESTRATOR:
+            logger.info("Resilient orchestrator not available - using basic failure handling")
+            return None
+            
+        try:
+            # Verify all required components are available
+            if not all([ResilientOrchestrator, HeartbeatConfig, FailureRecoveryConfig]):
+                logger.warning("Resilient orchestrator components missing - falling back to basic mode")
+                return None
+            
+            # Create heartbeat and recovery configurations from environment
+            heartbeat_config = HeartbeatConfig(
+                timeout_seconds=int(os.getenv("HEARTBEAT_TIMEOUT", 300)),
+                warning_threshold_seconds=int(os.getenv("HEARTBEAT_WARNING_THRESHOLD", 120)),
+                max_missed_heartbeats=int(os.getenv("MAX_MISSED_HEARTBEATS", 3)),
+                check_interval_seconds=int(os.getenv("HEARTBEAT_CHECK_INTERVAL", 30)),
+                emergency_threshold_seconds=int(os.getenv("EMERGENCY_THRESHOLD", 600))
+            )
+            
+            recovery_config = FailureRecoveryConfig(
+                max_retry_attempts=int(os.getenv("MAX_RETRY_ATTEMPTS", 3)),
+                retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", 5)),
+                exponential_backoff=os.getenv("EXPONENTIAL_BACKOFF", "true").lower() == "true",
+                circuit_breaker_threshold=int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", 5)),
+                circuit_breaker_timeout_seconds=int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", 60)),
+                emergency_recovery_enabled=os.getenv("EMERGENCY_RECOVERY_ENABLED", "true").lower() == "true"
+            )
+            
+            resilient_orch = ResilientOrchestrator(
+                self.db_config, heartbeat_config, recovery_config
+            )
+            
+            logger.info("Resilient orchestrator initialized successfully - enhanced failure handling enabled")
+            return resilient_orch
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize resilient orchestrator: {e}")
+            logger.warning("Falling back to basic failure handling due to initialization failure")
+            return None
+
+    def get_optional_modules_status(self):
+        """
+        Get status information about optional modules.
+        
+        Returns:
+            dict: Detailed status of all optional modules
+            
+        Requirements: 6.1, 6.2, 6.3, 6.4
+        """
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "modules": {},
+            "functionality": {
+                "basic_orchestration": True,
+                "smart_load_balancing": HAS_SMART_BALANCER and self.enhanced_orchestrator is not None,
+                "enhanced_failure_handling": HAS_RESILIENT_ORCHESTRATOR and self.resilient_orchestrator is not None,
+                "system_metrics": HAS_PSUTIL
+            }
+        }
+        
+        # Add detailed module information
+        for module_name, module_info in OPTIONAL_MODULES.items():
+            status["modules"][module_name] = {
+                "available": module_info['available'],
+                "error": module_info['error'],
+                "initialized": False
+            }
+            
+            # Check if module is actually initialized and working
+            if module_name == "enhanced_orchestrator" and self.enhanced_orchestrator:
+                status["modules"][module_name]["initialized"] = True
+            elif module_name == "resilient_orchestrator" and self.resilient_orchestrator:
+                status["modules"][module_name]["initialized"] = True
+            elif module_name == "psutil" and module_info['available']:
+                status["modules"][module_name]["initialized"] = True
+        
+        return status
 
     def get_db_connection(self):
-        """Obtém conexão com o banco de dados."""
+        """Obtém conexão com o banco de dados com tratamento robusto de erros."""
         # Use resilient orchestrator connection if available
         if self.resilient_orchestrator:
             try:
@@ -265,20 +1332,51 @@ class StreamOrchestrator:
             except Exception as e:
                 logger.warning(f"Resilient connection failed, falling back to basic: {e}")
         
-        # Fallback to basic connection
-        try:
-            conn = psycopg2.connect(**self.db_config)
-            conn.autocommit = True
-            return conn
-        except Exception as e:
-            logger.error(f"Erro ao conectar com banco de dados: {e}")
-            raise
+        # Fallback to basic connection with retry logic
+        max_retries = 3
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                conn = psycopg2.connect(**self.db_config)
+                conn.autocommit = True
+                return conn
+            except psycopg2.OperationalError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Database connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                    raise
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to database: {e}")
+                raise
 
     def create_tables(self):
         """Cria as tabelas necessárias para o orquestrador."""
+        # First verify database connectivity using the new setup function
+        if not setup_database(self.db_config):
+            logger.error("Database setup verification failed")
+            return False
+            
+        conn = None
+        cursor = None
+        
         try:
-            conn = self.get_db_connection()
-            cursor = conn.cursor()
+            # Get database connection with proper error handling
+            try:
+                conn = self.get_db_connection()
+            except Exception as conn_error:
+                logger.error(f"Falha ao conectar ao banco de dados: {conn_error}")
+                return False
+            
+            # Initialize cursor with proper error handling
+            try:
+                cursor = conn.cursor()
+            except Exception as cursor_error:
+                logger.error(f"Falha ao criar cursor: {cursor_error}")
+                return False
 
             # Tabela de instâncias registradas
             cursor.execute(
@@ -379,26 +1477,50 @@ class StreamOrchestrator:
             )
 
             conn.commit()
-            cursor.close()
-            conn.close()
-
             logger.info("Tabelas do orquestrador criadas com sucesso")
             return True
 
-        except Exception as e:
-            logger.error(f"Erro ao criar tabelas: {e}")
+        except psycopg2.DatabaseError as db_error:
+            logger.error(f"Erro de banco de dados ao criar tabelas: {db_error}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
             return False
-            raise
+        except psycopg2.OperationalError as op_error:
+            logger.error(f"Erro operacional do banco ao criar tabelas: {op_error}")
+            return False
+        except Exception as e:
+            logger.error(f"Erro inesperado ao criar tabelas: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
+            return False
         finally:
-            cursor.close()
-            conn.close()
+            # Safe resource cleanup - only close if initialized and not None
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception as cursor_error:
+                    logger.error(f"Erro ao fechar cursor: {cursor_error}")
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as conn_error:
+                    logger.error(f"Erro ao fechar conexão: {conn_error}")
 
     def get_available_streams(self) -> List[int]:
         """Obtém lista de streams disponíveis do banco de dados."""
-        conn = self.get_db_connection()
-        cursor = conn.cursor()
-
+        conn = None
+        cursor = None
+        
         try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+
             # Buscar todos os streams disponíveis
             cursor.execute(
                 """
@@ -433,15 +1555,41 @@ class StreamOrchestrator:
             logger.error(f"Erro ao buscar streams disponíveis: {e}")
             return []
         finally:
-            cursor.close()
-            conn.close()
+            # Safe resource cleanup
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception as cursor_error:
+                    logger.error(f"Erro ao fechar cursor: {cursor_error}")
+            if conn:
+                try:
+                    conn.close()
+                except Exception as conn_error:
+                    logger.error(f"Erro ao fechar conexão: {conn_error}")
 
     def register_instance(self, registration: InstanceRegistration) -> dict:
         """Registra uma nova instância no orquestrador."""
-        conn = self.get_db_connection()
-        cursor = conn.cursor()
-
+        conn = None
+        cursor = None
+        
         try:
+            # Get database connection with proper error handling
+            try:
+                conn = self.get_db_connection()
+            except Exception as conn_error:
+                logger.error(f"Falha ao conectar ao banco de dados para registrar instância {registration.server_id}: {conn_error}")
+                raise HTTPException(
+                    status_code=500, detail=f"Erro de conexão com banco de dados: {conn_error}"
+                )
+            
+            # Initialize cursor with proper error handling
+            try:
+                cursor = conn.cursor()
+            except Exception as cursor_error:
+                logger.error(f"Falha ao criar cursor para registrar instância {registration.server_id}: {cursor_error}")
+                raise HTTPException(
+                    status_code=500, detail=f"Erro ao criar cursor: {cursor_error}"
+                )
             # Verificar se é uma re-registração (instância já existe)
             cursor.execute(
                 """
@@ -639,22 +1787,71 @@ class StreamOrchestrator:
                 "auto_rebalanced": should_rebalance,
             }
 
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Erro ao registrar instância {registration.server_id}: {e}")
+        except psycopg2.DatabaseError as db_error:
+            logger.error(f"Erro de banco de dados ao registrar instância {registration.server_id}: {db_error}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
             raise HTTPException(
-                status_code=500, detail=f"Erro ao registrar instância: {e}"
+                status_code=500, detail=f"Erro de banco de dados: {db_error}"
+            )
+        except psycopg2.OperationalError as op_error:
+            logger.error(f"Erro operacional do banco ao registrar instância {registration.server_id}: {op_error}")
+            raise HTTPException(
+                status_code=500, detail=f"Erro operacional do banco: {op_error}"
+            )
+        except HTTPException:
+            # Re-raise HTTP exceptions without modification
+            raise
+        except Exception as e:
+            logger.error(f"Erro inesperado ao registrar instância {registration.server_id}: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
+            raise HTTPException(
+                status_code=500, detail=f"Erro inesperado ao registrar instância: {e}"
             )
         finally:
-            cursor.close()
-            conn.close()
+            # Safe resource cleanup - only close if initialized and not None
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception as cursor_error:
+                    logger.error(f"Erro ao fechar cursor: {cursor_error}")
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as conn_error:
+                    logger.error(f"Erro ao fechar conexão: {conn_error}")
 
     def update_heartbeat(self, heartbeat: HeartbeatRequest) -> dict:
         """Atualiza o heartbeat de uma instância."""
-        conn = self.get_db_connection()
-        cursor = conn.cursor()
-
+        conn = None
+        cursor = None
+        
         try:
+            # Get database connection with proper error handling
+            try:
+                conn = self.get_db_connection()
+            except Exception as conn_error:
+                logger.error(f"Falha ao conectar ao banco de dados para heartbeat de {heartbeat.server_id}: {conn_error}")
+                raise HTTPException(
+                    status_code=500, detail=f"Erro de conexão com banco de dados: {conn_error}"
+                )
+            
+            # Initialize cursor with proper error handling
+            try:
+                cursor = conn.cursor()
+            except Exception as cursor_error:
+                logger.error(f"Falha ao criar cursor para heartbeat de {heartbeat.server_id}: {cursor_error}")
+                raise HTTPException(
+                    status_code=500, detail=f"Erro ao criar cursor: {cursor_error}"
+                )
+
             # Update heartbeat in resilient orchestrator if available
             if self.resilient_orchestrator:
                 self.resilient_orchestrator.instance_heartbeats[heartbeat.server_id] = datetime.now()
@@ -719,6 +1916,8 @@ class StreamOrchestrator:
                 )
                 logger.debug(f"Métricas de sistema armazenadas para {heartbeat.server_id}")
 
+            conn.commit()
+
             # Atualizar cache local
             if heartbeat.server_id in self.active_instances:
                 self.active_instances[heartbeat.server_id].update(
@@ -731,14 +1930,46 @@ class StreamOrchestrator:
 
             return {"status": "heartbeat_updated"}
 
-        except Exception as e:
-            logger.error(f"Erro ao atualizar heartbeat de {heartbeat.server_id}: {e}")
+        except psycopg2.DatabaseError as db_error:
+            logger.error(f"Erro de banco de dados ao atualizar heartbeat de {heartbeat.server_id}: {db_error}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
             raise HTTPException(
-                status_code=500, detail=f"Erro ao atualizar heartbeat: {e}"
+                status_code=500, detail=f"Erro de banco de dados: {db_error}"
+            )
+        except psycopg2.OperationalError as op_error:
+            logger.error(f"Erro operacional do banco ao atualizar heartbeat de {heartbeat.server_id}: {op_error}")
+            raise HTTPException(
+                status_code=500, detail=f"Erro operacional do banco: {op_error}"
+            )
+        except HTTPException:
+            # Re-raise HTTP exceptions without modification
+            raise
+        except Exception as e:
+            logger.error(f"Erro inesperado ao atualizar heartbeat de {heartbeat.server_id}: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Erro ao fazer rollback: {rollback_error}")
+            raise HTTPException(
+                status_code=500, detail=f"Erro inesperado ao atualizar heartbeat: {e}"
             )
         finally:
-            cursor.close()
-            conn.close()
+            # Safe resource cleanup - only close if initialized and not None
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception as cursor_error:
+                    logger.error(f"Erro ao fechar cursor: {cursor_error}")
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as conn_error:
+                    logger.error(f"Erro ao fechar conexão: {conn_error}")
 
     def assign_streams(self, request: StreamRequest) -> dict:
         """Atribui streams para uma instância."""
@@ -1628,25 +2859,322 @@ async def release_streams(release: StreamRelease):
 
 @app.get("/health")
 async def health_check():
-    """Endpoint de health check para verificação de saúde."""
+    """
+    Enhanced health check endpoint with detailed service status.
+    
+    Provides comprehensive health information including:
+    - PostgreSQL connectivity and operations
+    - Redis connectivity and operations  
+    - Application components status
+    - Optional modules status
+    - System metrics (if available)
+    
+    Requirements: 3.3, 3.4, 5.1, 5.2, 5.3, 5.4
+    """
     try:
-        # Verificar conexão com banco de dados
-        conn = orchestrator.get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.close()
-        conn.close()
-
-        return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+        # Get orchestrator instance from app state
+        orchestrator = app.state.orchestrator
+        
+        # Perform comprehensive service verification
+        service_status = verify_services(
+            orchestrator.db_config,
+            redis_host="localhost",
+            redis_port=6379
+        )
+        
+        # Get application component status
+        app_components = _get_application_components_status(orchestrator)
+        
+        # Get system metrics if available
+        system_metrics = _get_system_metrics()
+        
+        # Combine all status information
+        health_data = {
+            "status": "healthy" if service_status["overall_status"] == "ready" else "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "services": service_status["services"],
+            "application_components": app_components,
+            "details": {
+                "database_connected": service_status["services"].get("postgresql", {}).get("status") == "ready",
+                "redis_connected": service_status["services"].get("redis", {}).get("status") == "ready",
+                "all_services_ready": service_status["overall_status"] == "ready",
+                "optional_modules_loaded": len([c for c in app_components.values() if c.get("status") == "available"]),
+                "total_optional_modules": len(app_components)
+            }
+        }
+        
+        # Add system metrics if available
+        if system_metrics:
+            health_data["system_metrics"] = system_metrics
+        
+        # Add errors if any
+        if service_status["errors"]:
+            health_data["errors"] = service_status["errors"]
+        
+        # Determine HTTP status code based on service status
+        if service_status["overall_status"] == "ready":
+            return health_data
+        else:
+            # Return 503 Service Unavailable if any service is not ready
+            raise HTTPException(
+                status_code=503,
+                detail=health_data
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        logger.error(f"Health check falhou: {e}")
-        raise HTTPException(status_code=503, detail="Service unavailable")
+        logger.error(f"Health check failed with unexpected error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "details": {
+                    "database_connected": False,
+                    "redis_connected": False,
+                    "all_services_ready": False
+                },
+                "suggestion": "Check service logs for detailed error information and ensure all required services are running"
+            }
+        )
+
+
+@app.get("/modules/status")
+async def get_modules_status():
+    """
+    Get status of optional modules and available functionality.
+    
+    Returns detailed information about which optional modules are loaded
+    and what functionality is available.
+    
+    Requirements: 6.1, 6.2, 6.3, 6.4
+    """
+    try:
+        # Get orchestrator instance from app state
+        orchestrator = app.state.orchestrator
+        
+        # Get module status information
+        module_status = orchestrator.get_optional_modules_status()
+        
+        return {
+            "status": "success",
+            "timestamp": module_status["timestamp"],
+            "modules": module_status["modules"],
+            "functionality": module_status["functionality"],
+            "summary": {
+                "total_modules": len(module_status["modules"]),
+                "available_modules": sum(1 for m in module_status["modules"].values() if m["available"]),
+                "initialized_modules": sum(1 for m in module_status["modules"].values() if m["initialized"]),
+                "degraded_functionality": not all(module_status["functionality"].values())
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Module status check failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+                "message": "Failed to retrieve module status information"
+            }
+        )
+
+
+@app.get("/ready")
+async def readiness_check():
+    """
+    Startup readiness probe separate from liveness probe.
+    
+    This endpoint performs quick connectivity checks to determine if the application
+    is ready to serve traffic. It uses shorter timeouts than the full health check
+    to provide faster responses for container orchestration systems.
+    
+    Requirements: 3.3, 3.4, 5.1, 5.2, 5.3, 5.4
+    """
+    try:
+        # Get orchestrator instance from app state
+        orchestrator = app.state.orchestrator
+        
+        logger.info("Performing readiness check with quick connectivity tests")
+        
+        # Quick readiness check - just verify basic connectivity
+        postgres_ready = wait_for_postgres(
+            host=orchestrator.db_config["host"],
+            port=orchestrator.db_config["port"],
+            timeout=5  # Short timeout for readiness probe
+        )
+        
+        redis_ready = wait_for_redis(
+            host="localhost",
+            port=6379,
+            timeout=3  # Short timeout for readiness probe
+        )
+        
+        # Check if orchestrator is properly initialized
+        orchestrator_ready = hasattr(orchestrator, 'db_config') and orchestrator.db_config is not None
+        
+        readiness_data = {
+            "status": "ready" if (postgres_ready and redis_ready and orchestrator_ready) else "not_ready",
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                "postgresql": "ready" if postgres_ready else "not_ready",
+                "redis": "ready" if redis_ready else "not_ready",
+                "orchestrator": "ready" if orchestrator_ready else "not_ready"
+            },
+            "details": {
+                "check_type": "readiness_probe",
+                "timeout_used": "short (3-5s per service)",
+                "purpose": "Container orchestration readiness verification"
+            }
+        }
+        
+        if postgres_ready and redis_ready and orchestrator_ready:
+            logger.info("Readiness check passed - all core services ready")
+            return readiness_data
+        else:
+            logger.warning(f"Readiness check failed - Services status: PostgreSQL={postgres_ready}, Redis={redis_ready}, Orchestrator={orchestrator_ready}")
+            raise HTTPException(
+                status_code=503,
+                detail=readiness_data
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Readiness check failed with unexpected error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "details": {
+                    "check_type": "readiness_probe",
+                    "suggestion": "Check if PostgreSQL and Redis services are running and accessible"
+                }
+            }
+        )
 
 
 @app.get("/status")
 async def get_status():
     """Retorna status do orquestrador."""
-    return orchestrator.get_orchestrator_status()
+    return app.state.orchestrator.get_orchestrator_status()
+
+
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """
+    Detailed health check endpoint with comprehensive application status.
+    
+    Provides in-depth information about:
+    - All service components and their detailed status
+    - Application internal state and statistics
+    - Performance metrics and resource usage
+    - Configuration validation
+    - Diagnostic information for troubleshooting
+    
+    Requirements: 3.3, 3.4, 5.1, 5.2, 5.3, 5.4
+    """
+    try:
+        # Get orchestrator instance from app state
+        orchestrator = app.state.orchestrator
+        
+        logger.info("Performing detailed health check with comprehensive diagnostics")
+        
+        # Get comprehensive service status
+        service_status = verify_services(
+            orchestrator.db_config,
+            redis_host="localhost", 
+            redis_port=6379
+        )
+        
+        # Get application components status
+        app_components = _get_application_components_status(orchestrator)
+        
+        # Get system metrics
+        system_metrics = _get_system_metrics()
+        
+        # Get orchestrator internal status
+        orchestrator_status = orchestrator.get_orchestrator_status()
+        
+        # Get configuration validation
+        config_validation = _validate_configuration()
+        
+        # Compile detailed health report
+        detailed_health = {
+            "status": "healthy" if service_status["overall_status"] == "ready" else "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "check_type": "detailed_health_check",
+            "services": service_status["services"],
+            "application_components": app_components,
+            "orchestrator_internal": {
+                "active_instances": len(orchestrator_status.get("instances", [])),
+                "total_streams": orchestrator_status.get("total_streams", 0),
+                "stream_assignments": len(orchestrator.stream_assignments),
+                "functionality_available": {
+                    "basic_orchestration": True,
+                    "smart_load_balancing": orchestrator.enhanced_orchestrator is not None,
+                    "enhanced_failure_handling": orchestrator.resilient_orchestrator is not None,
+                    "system_monitoring": HAS_PSUTIL
+                }
+            },
+            "configuration": config_validation,
+            "performance": {
+                "system_metrics": system_metrics,
+                "service_response_times": service_status.get("response_times", {}),
+                "last_check_duration": "< 1s"
+            },
+            "diagnostics": {
+                "errors": service_status.get("errors", []),
+                "warnings": _get_system_warnings(),
+                "recommendations": _get_system_recommendations(service_status, app_components)
+            }
+        }
+        
+        # Determine overall health status
+        if service_status["overall_status"] == "ready":
+            logger.info("Detailed health check passed - all systems operational")
+            return detailed_health
+        else:
+            logger.warning("Detailed health check failed - some systems not ready")
+            raise HTTPException(
+                status_code=503,
+                detail=detailed_health
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Detailed health check failed with unexpected error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "check_type": "detailed_health_check",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "diagnostics": {
+                    "suggestion": "Check application logs for detailed error information",
+                    "common_causes": [
+                        "Database connection issues",
+                        "Redis connectivity problems", 
+                        "Application initialization failures",
+                        "Resource constraints"
+                    ]
+                }
+            }
+        )
 
 
 @app.get("/instances")

@@ -1,10 +1,10 @@
 # =============================================================================
-# DOCKERFILE SIMPLIFICADO PARA EASYPANEL
+# DOCKERFILE OTIMIZADO PARA EASYPANEL - ORCHESTRATOR COM POSTGRES E REDIS
 # =============================================================================
 
 FROM python:3.11-slim
 
-# Instalar dependências do sistema
+# Instalar dependências do sistema necessárias
 RUN apt-get update && apt-get install -y \
     postgresql \
     postgresql-client \
@@ -12,7 +12,10 @@ RUN apt-get update && apt-get install -y \
     redis-server \
     curl \
     netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+    sudo \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Configurar diretório da aplicação
 WORKDIR /app
@@ -24,32 +27,61 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código da aplicação
 COPY . .
 
-# Criar diretórios necessários
-RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql
+# Criar diretórios necessários com permissões corretas
+RUN mkdir -p /app/logs /app/data /var/lib/postgresql/data /var/run/postgresql \
+    && chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/ \
+    && chmod 755 /var/run/postgresql /app/logs /app/data
 
 # Configurar PostgreSQL
-RUN chown -R postgres:postgres /var/lib/postgresql/ /var/run/postgresql/
-RUN chmod 755 /var/run/postgresql
-
-# Inicializar banco PostgreSQL
 USER postgres
-RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --encoding=UTF-8 --locale=C
-RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf
-RUN echo "port = 5432" >> /var/lib/postgresql/data/postgresql.conf
+RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --encoding=UTF-8 --locale=C \
+    && echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf \
+    && echo "listen_addresses='*'" >> /var/lib/postgresql/data/postgresql.conf \
+    && echo "port = 5432" >> /var/lib/postgresql/data/postgresql.conf \
+    && echo "max_connections = 100" >> /var/lib/postgresql/data/postgresql.conf \
+    && echo "shared_buffers = 128MB" >> /var/lib/postgresql/data/postgresql.conf
 
+# Voltar para root
 USER root
 
-# Copiar script de inicialização
-COPY scripts/start-services.sh /app/start-services.sh
-RUN chmod +x /app/start-services.sh
+# Tornar scripts executáveis
+RUN chmod +x /app/app/start-orchestrator.sh
+
+# Criar script de validação de ambiente
+RUN echo '#!/bin/bash\n\
+echo "Validating environment variables..."\n\
+missing_vars=""\n\
+for var in DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD REDIS_HOST REDIS_PORT; do\n\
+  if [ -z "${!var}" ]; then missing_vars="$missing_vars $var"; fi\n\
+done\n\
+if [ -n "$missing_vars" ]; then\n\
+  echo "ERROR: Missing required environment variables:$missing_vars"\n\
+  echo "Please set all required variables before starting the container"\n\
+  exit 1\n\
+fi\n\
+echo "Environment validation passed"' > /app/validate-env.sh \
+    && chmod +x /app/validate-env.sh
 
 # Expor porta da aplicação
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+# Variáveis de ambiente com valores padrão
+ENV DB_HOST=localhost \
+    DB_PORT=5432 \
+    DB_NAME=orchestrator \
+    DB_USER=orchestrator_user \
+    DB_PASSWORD=orchestrator_pass \
+    REDIS_HOST=localhost \
+    REDIS_PORT=6379 \
+    POSTGRES_STARTUP_TIMEOUT=60 \
+    REDIS_STARTUP_TIMEOUT=30 \
+    APP_STARTUP_TIMEOUT=120 \
+    LOG_LEVEL=INFO \
+    PYTHONUNBUFFERED=1
+
+# Health check otimizado
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Comando de inicialização
-CMD ["/app/start-services.sh"]
+CMD ["/bin/bash", "-c", "/app/validate-env.sh && /app/app/start-orchestrator.sh"]

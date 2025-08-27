@@ -1,0 +1,47 @@
+DOCKER COMPOSE PADRONIZADO CRIADO!
+Agora temos docker-compose completo para ambos os componentes:
+
+🎯 ORCHESTRATOR (EasyPanel)
+Opções de Deploy:
+
+✅ docker-compose.orchestrator.simple.yaml - SEM VPN (recomendado)
+✅ docker-compose.orchestrator.yaml - COM VPN (se necessário)
+✅ orchestrator.env.example - Configuração
+✅ Dockerfile.orchestrator - Sem VPN usando Dockerfile
+
+🎵 FINGERV7 (Servidores)
+Deploy Padrão:
+
+✅ docker-compose.fingerv7.yaml - COM Gluetun VPN
+✅ Dockerfilegit - Dockerfile FingerV7
+✅ fingerv7-orchestrator.env.example - Configuração
+📁 ESTRUTURA FINAL PADRONIZADA:
+projeto/
+├── # ORCHESTRATOR
+├── Dockerfile.orchestrator                    # Dockerfile orchestrator
+├── docker-compose.orchestrator.simple.yaml   # Sem VPN (recomendado)
+├── docker-compose.orchestrator.yaml          # Com VPN
+├── orchestrator.env.example                  # Config orchestrator
+├── 
+├── # FINGERV7
+├── Dockerfilegit                             # Dockerfile FingerV7
+├── docker-compose.fingerv7.yaml             # Com Gluetun VPN
+├── fingerv7-orchestrator.env.example        # Config FingerV7
+├── 
+├── # CÓDIGO
+├── app/main_orchestrator.py                 # Orchestrator
+├── app/orchestrator_client.py              # Cliente
+├── 
+└── # DEPLOY
+    ├── DEPLOY-DOCKER-COMPOSE.md            # Guia completo
+    └── test-deploy-fingerv7.py             # Validação
+🚀 DEPLOY NO EASYPANEL:
+Orchestrator:
+
+Build Method: Docker Compose
+Docker Compose File: docker-compose.orchestrator.simple.yaml
+Port: 8000
+FingerV7 (cada servidor):
+
+Docker Compose: docker-compose.fingerv7.yaml
+Configurar .env com INSTANCE_ID único e VPN
