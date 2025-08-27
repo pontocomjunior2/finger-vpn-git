@@ -510,7 +510,7 @@ log_info "Validating startup environment and prerequisites..."
 # Check for existing startup lock to prevent concurrent startups
 STARTUP_LOCK="/tmp/orchestrator_startup.lock"
 if [ -f "$STARTUP_LOCK" ]; then
-    local lock_pid=$(cat "$STARTUP_LOCK" 2>/dev/null || echo "unknown")
+    lock_pid=$(cat "$STARTUP_LOCK" 2>/dev/null || echo "unknown")
     if [ "$lock_pid" != "unknown" ] && kill -0 "$lock_pid" 2>/dev/null; then
         handle_startup_failure "Startup Lock" 13 "Another orchestrator startup is already in progress (PID: $lock_pid)" \
             "Wait for the existing startup to complete or remove the lock file: $STARTUP_LOCK"
@@ -558,7 +558,7 @@ if [ ! -w "/app/logs" ]; then
 fi
 
 # Check available disk space
-local available_space=$(df /var/lib/postgresql/data | awk 'NR==2 {print $4}')
+available_space=$(df /var/lib/postgresql/data | awk 'NR==2 {print $4}')
 if [ "$available_space" -lt 1048576 ]; then  # Less than 1GB
     log_warning "Low disk space available: ${available_space}KB (recommended: >1GB)"
 fi
