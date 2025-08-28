@@ -31,7 +31,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - DB_TABLE_NAME=${DB_TABLE_NAME:-streams}
+      - DB_TABLE_STREAMS=${DB_TABLE_STREAMS:-streams}
       
       # =============================================================================
       # CONFIGURAÇÕES DO BANCO DE DADOS INTERNO
