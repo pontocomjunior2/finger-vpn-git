@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import time
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -564,10 +565,13 @@ class AsyncInsertQueue:
             # Verificação de duplicatas priorizando ISRC
             # Se ISRC estiver disponível, verificar apenas por ISRC + name
             # Caso contrário, usar título + artista + name
+            # Determinar tabela de destino a partir de variável de ambiente
+            table_name = os.getenv("DB_TABLE_FINGER", os.getenv("DB_TABLE_NAME", "music_log"))
+
             if isrc and isrc.strip():
                 # Verificação por ISRC (mais confiável)
-                duplicate_check_query = """
-                SELECT id FROM music_log 
+                duplicate_check_query = f"""
+                SELECT id FROM {table_name} 
                 WHERE name = %s 
                 AND isrc = %s
                 AND (date || ' ' || time)::timestamp >= %s
@@ -592,8 +596,8 @@ class AsyncInsertQueue:
                     return
 
                 # Verificação adicional por tempo exato com ISRC
-                exact_check_query = """
-                SELECT id FROM music_log 
+                exact_check_query = f"""
+                SELECT id FROM {table_name} 
                 WHERE name = %s 
                 AND date = %s 
                 AND time = %s 
@@ -615,8 +619,8 @@ class AsyncInsertQueue:
                     return
             else:
                 # Fallback para verificação por título + artista quando ISRC não disponível
-                duplicate_check_query = """
-                SELECT id FROM music_log 
+                duplicate_check_query = f"""
+                SELECT id FROM {table_name} 
                 WHERE name = %s 
                 AND song_title = %s
                 AND artist = %s
@@ -643,8 +647,8 @@ class AsyncInsertQueue:
                     return
 
                 # Verificação adicional por tempo exato com título + artista
-                exact_check_query = """
-                SELECT id FROM music_log 
+                exact_check_query = f"""
+                SELECT id FROM {table_name} 
                 WHERE name = %s 
                 AND date = %s 
                 AND time = %s 
@@ -667,8 +671,8 @@ class AsyncInsertQueue:
                     return
 
             # Query de inserção com todas as colunas da tabela
-            insert_query = """
-            INSERT INTO music_log (
+            insert_query = f"""
+            INSERT INTO {table_name} (
                 name, artist, song_title, date, time, identified_by,
                 isrc, cidade, estado, regiao, segmento, label, genre
             )
