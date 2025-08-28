@@ -756,4 +756,4 @@ cd /app/app || {
 # Start uvicorn with the correct module path and PYTHONPATH
 export PYTHONPATH="/app/app:/app:$PYTHONPATH"
 log_info "Starting uvicorn with PYTHONPATH: $PYTHONPATH"
-exec python3 -m uvicorn orchestrator:app --host 0.0.0.0 --port 8000 --log-level info
+exec python3 -m uvicorn main_orchestrator:app --host 0.0.0.0 --port 8000 --log-level info

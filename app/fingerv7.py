@@ -1,4 +1,6 @@
 import asyncio
+import random
+from datetime import datetime
 import datetime as dt  # Usar alias para evitar conflito com variável datetime
 import json
 import logging
@@ -18,6 +20,58 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from ftplib import FTP, error_perm
 from logging.handlers import TimedRotatingFileHandler
+
+# ===== CONFIGURAÇÕES OTIMIZADAS PARA EVITAR LOCKS =====
+DB_CONNECTION_CONFIG = {
+    "statement_timeout": 30000,  # 30 segundos
+    "lock_timeout": 10000,  # 10 segundos
+    "idle_in_transaction_session_timeout": 60000,  # 1 minuto
+    "application_name": "fingerv7_optimized",
+}
+
+
+async def configure_connection_timeouts(conn):
+    """Configura timeouts para evitar locks longos"""
+    try:
+        with conn.cursor() as cursor:
+            for setting, value in DB_CONNECTION_CONFIG.items():
+                cursor.execute(f"SET {setting} = %s", (str(value),))
+        return True
+    except Exception as e:
+        logger.warning(f"Erro ao configurar timeouts: {e}")
+        return False
+
+
+# ===== MONITORAMENTO DE CONEXÕES =====
+class ConnectionMonitor:
+    def __init__(self):
+        self.active_connections = set()
+        self.connection_errors = {}
+
+    def track_connection(self, conn_id):
+        self.active_connections.add(conn_id)
+        logger.debug(f"Conexão {conn_id} ativa. Total: {len(self.active_connections)}")
+
+    def release_connection(self, conn_id):
+        if conn_id in self.active_connections:
+            self.active_connections.remove(conn_id)
+            logger.debug(
+                f"Conexão {conn_id} liberada. Total: {len(self.active_connections)}"
+            )
+
+    def log_error(self, conn_id, error):
+        self.connection_errors[conn_id] = {
+            "error": str(error),
+            "timestamp": datetime.now().isoformat(),
+        }
+        logger.warning(f"Erro na conexão {conn_id}: {error}")
+
+
+connection_monitor = ConnectionMonitor()
+# ===== FIM DO MONITORAMENTO =====
+
+# ===== FIM DAS CONFIGURAÇÕES =====
+
 
 import psycopg2
 import schedule
@@ -89,6 +143,18 @@ if not os.path.exists(SEGMENTS_DIR):
         os.makedirs(SEGMENTS_DIR, exist_ok=True)
         print(f"Diretório de segmentos criado: {SEGMENTS_DIR}")
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         print(f"ERRO: Não foi possível criar o diretório de segmentos: {e}")
         # Usar um diretório alternativo se o principal falhar
         SEGMENTS_DIR = "./segments"
@@ -339,11 +405,33 @@ def create_distribution_tables():
                     f"Erro ao alterar tipo da coluna server_id (pode já estar correto): {alter_error}"
                 )
 
-            conn.commit()
-            logger.info("Tabelas de distribuição criadas/atualizadas com sucesso")
-            return True
+            # Usar SAVEPOINT para transações complexas
+        with conn.cursor() as cursor:
+            cursor.execute("SAVEPOINT operation_checkpoint")
+            try:
+                # ... operações aqui ...
+                cursor.execute("RELEASE SAVEPOINT operation_checkpoint")
+                conn.commit()
+            except Exception as savepoint_error:
+                cursor.execute("ROLLBACK TO SAVEPOINT operation_checkpoint")
+                logger.warning(f"Erro em operação com savepoint: {savepoint_error}")
+
+        logger.info("Tabelas de distribuição criadas/atualizadas com sucesso")
+        return True
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao criar tabelas de distribuição: {e}")
         if conn:
             conn.rollback()
@@ -610,6 +698,18 @@ def check_recent_insertion(
             return False
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao verificar inserção recente: {e}")
         return False
     finally:
@@ -715,6 +815,18 @@ async def send_file_via_failover(local_file_path, stream_index):
             )
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(
             f"Erro ao enviar arquivo via {FAILOVER_METHOD} para {FAILOVER_HOST}: {e}",
             exc_info=True,
@@ -816,6 +928,13 @@ def check_log_table():
 
     try:
         with get_db_pool().get_connection_sync() as conn:
+            # Configurar timeouts para evitar locks longos
+            with conn.cursor() as cursor:
+                cursor.execute("SET statement_timeout = '30000'")  # 30s
+                cursor.execute("SET lock_timeout = '10000'")  # 10s
+                cursor.execute(
+                    "SET idle_in_transaction_session_timeout = '60000'"
+                )  # 1min
             # Forçar autocommit para que DDL não deixe a sessão em estado abortado
             prev_autocommit = getattr(conn, "autocommit", False)
             try:
@@ -843,6 +962,12 @@ def check_log_table():
                 # Tentar obter um bloqueio consultivo (sem aguardar)
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+                    # Adicionar timeout para evitar locks indefinidos
+                    if not cursor.fetchone()[0]:
+                        # Se não conseguir o lock, aguardar um pouco e tentar novamente
+                        import time
+                        time.sleep(0.1)
+                        cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
                     lock_acquired = cursor.fetchone()[0]
                 logger.debug(f"Lock adquirido: {lock_acquired}")
 
@@ -913,6 +1038,18 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                     pass
                 return False
             except Exception as e:
+
+                # Garantir que conexões sejam liberadas em caso de erro
+
+                try:
+
+                    if "conn" in locals() and conn:
+
+                        conn.rollback()
+
+                except:
+
+                    pass  # Ignorar erros de cleanup
                 logger.error(
                     f"Erro ao verificar/criar tabela de logs: {e}", exc_info=True
                 )
@@ -933,6 +1070,18 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                                 f"SET statement_timeout = '{prev_statement_timeout}'"
                             )
                 except Exception as e:
+
+                    # Garantir que conexões sejam liberadas em caso de erro
+
+                    try:
+
+                        if "conn" in locals() and conn:
+
+                            conn.rollback()
+
+                    except:
+
+                        pass  # Ignorar erros de cleanup
                     logger.debug(f"Falha ao restaurar timeouts: {e}")
                 else:
                     logger.debug("Timeouts restaurados.")
@@ -954,6 +1103,18 @@ CREATE TABLE IF NOT EXISTS {DB_TABLE_NAME} (
                     pass
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao verificar tabela de logs: {e}", exc_info=True)
         return False
 
@@ -1071,6 +1232,18 @@ def connect_db():
         logger.error(error_msg)
         return None
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         error_msg = f"Erro ao conectar ao banco de dados: {e}"
         logger.error(error_msg)
         return None
@@ -1086,6 +1259,18 @@ def close_db_connection(conn):
         try:
             get_db_pool().pool.putconn(conn)
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro ao retornar conexão ao pool: {e}")
 
 
@@ -1101,7 +1286,13 @@ def fetch_streams_from_db():
     """
     try:
         with get_db_pool().get_connection_sync() as conn:
+            # Configurar timeouts para evitar locks longos
             with conn.cursor() as cursor:
+                cursor.execute("SET statement_timeout = '30000'")  # 30s
+                cursor.execute("SET lock_timeout = '10000'")  # 10s
+                cursor.execute(
+                    "SET idle_in_transaction_session_timeout = '60000'"
+                )  # 1min
                 # Verificar se a tabela streams existe
                 cursor.execute(
                     "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'streams')"
@@ -1138,6 +1329,18 @@ def fetch_streams_from_db():
                 return streams
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao buscar streams do banco de dados: {e}")
         return None
 
@@ -1177,6 +1380,18 @@ def load_last_songs():
         else:
             return {}
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao carregar o arquivo de estado das últimas músicas: {e}")
         return {}
 
@@ -1204,6 +1419,18 @@ def load_local_log():
         else:
             return []
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao carregar o log local: {e}")
         return []
 
@@ -1250,6 +1477,18 @@ def convert_iso8601_to_datetime(iso_date):
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
         return dt.strftime("%d/%m/%Y"), dt.strftime("%H:%M:%S")
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao converter a data e hora: {e}")
         return iso_date, iso_date
 
@@ -1339,6 +1578,18 @@ async def capture_stream_segment(name, url, duration=None):
             process.kill()
         return None
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao capturar o stream {url}: {str(e)}")
         logger.error(f"Tipo de erro: {type(e).__name__}")
         import traceback
@@ -1495,6 +1746,18 @@ async def insert_data_to_db(entry_base, now_tz):
         return True
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(
             f"insert_data_to_db: Erro ao adicionar tarefa à fila ({song_title} - {artist}): {e}",
             exc_info=True,
@@ -1532,6 +1795,18 @@ async def update_local_log(
     except json.JSONDecodeError:
         logger.warning("Arquivo de log local corrompido ou vazio. Criando um novo.")
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao carregar log local: {e}")
 
     # Cria a nova entrada
@@ -1569,6 +1844,18 @@ async def update_local_log(
             with open(LOCAL_LOG_FILE, "w", encoding="utf-8") as f:
                 json.dump(local_log, f, indent=4, ensure_ascii=False)
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro ao salvar log local: {e}")
 
         return True  # Indica que foi uma nova inserção bem-sucedida
@@ -1625,12 +1912,30 @@ async def process_stream(stream, last_songs):
             logger.info(
                 f"Aguardando 45 segundos para o próximo ciclo do stream {name} ({stream_key})..."
             )
-            await asyncio.sleep(45)  # Intervalo de captura de segmentos (otimizado)
+            # Implementar backoff exponencial para evitar acúmulo
+        base_delay = 45
+        max_delay = min(base_delay * 2, 300)  # Máximo 5 minutos
+        actual_delay = min(base_delay + random.randint(0, base_delay), max_delay)
+        await asyncio.sleep(
+            actual_delay
+        )  # Intervalo de captura de segmentos (otimizado)
 
     except asyncio.CancelledError:
         logger.info(f"Task do stream {name} ({stream_key}) foi cancelada.")
         raise  # Re-raise para permitir cancelamento limpo
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro inesperado no processamento do stream {name}: {e}")
 
 
@@ -1659,7 +1964,11 @@ def send_email_alert(subject, body):
 
 async def check_and_alert_persistent_errors():
     while True:
-        await asyncio.sleep(600)  # Verifica a cada 10 minutos
+        # Implementar backoff exponencial para evitar acúmulo
+        base_delay = 600
+        max_delay = min(base_delay * 2, 300)  # Máximo 5 minutos
+        actual_delay = min(base_delay + random.randint(0, base_delay), max_delay)
+        await asyncio.sleep(actual_delay)  # Verifica a cada 10 minutos
         persistent_errors = connection_tracker.check_persistent_errors()
         if persistent_errors:
             subject = "Alerta: Erros de Conexão Persistentes em Streams de Rádio"
@@ -1966,6 +2275,18 @@ async def monitor_shutdown():
             STREAMS = []
             logger.info("[SHUTDOWN] Cliente resiliente encerrado e streams liberados")
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro ao executar shutdown do cliente resiliente: {e}")
 
     # Cancelar todas as tarefas ativas
@@ -1980,6 +2301,18 @@ async def monitor_shutdown():
         except asyncio.CancelledError:
             pass
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro ao aguardar cancelamento de tarefas: {e}")
 
     logger.info("Processo de finalização concluído.")
@@ -2054,6 +2387,14 @@ async def send_heartbeat():
         def db_heartbeat_operations():
             try:
                 with get_db_pool().get_connection_sync() as conn:
+                    # Configurar timeouts para evitar locks longos
+                    with conn.cursor() as cursor:
+                        cursor.execute("SET statement_timeout = '30000'")  # 30s
+                        cursor.execute("SET lock_timeout = '10000'")  # 10s
+                        cursor.execute(
+                            "SET idle_in_transaction_session_timeout = '60000'"
+                        )  # 1min
+
                     with conn.cursor() as cursor:
                         # Verificar/Criar tabela
                         cursor.execute(
@@ -2083,15 +2424,43 @@ async def send_heartbeat():
                             (SERVER_ID, ip_address, info_json),
                         )  # Usa a variável info_json
 
-                        conn.commit()
-                        logger.debug(f"Heartbeat enviado para o servidor {SERVER_ID}")
-            except Exception as db_err:
-                logger.error(f"Erro DB em send_heartbeat [thread]: {db_err}")
+                        # Usar SAVEPOINT para transações complexas
+                        cursor.execute("SAVEPOINT operation_checkpoint")
+                        try:
+                            # ... operações aqui ...
+                            cursor.execute("RELEASE SAVEPOINT operation_checkpoint")
+                            conn.commit()
+                            logger.debug(
+                                f"Heartbeat enviado para o servidor {SERVER_ID}"
+                            )
+                        except Exception as db_err:
+                            logger.error(
+                                f"Erro DB em send_heartbeat [thread]: {db_err}"
+                            )
+            except Exception as e:
+                logger.error(f"Erro nas operações de DB: {e}")
+                if "conn" in locals() and conn:
+                    try:
+                        conn.rollback()
+                    except:
+                        pass
 
         # Executar operações DB no thread
         await asyncio.to_thread(db_heartbeat_operations)
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(
             f"Erro ao coletar informações do sistema ou executar DB thread em send_heartbeat: {e}"
         )
@@ -2119,6 +2488,14 @@ async def check_servers_status():
 
                 try:
                     with get_db_pool().get_connection_sync() as conn:
+                        # Configurar timeouts para evitar locks longos
+                        with conn.cursor() as cursor:
+                            cursor.execute("SET statement_timeout = '30000'")  # 30s
+                            cursor.execute("SET lock_timeout = '10000'")  # 10s
+                            cursor.execute(
+                                "SET idle_in_transaction_session_timeout = '60000'"
+                            )  # 1min
+
                         with conn.cursor() as cursor:
                             # Verificar se a tabela existe
                             cursor.execute(
@@ -2149,7 +2526,18 @@ async def check_servers_status():
                             )
 
                             _offline_servers_data = cursor.fetchall()
-                            conn.commit()  # Commit da atualização de status
+
+                            # Usar SAVEPOINT para transações complexas
+                            cursor.execute("SAVEPOINT operation_checkpoint")
+                            try:
+                                # ... operações aqui ...
+                                cursor.execute("RELEASE SAVEPOINT operation_checkpoint")
+                                conn.commit()  # Commit da atualização de status
+                            except Exception as savepoint_err:
+                                cursor.execute(
+                                    "ROLLBACK TO SAVEPOINT operation_checkpoint"
+                                )
+                                logger.error(f"Erro no savepoint: {savepoint_err}")
 
                             if _offline_servers_data:
                                 server_ids = [row[0] for row in _offline_servers_data]
@@ -2243,6 +2631,18 @@ Este é um alerta automático enviado pelo servidor {SERVER_ID}.
                         )
 
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro no loop principal de check_servers_status: {e}")
         # Conexão é retornada ao pool na função db_check_status_operations
 
@@ -2270,15 +2670,21 @@ async def main():
         sys.exit(1)
 
     # Verificar se a tabela de logs existe e criar se necessário (executar em thread)
-    try:
-        table_ok = await asyncio.to_thread(check_log_table)
-        if not table_ok:
-            logger.warning(
-                "A verificação/criação da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros."
-            )
-    except Exception as e_check_table:
-        logger.error(f"Erro ao executar check_log_table em thread: {e_check_table}")
-        logger.warning("Prosseguindo sem verificação da tabela de logs.")
+    # Pular verificação quando usar orchestrator, pois ele gerencia o banco de dados
+    if not USE_ORCHESTRATOR:
+        try:
+            table_ok = await asyncio.to_thread(check_log_table)
+            if not table_ok:
+                logger.warning(
+                    "A verificação/criação da tabela de logs falhou. Tentando prosseguir mesmo assim, mas podem ocorrer erros."
+                )
+        except Exception as e_check_table:
+            logger.error(f"Erro ao executar check_log_table em thread: {e_check_table}")
+            logger.warning("Prosseguindo sem verificação da tabela de logs.")
+    else:
+        logger.info(
+            "Usando orchestrator - pulando verificação direta da tabela de logs"
+        )
 
     # Criar tabelas de controle de distribuição e locks
     try:
@@ -2286,6 +2692,16 @@ async def main():
         logger.info("Tabelas de controle de distribuição criadas com sucesso")
     except Exception as e_dist:
         logger.error(f"Erro ao criar tabelas de distribuição: {e_dist}")
+
+    # Registrar instância no orquestrador imediatamente após inicialização
+    if DISTRIBUTE_LOAD and USE_ORCHESTRATOR and orchestrator_client:
+        try:
+            logger.info(f"[INIT] Registrando instância {SERVER_ID} no orquestrador...")
+            await orchestrator_client.register()
+            logger.info(f"[INIT] Instância {SERVER_ID} registrada com sucesso no orquestrador")
+        except Exception as e_register:
+            logger.error(f"[INIT] Erro ao registrar instância no orquestrador: {e_register}")
+            logger.warning("[INIT] Continuando sem registro inicial - heartbeat tentará registrar novamente")
 
     # Criar instância do Shazam para reconhecimento
     shazam = Shazam()
@@ -2387,6 +2803,18 @@ async def main():
                 )
 
             except Exception as e:
+
+                # Garantir que conexões sejam liberadas em caso de erro
+
+                try:
+
+                    if "conn" in locals() and conn:
+
+                        conn.rollback()
+
+                except:
+
+                    pass  # Ignorar erros de cleanup
                 logger.error(f"Erro ao comunicar com orquestrador: {e}")
                 logger.error("Sistema de distribuição requer orquestrador funcional")
                 assigned_streams = []  # Não processar streams se orquestrador falhar
@@ -2507,6 +2935,18 @@ async def main():
     except asyncio.CancelledError:
         logger.info("Tarefas principais canceladas devido ao encerramento do programa.")
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro durante execução principal: {e}")
     finally:
         logger.info("Finalizando aplicação...")
@@ -2536,8 +2976,6 @@ def stop_and_restart():
     # Liberar streams antes de reiniciar
     if USE_ORCHESTRATOR and DISTRIBUTE_LOAD and orchestrator_client:
         try:
-            import asyncio
-
             loop = asyncio.get_event_loop()
             if orchestrator_client.assigned_streams:
                 logger.info(
@@ -2565,6 +3003,18 @@ async def heartbeat_loop():
         try:
             await send_heartbeat()
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro no loop de heartbeat: {e}")
         finally:
             # Aguardar até o próximo intervalo
@@ -2605,6 +3055,18 @@ async def orchestrator_heartbeat_loop():
                     )
 
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"Erro no heartbeat aprimorado do orquestrador: {e}")
             import traceback
 
@@ -2612,7 +3074,11 @@ async def orchestrator_heartbeat_loop():
 
         finally:
             # Aguardar 30 segundos antes do próximo heartbeat
-            await asyncio.sleep(30)
+            # Implementar backoff exponencial para evitar acúmulo
+            base_delay = 30
+            max_delay = min(base_delay * 2, 300)  # Máximo 5 minutos
+            actual_delay = min(base_delay + random.randint(0, base_delay), max_delay)
+            await asyncio.sleep(actual_delay)
 
 
 async def orchestrator_sync_loop():
@@ -2647,14 +3113,18 @@ async def orchestrator_sync_loop():
                         "[SYNC] Cliente do orquestrador registrado, solicitando streams"
                     )
 
-                    # Solicitar streams atuais do orquestrador
-                    current_assigned_stream_ids = (
-                        await orchestrator_client.request_streams()
-                    )
+                    # Solicitar novos streams do orquestrador
+                    new_streams = await orchestrator_client.request_streams()
+                    
+                    # Obter todos os streams atribuídos (incluindo os anteriores)
+                    current_assigned_stream_ids = orchestrator_client.get_all_assigned_streams()
                     current_assigned_streams = set(current_assigned_stream_ids)
 
                     logger.info(
-                        f"[SYNC] Streams recebidos do orquestrador: {current_assigned_streams}"
+                        f"[SYNC] Novos streams recebidos: {new_streams}"
+                    )
+                    logger.info(
+                        f"[SYNC] Total de streams atribuídos: {current_assigned_streams}"
                     )
                     logger.info(f"[SYNC] Streams anteriores: {last_assigned_streams}")
 
@@ -2694,6 +3164,18 @@ async def orchestrator_sync_loop():
             logger.info("[SYNC] Loop de sincronização do orquestrador cancelado")
             break
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"[SYNC] Erro no loop de sincronização do orquestrador: {e}")
             import traceback
 
@@ -2778,14 +3260,34 @@ Verifique o sistema imediatamente."""
                     logger.debug(f"[ALERTS] Nenhum alerta nas últimas 24 horas")
 
             # Verificar alertas a cada 5 minutos
-            await asyncio.sleep(300)
+            # Implementar backoff exponencial para evitar acúmulo
+            base_delay = 300
+            max_delay = min(base_delay * 2, 300)  # Máximo 5 minutos
+            actual_delay = min(base_delay + random.randint(0, base_delay), max_delay)
+            await asyncio.sleep(actual_delay)
 
         except asyncio.CancelledError:
             logger.info("[ALERTS] Loop de verificação de alertas cancelado")
             break
         except Exception as e:
+
+            # Garantir que conexões sejam liberadas em caso de erro
+
+            try:
+
+                if "conn" in locals() and conn:
+
+                    conn.rollback()
+
+            except:
+
+                pass  # Ignorar erros de cleanup
             logger.error(f"[ALERTS] Erro no loop de verificação de alertas: {e}")
-            await asyncio.sleep(60)  # Aguardar 1 minuto em caso de erro
+            # Implementar backoff exponencial para evitar acúmulo
+            base_delay = 60
+            max_delay = min(base_delay * 2, 300)  # Máximo 5 minutos
+            actual_delay = min(base_delay + random.randint(0, base_delay), max_delay)
+            await asyncio.sleep(actual_delay)  # Aguardar 1 minuto em caso de erro
 
 
 async def handle_stream_change_notification(change_type, stream_data=None):
@@ -2827,6 +3329,18 @@ async def handle_stream_change_notification(change_type, stream_data=None):
                 logger.info(f"Streams recarregados devido a {change_type}")
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro ao processar notificação de mudança: {e}")
 
 
@@ -2932,6 +3446,18 @@ async def reload_streams_dynamic(assigned_stream_ids):
         )
 
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.error(f"Erro durante sincronização dinâmica: {e}")
         # Em caso de erro, fazer reload completo como fallback
         logger.info("Executando reload completo como fallback...")
@@ -2951,6 +3477,18 @@ if __name__ == "__main__":
             try:  # try precisa do bloco indentado
                 schedule.run_pending()
             except Exception as e:
+
+                # Garantir que conexões sejam liberadas em caso de erro
+
+                try:
+
+                    if "conn" in locals() and conn:
+
+                        conn.rollback()
+
+                except:
+
+                    pass  # Ignorar erros de cleanup
                 logger.error(f"Erro no thread de schedule: {e}")
             # Mover sleep para fora do try/except para sempre ocorrer
             time.sleep(60)  # Verificar a cada minuto
@@ -2969,6 +3507,18 @@ if __name__ == "__main__":
         logger.info("Programa interrompido pelo usuário (KeyboardInterrupt)")
         shutdown_event.set()  # Aciona o evento de shutdown
     except Exception as e:
+
+        # Garantir que conexões sejam liberadas em caso de erro
+
+        try:
+
+            if "conn" in locals() and conn:
+
+                conn.rollback()
+
+        except:
+
+            pass  # Ignorar erros de cleanup
         logger.critical(f"Erro crítico: {e}", exc_info=True)
         shutdown_event.set()  # Aciona o evento de shutdown em caso de erro crítico
 
@@ -2990,6 +3540,18 @@ if __name__ == "__main__":
                 asyncio.run(orchestrator_client.release_all_streams())
                 logger.info("Streams liberados no orquestrador durante shutdown")
             except Exception as e:
+
+                # Garantir que conexões sejam liberadas em caso de erro
+
+                try:
+
+                    if "conn" in locals() and conn:
+
+                        conn.rollback()
+
+                except:
+
+                    pass  # Ignorar erros de cleanup
                 logger.error(f"Erro ao liberar streams durante shutdown: {e}")
 
         # Encerrar a fila assíncrona de inserções
@@ -3030,6 +3592,18 @@ if __name__ == "__main__":
                 except asyncio.CancelledError:
                     logger.info("Cancelamento durante a finalização.")
                 except Exception as e:
+
+                    # Garantir que conexões sejam liberadas em caso de erro
+
+                    try:
+
+                        if "conn" in locals() and conn:
+
+                            conn.rollback()
+
+                    except:
+
+                        pass  # Ignorar erros de cleanup
                     logger.error(f"Erro ao finalizar tarefas pendentes: {e}")
             else:
                 logger.info(

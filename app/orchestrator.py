@@ -25,7 +25,7 @@ import psycopg2
 import psycopg2.extras
 import redis
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 # Import diagnostic logging functionality
@@ -1359,11 +1359,12 @@ async def lifespan(app: FastAPI):
     logger.info("Todos os serviços verificados com sucesso")
 
     orchestrator = StreamOrchestrator(postgres_config=POSTGRES_CONFIG)
+    app.state.orchestrator = orchestrator
     orchestrator.create_tables()
 
     # Iniciar tarefas em background usando as funções independentes
-    cleanup_task_handle = asyncio.create_task(cleanup_task())
-    failover_task_handle = asyncio.create_task(failover_monitor_task())
+    cleanup_task_handle = asyncio.create_task(cleanup_task(app.state.orchestrator))
+    failover_task_handle = asyncio.create_task(failover_monitor_task(app.state.orchestrator))
 
     # Start resilient monitoring if available
     if orchestrator.resilient_orchestrator:
@@ -1398,12 +1399,63 @@ async def lifespan(app: FastAPI):
             pass
 
 
+# Enhanced lifespan function
+@asynccontextmanager
+async def enhanced_lifespan(app: FastAPI):
+    """Enhanced lifespan manager with smart rebalancing and resilient monitoring."""
+    # Startup
+    logger.info("Starting enhanced orchestrator with resilient monitoring...")
+    
+    # Create orchestrator instance
+    orchestrator = StreamOrchestrator(postgres_config=POSTGRES_CONFIG)
+    app.state.orchestrator = orchestrator
+    orchestrator.create_tables()
+
+    # Start background tasks
+    cleanup_task_handle = asyncio.create_task(cleanup_task(app.state.orchestrator))
+    failover_task_handle = asyncio.create_task(failover_monitor_task(app.state.orchestrator))
+    smart_rebalance_task_handle = asyncio.create_task(smart_rebalance_monitor_task(app.state.orchestrator))
+
+    # Start resilient monitoring if available
+    if orchestrator.resilient_orchestrator:
+        await orchestrator.resilient_orchestrator.start_monitoring()
+        logger.info("Resilient monitoring started")
+
+    try:
+        yield
+    finally:
+        # Shutdown
+        logger.info("Shutting down enhanced orchestrator...")
+
+        # Stop resilient monitoring
+        if orchestrator.resilient_orchestrator:
+            await orchestrator.resilient_orchestrator.stop_monitoring()
+            logger.info("Resilient monitoring stopped")
+
+        cleanup_task_handle.cancel()
+        failover_task_handle.cancel()
+        smart_rebalance_task_handle.cancel()
+
+        # Wait for tasks to complete
+        try:
+            await asyncio.gather(
+                cleanup_task_handle,
+                failover_task_handle,
+                smart_rebalance_task_handle,
+                return_exceptions=True
+            )
+        except Exception as e:
+            logger.warning(f"Error during task cleanup: {e}")
+
+        logger.info("Enhanced orchestrator shutdown complete")
+
+
 # Aplicação FastAPI
 app = FastAPI(
     title="Stream Orchestrator",
     description="Orquestrador central para distribuição de streams",
     version="1.0.0",
-    lifespan=lifespan,
+    lifespan=enhanced_lifespan,
 )
 
 
@@ -2298,7 +2350,7 @@ class StreamOrchestrator:
                 FROM orchestrator_instances 
                 WHERE server_id = %s AND status = 'active'
             """,
-                (request.server_id,),
+                (diagnostic_request.server_id,),
             )
 
             instance_data = cursor.fetchone()
@@ -3133,34 +3185,31 @@ class StreamOrchestrator:
             return {"status": "error", "error": str(e)}
 
 
-# Instância global do orquestrador
-# orchestrator = StreamOrchestrator(postgres_config=POSTGRES_CONFIG)
-
 # Endpoints da API
 
 
 @app.post("/register")
-async def register_instance(registration: InstanceRegistration):
+async def register_instance(registration: InstanceRegistration, request: Request):
     """Registra uma nova instância."""
-    return orchestrator.register_instance(registration)
+    return request.app.state.orchestrator.register_instance(registration)
 
 
 @app.post("/heartbeat")
-async def heartbeat(heartbeat_req: HeartbeatRequest):
+async def heartbeat(heartbeat_req: HeartbeatRequest, request: Request):
     """Atualiza heartbeat de uma instância."""
-    return orchestrator.update_heartbeat(heartbeat_req)
+    return request.app.state.orchestrator.update_heartbeat(heartbeat_req)
 
 
 @app.post("/streams/assign")
-async def assign_streams(request: StreamRequest):
+async def assign_streams(stream_request: StreamRequest, request: Request):
     """Atribui streams para uma instância."""
-    return orchestrator.assign_streams(request)
+    return request.app.state.orchestrator.assign_streams(stream_request)
 
 
 @app.post("/streams/release")
-async def release_streams(release: StreamRelease):
+async def release_streams(release: StreamRelease, request: Request):
     """Libera streams de uma instância."""
-    return orchestrator.release_streams(release)
+    return request.app.state.orchestrator.release_streams(release)
 
 
 @app.get("/health")
@@ -3511,9 +3560,9 @@ async def detailed_health_check():
 
 
 @app.get("/instances")
-async def get_instances():
+async def get_instances(request: Request):
     """Lista todas as instâncias registradas."""
-    conn = orchestrator.get_db_connection()
+    conn = request.app.state.orchestrator.get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
@@ -3538,9 +3587,9 @@ async def get_instances():
 
 
 @app.get("/instances/{server_id}")
-async def get_instance(server_id: str):
+async def get_instance(server_id: str, request: Request):
     """Retorna informações detalhadas de uma instância específica."""
-    conn = orchestrator.get_db_connection()
+    conn = request.app.state.orchestrator.get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
@@ -3590,9 +3639,9 @@ async def get_instance(server_id: str):
 
 
 @app.get("/streams/assignments")
-async def get_stream_assignments():
+async def get_stream_assignments(request: Request):
     """Lista todas as atribuições de streams."""
-    conn = orchestrator.get_db_connection()
+    conn = request.app.state.orchestrator.get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
@@ -3619,9 +3668,9 @@ async def get_stream_assignments():
 
 
 @app.post("/diagnostic")
-async def diagnostic_check(request: DiagnosticRequest):
+async def diagnostic_check(diagnostic_request: DiagnosticRequest, request: Request):
     """Endpoint de diagnóstico para comparar estado local com o orquestrador."""
-    conn = orchestrator.get_db_connection()
+    conn = request.app.state.orchestrator.get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
@@ -3632,7 +3681,7 @@ async def diagnostic_check(request: DiagnosticRequest):
             WHERE server_id = %s AND status = 'active'
             ORDER BY stream_id
         """,
-            (request.server_id,),
+            (diagnostic_request.server_id,),
         )
 
         orchestrator_streams = [row["stream_id"] for row in cursor.fetchall()]
@@ -3650,11 +3699,11 @@ async def diagnostic_check(request: DiagnosticRequest):
         instance_info = cursor.fetchone()
         if not instance_info:
             raise HTTPException(
-                status_code=404, detail=f"Instância {request.server_id} não encontrada"
+                status_code=404, detail=f"Instância {diagnostic_request.server_id} não encontrada"
             )
 
         # Comparar estados
-        local_streams_set = set(request.local_streams)
+        local_streams_set = set(diagnostic_request.local_streams)
         orchestrator_streams_set = set(orchestrator_streams)
 
         # Identificar inconsistências
@@ -3663,7 +3712,7 @@ async def diagnostic_check(request: DiagnosticRequest):
         streams_in_sync = local_streams_set & orchestrator_streams_set
 
         # Verificar contagens
-        count_mismatch = request.local_stream_count != len(orchestrator_streams)
+        count_mismatch = diagnostic_request.local_stream_count != len(orchestrator_streams)
         orchestrator_count_mismatch = instance_info["current_streams"] != len(
             orchestrator_streams
         )
@@ -3760,9 +3809,9 @@ async def diagnostic_check(request: DiagnosticRequest):
 
 
 @app.get("/instances/{server_id}/metrics")
-async def get_instance_metrics(server_id: str, hours: int = 24):
+async def get_instance_metrics(request: Request, server_id: str, hours: int = 24):
     """Obtém métricas de performance de uma instância específica."""
-    conn = orchestrator.get_db_connection()
+    conn = request.app.state.orchestrator.get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
@@ -3815,7 +3864,7 @@ async def get_instance_metrics(server_id: str, hours: int = 24):
 
 
 @app.post("/rebalance/smart")
-async def smart_rebalance_endpoint(reason: str = "manual"):
+async def smart_rebalance_endpoint(request: Request, reason: str = "manual"):
     """
     Trigger intelligent rebalancing using smart load balancer.
 
@@ -3823,7 +3872,7 @@ async def smart_rebalance_endpoint(reason: str = "manual"):
         reason: Reason for rebalancing (manual, new_instance, instance_failure, load_imbalance, performance_degradation)
     """
     try:
-        result = orchestrator.smart_rebalance(reason)
+        result = request.app.state.orchestrator.smart_rebalance(reason)
         return result
     except Exception as e:
         logger.error(f"Error in smart rebalance endpoint: {e}")
@@ -3831,10 +3880,10 @@ async def smart_rebalance_endpoint(reason: str = "manual"):
 
 
 @app.get("/rebalance/check")
-async def check_load_balance_endpoint():
+async def check_load_balance_endpoint(request: Request):
     """Check current load balance status and detect imbalances."""
     try:
-        result = orchestrator.check_load_balance()
+        result = request.app.state.orchestrator.check_load_balance()
         return result
     except Exception as e:
         logger.error(f"Error checking load balance: {e}")
@@ -3842,10 +3891,10 @@ async def check_load_balance_endpoint():
 
 
 @app.post("/instances/{server_id}/failure")
-async def handle_instance_failure_endpoint(server_id: str):
+async def handle_instance_failure_endpoint(request: Request, server_id: str):
     """Handle instance failure using smart load balancing."""
     try:
-        result = orchestrator.handle_instance_failure_smart(server_id)
+        result = request.app.state.orchestrator.handle_instance_failure_smart(server_id)
         return result
     except Exception as e:
         logger.error(f"Error handling instance failure: {e}")
@@ -3855,10 +3904,10 @@ async def handle_instance_failure_endpoint(server_id: str):
 
 
 @app.get("/rebalance/stats")
-async def get_load_balancer_stats_endpoint():
+async def get_load_balancer_stats_endpoint(request: Request):
     """Get load balancer statistics and performance metrics."""
     try:
-        result = orchestrator.get_load_balancer_stats()
+        result = request.app.state.orchestrator.get_load_balancer_stats()
         return result
     except Exception as e:
         logger.error(f"Error getting load balancer stats: {e}")
@@ -3871,15 +3920,15 @@ async def get_load_balancer_stats_endpoint():
 
 
 @app.get("/resilience/status")
-async def get_resilience_status():
+async def get_resilience_status(request: Request):
     """Get comprehensive resilience and health status."""
-    if not orchestrator.resilient_orchestrator:
+    if not request.app.state.orchestrator.resilient_orchestrator:
         raise HTTPException(
             status_code=503, detail="Resilient orchestrator not available"
         )
 
     try:
-        status = orchestrator.resilient_orchestrator.get_resilience_status()
+        status = request.app.state.orchestrator.resilient_orchestrator.get_resilience_status()
         return status
     except Exception as e:
         logger.error(f"Error getting resilience status: {e}")
@@ -3889,15 +3938,15 @@ async def get_resilience_status():
 
 
 @app.post("/resilience/recovery/{server_id}")
-async def force_instance_recovery(server_id: str):
+async def force_instance_recovery(request: Request, server_id: str):
     """Force recovery attempt for a specific failed instance."""
-    if not orchestrator.resilient_orchestrator:
+    if not request.app.state.orchestrator.resilient_orchestrator:
         raise HTTPException(
             status_code=503, detail="Resilient orchestrator not available"
         )
 
     try:
-        result = await orchestrator.resilient_orchestrator.force_instance_recovery(
+        result = await request.app.state.orchestrator.resilient_orchestrator.force_instance_recovery(
             server_id
         )
         return result
@@ -3909,15 +3958,15 @@ async def force_instance_recovery(server_id: str):
 
 
 @app.post("/resilience/emergency/{server_id}")
-async def trigger_emergency_recovery(server_id: str, reason: str = "Manual trigger"):
+async def trigger_emergency_recovery(request: Request, server_id: str, reason: str = "Manual trigger"):
     """Manually trigger emergency recovery for an instance."""
-    if not orchestrator.resilient_orchestrator:
+    if not request.app.state.orchestrator.resilient_orchestrator:
         raise HTTPException(
             status_code=503, detail="Resilient orchestrator not available"
         )
 
     try:
-        result = await orchestrator.resilient_orchestrator.trigger_emergency_recovery(
+        result = await request.app.state.orchestrator.resilient_orchestrator.trigger_emergency_recovery(
             server_id, reason
         )
         return result
@@ -3929,13 +3978,13 @@ async def trigger_emergency_recovery(server_id: str, reason: str = "Manual trigg
 
 
 @app.get("/resilience/health")
-async def get_system_health():
+async def get_system_health(request: Request):
     """Get current system health status."""
-    if not orchestrator.resilient_orchestrator:
+    if not request.app.state.orchestrator.resilient_orchestrator:
         return {"status": "basic", "message": "Resilient orchestrator not available"}
 
     try:
-        status = orchestrator.resilient_orchestrator.get_resilience_status()
+        status = request.app.state.orchestrator.resilient_orchestrator.get_resilience_status()
         return {
             "system_health": status["system_health"],
             "last_health_check": status["last_health_check"],
@@ -3949,10 +3998,10 @@ async def get_system_health():
 
 
 @app.post("/rebalance/basic")
-async def basic_rebalance_endpoint():
+async def basic_rebalance_endpoint(request: Request):
     """Trigger basic rebalancing (fallback method)."""
     try:
-        orchestrator.rebalance_all_streams()
+        request.app.state.orchestrator.rebalance_all_streams()
         return {
             "status": "completed",
             "method": "basic",
@@ -3966,13 +4015,13 @@ async def basic_rebalance_endpoint():
 # Background Tasks for Smart Load Balancing
 
 
-async def smart_rebalance_monitor_task():
+async def smart_rebalance_monitor_task(orchestrator_instance):
     """Background task to monitor and trigger automatic rebalancing."""
     while True:
         try:
-            if orchestrator.enhanced_orchestrator:
+            if orchestrator_instance.enhanced_orchestrator:
                 # Check if rebalancing is needed
-                result = orchestrator.check_load_balance()
+                result = orchestrator_instance.check_load_balance()
 
                 if result.get("status") == "success" and result.get(
                     "needs_rebalancing"
@@ -3982,7 +4031,7 @@ async def smart_rebalance_monitor_task():
                     )
 
                     # Trigger automatic rebalancing
-                    rebalance_result = orchestrator.smart_rebalance("load_imbalance")
+                    rebalance_result = orchestrator_instance.smart_rebalance("load_imbalance")
 
                     if rebalance_result.get("status") == "completed":
                         logger.info(
@@ -4004,74 +4053,26 @@ async def smart_rebalance_monitor_task():
             await asyncio.sleep(60)  # Wait 1 minute on error
 
 
-# Update lifespan to include smart rebalance monitor and resilient monitoring
-@asynccontextmanager
-async def enhanced_lifespan(app: FastAPI):
-    """Enhanced lifespan manager with smart rebalancing and resilient monitoring."""
-    # Startup
-    logger.info("Starting enhanced orchestrator with resilient monitoring...")
-    orchestrator.create_tables()
-
-    # Start background tasks
-    cleanup_task_handle = asyncio.create_task(cleanup_task())
-    failover_task_handle = asyncio.create_task(failover_monitor_task())
-    smart_rebalance_task_handle = asyncio.create_task(smart_rebalance_monitor_task())
-
-    # Start resilient monitoring if available
-    if orchestrator.resilient_orchestrator:
-        await orchestrator.resilient_orchestrator.start_monitoring()
-        logger.info("Resilient monitoring started")
-
-    # Store orchestrator reference
-    app.state.orchestrator = orchestrator
-
-    try:
-        yield
-    finally:
-        # Shutdown
-        logger.info("Shutting down enhanced orchestrator...")
-
-        # Stop resilient monitoring
-        if orchestrator.resilient_orchestrator:
-            await orchestrator.resilient_orchestrator.stop_monitoring()
-            logger.info("Resilient monitoring stopped")
-
-        cleanup_task_handle.cancel()
-        failover_task_handle.cancel()
-        smart_rebalance_task_handle.cancel()
-
-        for task in [
-            cleanup_task_handle,
-            failover_task_handle,
-            smart_rebalance_task_handle,
-        ]:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
 
 
-# Replace the original lifespan with enhanced version
-app.router.lifespan_context = enhanced_lifespan
 
-
-async def cleanup_task():
+async def cleanup_task(orchestrator_instance):
     """Tarefa de limpeza que executa periodicamente."""
     while True:
         try:
-            await orchestrator.cleanup_inactive_instances()
+            await orchestrator_instance.cleanup_inactive_instances()
             await asyncio.sleep(REBALANCE_INTERVAL)
         except Exception as e:
             logger.error(f"Erro na tarefa de limpeza: {e}")
             await asyncio.sleep(30)  # Aguardar menos tempo em caso de erro
 
 
-async def failover_monitor_task():
+async def failover_monitor_task(orchestrator_instance):
     """Tarefa de monitoramento de failover que executa mais frequentemente."""
     while True:
         try:
             # Executar verificação de failover a cada 10 segundos para maior responsividade
-            orchestrator.handle_orphaned_streams()
+            orchestrator_instance.handle_orphaned_streams()
             await asyncio.sleep(10)
         except Exception as e:
             logger.error(f"Erro na tarefa de failover: {e}")

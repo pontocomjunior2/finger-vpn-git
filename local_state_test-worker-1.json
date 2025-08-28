@@ -1,9 +1,0 @@
-{
-  "is_active": true,
-  "assigned_streams": [],
-  "last_orchestrator_contact": null,
-  "local_mode_start": "2025-08-25T16:35:00.002641",
-  "processed_streams": {
-    "1": "2025-08-25T16:35:05.046849"
-  }
-}

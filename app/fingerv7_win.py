@@ -53,7 +53,9 @@ def should_process_stream(
         return False
 
 
-async def acquire_stream_lock(stream_id: str, server_id: int, timeout: int = 30) -> bool:
+async def acquire_stream_lock(
+    stream_id: str, server_id: int, timeout: int = 30
+) -> bool:
     """Async wrapper around fingerv7.acquire_stream_lock (sync).
 
     The base implementation expects timeout in minutes; we just use its default.

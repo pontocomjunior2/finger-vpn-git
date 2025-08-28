@@ -20,18 +20,18 @@ logger = logging.getLogger(__name__)
 
 class MonitoringDashboard:
     """Web-based monitoring dashboard"""
-    
+
     def __init__(self, monitoring_system, template_dir: str = "templates"):
         self.monitoring_system = monitoring_system
         self.template_dir = Path(template_dir)
         self.template_dir.mkdir(exist_ok=True)
-        
+
         # Create dashboard templates
         self._create_dashboard_templates()
-    
+
     def _create_dashboard_templates(self):
         """Create HTML templates for dashboard"""
-        
+
         # Main dashboard template
         dashboard_html = """
 <!DOCTYPE html>
@@ -248,39 +248,39 @@ class MonitoringDashboard:
 </body>
 </html>
         """
-        
+
         with open(self.template_dir / "dashboard.html", "w") as f:
             f.write(dashboard_html)
-    
+
     def generate_dashboard_data(self) -> Dict[str, Any]:
         """Generate data for dashboard"""
         try:
             status = self.monitoring_system.get_monitoring_status()
             detailed_metrics = self.monitoring_system.get_detailed_metrics()
-            
+
             return {
-                'status': status,
-                'metrics': detailed_metrics,
-                'timestamp': datetime.now().isoformat()
+                "status": status,
+                "metrics": detailed_metrics,
+                "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
             logger.error(f"Failed to generate dashboard data: {e}")
-            return {'error': str(e)}
-    
+            return {"error": str(e)}
+
     def export_dashboard_report(self, filepath: str):
         """Export dashboard report to file"""
         try:
             report_data = {
-                'report_timestamp': datetime.now().isoformat(),
-                'dashboard_data': self.generate_dashboard_data(),
-                'system_summary': self.monitoring_system.get_system_metrics_summary()
+                "report_timestamp": datetime.now().isoformat(),
+                "dashboard_data": self.generate_dashboard_data(),
+                "system_summary": self.monitoring_system.get_system_metrics_summary(),
             }
-            
-            with open(filepath, 'w') as f:
+
+            with open(filepath, "w") as f:
                 json.dump(report_data, f, indent=2, default=str)
-            
+
             logger.info(f"Dashboard report exported to {filepath}")
-            
+
         except Exception as e:
             logger.error(f"Failed to export dashboard report: {e}")
             raise
@@ -288,113 +288,118 @@ class MonitoringDashboard:
 
 class AlertNotificationSystem:
     """Enhanced alert notification system"""
-    
+
     def __init__(self, monitoring_system):
         self.monitoring_system = monitoring_system
         self.notification_handlers = []
         self.notification_history = []
-        
+
         # Setup default notification handlers
         self._setup_default_handlers()
-    
+
     def _setup_default_handlers(self):
         """Setup default notification handlers"""
         self.add_notification_handler(self._console_notification_handler)
         self.add_notification_handler(self._file_notification_handler)
         self.add_notification_handler(self._email_notification_handler)
-    
+
     def add_notification_handler(self, handler):
         """Add notification handler"""
         self.notification_handlers.append(handler)
-    
+
     def _console_notification_handler(self, alert):
         """Console notification handler"""
         severity_colors = {
-            'info': '\033[94m',      # Blue
-            'warning': '\033[93m',   # Yellow
-            'critical': '\033[91m',  # Red
-            'emergency': '\033[95m'  # Magenta
+            "info": "\033[94m",  # Blue
+            "warning": "\033[93m",  # Yellow
+            "critical": "\033[91m",  # Red
+            "emergency": "\033[95m",  # Magenta
         }
-        
-        color = severity_colors.get(alert.severity.value, '\033[0m')
-        reset = '\033[0m'
-        
+
+        color = severity_colors.get(alert.severity.value, "\033[0m")
+        reset = "\033[0m"
+
         print(f"{color}[{alert.severity.value.upper()}] {alert.title}{reset}")
         print(f"  {alert.description}")
         print(f"  Source: {alert.source} | Time: {alert.timestamp}")
         print("-" * 50)
-    
+
     def _file_notification_handler(self, alert):
         """File notification handler"""
         try:
             notification_file = "notifications.log"
-            
-            with open(notification_file, 'a') as f:
-                f.write(f"{alert.timestamp.isoformat()} [{alert.severity.value.upper()}] {alert.title}\n")
+
+            with open(notification_file, "a") as f:
+                f.write(
+                    f"{alert.timestamp.isoformat()} [{alert.severity.value.upper()}] {alert.title}\n"
+                )
                 f.write(f"  Description: {alert.description}\n")
                 f.write(f"  Source: {alert.source}\n")
                 f.write(f"  Metadata: {json.dumps(alert.metadata)}\n")
                 f.write("-" * 80 + "\n")
-                
+
         except Exception as e:
             logger.error(f"Failed to write notification to file: {e}")
-    
+
     def _email_notification_handler(self, alert):
         """Email notification handler (placeholder)"""
         # This would integrate with an email service
         # For now, just log the intent
         if alert.severity in [AlertSeverity.CRITICAL, AlertSeverity.EMERGENCY]:
             logger.info(f"EMAIL NOTIFICATION: {alert.title} - {alert.description}")
-    
+
     def send_notification(self, alert):
         """Send notification through all handlers"""
         notification_record = {
-            'alert_id': alert.id,
-            'timestamp': datetime.now(),
-            'handlers_notified': []
+            "alert_id": alert.id,
+            "timestamp": datetime.now(),
+            "handlers_notified": [],
         }
-        
+
         for handler in self.notification_handlers:
             try:
                 handler(alert)
-                notification_record['handlers_notified'].append(handler.__name__)
+                notification_record["handlers_notified"].append(handler.__name__)
             except Exception as e:
                 logger.error(f"Notification handler {handler.__name__} failed: {e}")
-        
+
         self.notification_history.append(notification_record)
-        
+
         # Keep only last 1000 notifications
         if len(self.notification_history) > 1000:
             self.notification_history = self.notification_history[-1000:]
-    
+
     def get_notification_stats(self) -> Dict[str, Any]:
         """Get notification statistics"""
         return {
-            'total_notifications': len(self.notification_history),
-            'recent_notifications': len([
-                n for n in self.notification_history
-                if (datetime.now() - n['timestamp']).total_seconds() < 3600  # Last hour
-            ]),
-            'handler_count': len(self.notification_handlers)
+            "total_notifications": len(self.notification_history),
+            "recent_notifications": len(
+                [
+                    n
+                    for n in self.notification_history
+                    if (datetime.now() - n["timestamp"]).total_seconds()
+                    < 3600  # Last hour
+                ]
+            ),
+            "handler_count": len(self.notification_handlers),
         }
 
 
 # Integration function
 def setup_comprehensive_monitoring(monitoring_system):
     """Setup comprehensive monitoring with dashboard and notifications"""
-    
+
     # Create dashboard
     dashboard = MonitoringDashboard(monitoring_system)
-    
+
     # Create notification system
     notification_system = AlertNotificationSystem(monitoring_system)
-    
+
     # Add notification handler to alert manager
-    monitoring_system.alert_manager.add_alert_handler(notification_system.send_notification)
-    
+    monitoring_system.alert_manager.add_alert_handler(
+        notification_system.send_notification
+    )
+
     logger.info("Comprehensive monitoring setup complete")
-    
-    return {
-        'dashboard': dashboard,
-        'notifications': notification_system
-    }
+
+    return {"dashboard": dashboard, "notifications": notification_system}

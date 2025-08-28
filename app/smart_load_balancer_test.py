@@ -1,1 +1,2 @@
-class SmartLoadBalancer: pass
+class SmartLoadBalancer:
+    pass
