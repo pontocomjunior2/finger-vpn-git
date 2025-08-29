@@ -19,7 +19,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from contextlib import asynccontextmanager
     import uvicorn
-    import hashlib
+    import zlib
     
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -439,10 +439,10 @@ async def assign_streams(
 
         table_name = POSTGRES_CONFIG["table_name"]
 
-        # Mapear worker_id para inteiro estável, caso a coluna assigned_server seja numérica
+        # Mapear worker_id para inteiro estável dentro do intervalo int32 (PostgreSQL integer)
         def _map_worker_to_int(wid: str) -> int:
-            h = hashlib.md5(wid.encode()).hexdigest()
-            return int(h[:8], 16)
+            # crc32 retorna unsigned 32-bit; usar máscara para caber em signed 32-bit
+            return zlib.crc32(wid.encode()) & 0x7FFFFFFF
 
         worker_num = _map_worker_to_int(worker_id)
 
