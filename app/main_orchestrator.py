@@ -367,7 +367,18 @@ async def worker_heartbeat(heartbeat_data: dict):
             )
 
         if worker_id not in workers_registry:
-            raise HTTPException(status_code=404, detail="Worker not found")
+            # Auto-registro mínimo para evitar 404 em ambientes com reinício do orchestrator
+            workers_registry[worker_id] = {
+                "instance_id": worker_id,
+                "worker_type": (worker_type or "fingerv7"),
+                "status": "active",
+                "capacity": int(capacity or 1),
+                "current_load": 0,
+                "available_capacity": max(0, int(capacity or 1)),
+                "registered_at": datetime.now().isoformat(),
+                "last_heartbeat": datetime.now().isoformat(),
+            }
+            logger.info(f"⚠️ Auto-registered worker: {worker_id} for assignment request")
 
         # Atualizar heartbeat
         workers_registry[worker_id].update(
