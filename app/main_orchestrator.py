@@ -368,25 +368,29 @@ async def worker_heartbeat(heartbeat_data: dict):
 
         if worker_id not in workers_registry:
             # Auto-registro mínimo para evitar 404 em ambientes com reinício do orchestrator
+            safe_worker_type = heartbeat_data.get("worker_type", "fingerv7")
+            safe_capacity = int(heartbeat_data.get("capacity", heartbeat_data.get("available_capacity", 1)) or 1)
             workers_registry[worker_id] = {
                 "instance_id": worker_id,
-                "worker_type": (worker_type or "fingerv7"),
+                "worker_type": safe_worker_type,
                 "status": "active",
-                "capacity": int(capacity or 1),
-                "current_load": 0,
-                "available_capacity": max(0, int(capacity or 1)),
+                "capacity": safe_capacity,
+                "current_load": int(heartbeat_data.get("current_load", 0) or 0),
+                "available_capacity": max(0, int(heartbeat_data.get("available_capacity", safe_capacity) or safe_capacity)),
                 "registered_at": datetime.now().isoformat(),
                 "last_heartbeat": datetime.now().isoformat(),
             }
-            logger.info(f"⚠️ Auto-registered worker: {worker_id} for assignment request")
+            logger.info(f"⚠️ Auto-registered worker: {worker_id} for heartbeat")
 
         # Atualizar heartbeat
         workers_registry[worker_id].update(
             {
                 "last_heartbeat": datetime.now().isoformat(),
-                "status": heartbeat_data.get("status", "active"),
-                "current_load": heartbeat_data.get("current_load", 0),
-                "available_capacity": heartbeat_data.get("available_capacity", 0),
+                "status": heartbeat_data.get("status", workers_registry[worker_id].get("status", "active")),
+                "current_load": int(heartbeat_data.get("current_load", workers_registry[worker_id].get("current_load", 0)) or 0),
+                "available_capacity": int(heartbeat_data.get("available_capacity", workers_registry[worker_id].get("available_capacity", 0)) or 0),
+                "capacity": int(heartbeat_data.get("capacity", workers_registry[worker_id].get("capacity", 1)) or 1),
+                "worker_type": heartbeat_data.get("worker_type", workers_registry[worker_id].get("worker_type", "fingerv7")),
                 "metrics": heartbeat_data.get("metrics", {}),
             }
         )
