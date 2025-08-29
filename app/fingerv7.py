@@ -202,7 +202,9 @@ except ImportError:
 load_dotenv(dotenv_path=".env")
 
 # Configuração para distribuição de carga entre servidores
-SERVER_ID = os.getenv("SERVER_ID", socket.gethostname())  # ID único para cada servidor
+# Priorizar INSTANCE_ID (do orquestrador) para garantir rastreabilidade entre services
+# Fallback: SERVER_ID (legado) -> hostname do container
+SERVER_ID = os.getenv("INSTANCE_ID") or os.getenv("SERVER_ID") or socket.gethostname()
 USE_ORCHESTRATOR = (
     os.getenv("USE_ORCHESTRATOR", "True").lower() == "true"
 )  # Usar orquestrador central
