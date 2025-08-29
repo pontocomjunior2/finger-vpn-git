@@ -19,6 +19,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from contextlib import asynccontextmanager
     import uvicorn
+    import hashlib
     
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -425,7 +426,7 @@ async def assign_streams(
         if worker_id not in workers_registry:
             raise HTTPException(status_code=404, detail="Worker not found")
 
-        # Buscar streams disponíveis do PostgreSQL
+        # Buscar e travar streams disponíveis via DB (FOR UPDATE SKIP LOCKED) e marcar no banco
         import asyncpg
 
         conn = await asyncpg.connect(
@@ -438,53 +439,62 @@ async def assign_streams(
 
         table_name = POSTGRES_CONFIG["table_name"]
 
-        # Buscar streams que não estão sendo processados
-        query = f"""
-        SELECT * FROM {table_name} 
-        WHERE id NOT IN (
-            SELECT DISTINCT stream_id::int 
-            FROM (VALUES {','.join([f"('{sid}')" for sid in stream_assignments.keys()])}) AS assigned(stream_id)
-            WHERE stream_id IS NOT NULL
-        )
-        ORDER BY RANDOM() 
-        LIMIT $1
-        """
+        # Mapear worker_id para inteiro estável, caso a coluna assigned_server seja numérica
+        def _map_worker_to_int(wid: str) -> int:
+            h = hashlib.md5(wid.encode()).hexdigest()
+            return int(h[:8], 16)
 
-        if not stream_assignments:
-            # Se não há assignments, buscar qualquer stream
-            query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT $1"
-
-        results = await conn.fetch(query, capacity)
-        await conn.close()
+        worker_num = _map_worker_to_int(worker_id)
 
         streams = []
-        for row in results:
-            stream_data = dict(row)
-            stream_id = str(stream_data["id"])
+        try:
+            # Usar transação para evitar corridas entre instâncias
+            async with conn.transaction():
+                # Selecionar linhas livres e travá-las
+                select_sql = f"""
+                    SELECT id, url, name, cidade, estado, regiao, segmento
+                    FROM {table_name}
+                    WHERE assigned_server IS NULL
+                    ORDER BY id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT $1
+                """
+                rows = await conn.fetch(select_sql, capacity)
 
-            # Marcar como atribuído
-            stream_assignments[stream_id] = {
-                "worker_id": worker_id,
-                "assigned_at": datetime.now().isoformat(),
-                "status": "assigned",
-            }
+                if rows:
+                    ids = [r["id"] for r in rows]
+                    # Marcar no banco como atribuídas a este worker
+                    update_sql = f"""
+                        UPDATE {table_name}
+                        SET assigned_server = $1
+                        WHERE id = ANY($2::int[])
+                    """
+                    await conn.execute(update_sql, worker_num, ids)
 
-            streams.append(
-                {
-                    "stream_id": stream_id,
-                    "id": stream_data["id"],
-                    "stream_url": stream_data.get("url"),
-                    "url": stream_data.get("url"),
-                    "name": stream_data.get("name"),
-                    "metadata": {
-                        "cidade": stream_data.get("cidade"),
-                        "estado": stream_data.get("estado"),
-                        "regiao": stream_data.get("regiao"),
-                        "segmento": stream_data.get("segmento"),
-                        "frequencia": stream_data.get("frequencia"),
-                    },
-                }
-            )
+                    for r in rows:
+                        stream_id = str(r["id"])
+                        stream_assignments[stream_id] = {
+                            "worker_id": worker_id,
+                            "assigned_at": datetime.now().isoformat(),
+                            "status": "assigned",
+                        }
+                        streams.append(
+                            {
+                                "stream_id": stream_id,
+                                "id": r["id"],
+                                "stream_url": r.get("url"),
+                                "url": r.get("url"),
+                                "name": r.get("name"),
+                                "metadata": {
+                                    "cidade": r.get("cidade"),
+                                    "estado": r.get("estado"),
+                                    "regiao": r.get("regiao"),
+                                    "segmento": r.get("segmento"),
+                                },
+                            }
+                        )
+        finally:
+            await conn.close()
 
         logger.info(f"📤 Assigned {len(streams)} streams to worker {worker_id}")
 
