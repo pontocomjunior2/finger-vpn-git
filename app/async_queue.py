@@ -7,6 +7,8 @@ import asyncio
 import json
 import logging
 import time
+import re
+import unicodedata
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -667,6 +669,52 @@ class AsyncInsertQueue:
                 if exact_records:
                     logger.debug(
                         f"Duplicata exata por título/artista detectada e ignorada: {radio_name} - {song_title} ({artist})"
+                    )
+                    return
+
+            # Checagem adicional de duplicidade por similaridade (normalização) em janela de 10 minutos
+            def _normalize_text(text: str) -> str:
+                if not text:
+                    return ""
+                # Lowercase
+                s = text.lower()
+                # Remover acentos
+                s = unicodedata.normalize("NFKD", s)
+                s = "".join(c for c in s if not unicodedata.combining(c))
+                # Remover conteúdo entre parênteses/brackets (ex.: "(ao vivo)")
+                s = re.sub(r"\([^\)]*\)", "", s)
+                s = re.sub(r"\[[^\]]*\]", "", s)
+                # Remover termos comuns de versões
+                s = re.sub(r"\b(ao vivo|live|remix|versao|versão|acustico|acústico|edit|radio edit)\b", "", s)
+                # Remover pontuação e múltiplos espaços
+                s = re.sub(r"[^a-z0-9\s]", " ", s)
+                s = re.sub(r"\s+", " ", s).strip()
+                return s
+
+            normalized_title = _normalize_text(song_title)
+            normalized_artist = _normalize_text(artist)
+
+            # Buscar registros recentes desta rádio (últimos 10 minutos) e comparar por similaridade
+            recent_query = f"""
+                SELECT song_title, artist, date, time
+                FROM {table_name}
+                WHERE name = %s
+                  AND (date || ' ' || time)::timestamp >= %s
+                ORDER BY (date || ' ' || time) DESC
+                LIMIT 200
+            """
+            cursor.execute(
+                recent_query,
+                (
+                    radio_name,
+                    ten_minutes_ago.strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
+            recent_rows = cursor.fetchall()
+            for r_title, r_artist, r_date, r_time in recent_rows:
+                if _normalize_text(r_title) == normalized_title and _normalize_text(r_artist) == normalized_artist:
+                    logger.debug(
+                        f"Duplicata por similaridade detectada e ignorada: {radio_name} - {song_title} ({artist}) dentro de 10 minutos"
                     )
                     return
 
